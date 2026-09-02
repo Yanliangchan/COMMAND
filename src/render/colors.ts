@@ -3,7 +3,7 @@ import { TerrainType } from '../game/types';
 export const TERRAIN_COLORS: Record<TerrainType, { base: string; light: string; dark: string }> = {
   OPEN: { base: '#c9b98a', light: '#d6c89b', dark: '#b3a274' },
   GRASS: { base: '#8fae5c', light: '#9fbd6d', dark: '#7c984c' },
-  FOREST: { base: '#3f6b3f', light: '#4a7a4a', dark: '#2f512f' },
+  FOREST: { base: '#4a7048', light: '#578154', dark: '#3a5a39' },
   HILLS: { base: '#a08055', light: '#b39366', dark: '#846a45' },
   URBAN: { base: '#8b8b8f', light: '#9c9ca0', dark: '#75757a' },
   INDUSTRIAL: { base: '#78766e', light: '#8a8880', dark: '#615f58' },
@@ -13,9 +13,11 @@ export const TERRAIN_COLORS: Record<TerrainType, { base: string; light: string; 
   PORT: { base: '#8a8570', light: '#9a9580', dark: '#736e5c' },
 };
 
-export const PLAYER_COLORS: Record<'BLUEFOR' | 'REDFOR', { main: string; dark: string; glow: string }> = {
-  BLUEFOR: { main: '#6fa8c9', dark: '#0f2e3d', glow: 'rgba(111,168,201,0.55)' },
-  REDFOR: { main: '#c17a5f', dark: '#3d211a', glow: 'rgba(193,122,95,0.55)' },
+export const PLAYER_COLORS: Record<'BLUEFOR' | 'REDFOR', { main: string; dark: string; light: string; glow: string }> = {
+  // `light` is the counter's glyph colour — deliberately brighter than `main`
+  // so the two-letter designation still reads inside a small dark disc.
+  BLUEFOR: { main: '#6fa8c9', dark: '#0f2e3d', light: '#b6dcf2', glow: 'rgba(111,168,201,0.55)' },
+  REDFOR: { main: '#c17a5f', dark: '#3d211a', light: '#f0b39a', glow: 'rgba(193,122,95,0.55)' },
 };
 
 // Ops-room UI chrome tokens — mirrors the CSS custom properties in

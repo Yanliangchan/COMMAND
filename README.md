@@ -54,7 +54,7 @@ src/
     types.ts             Core types: Tile, Formation, GameState, etc.
     data.ts              Terrain & formation definitions (stats, flavor text).
     mapgen.ts             Deterministic TOPOGRAPHIC battlefield generator
-                           (80x80 grid): fBm heightfield -> depression fill ->
+                           (72x72 grid): fBm heightfield -> depression fill ->
                            D8 flow routing -> rivers -> moisture/terrain ->
                            settlements -> A* road network -> objectives, with a
                            hard validation + retry loop (see "Map generation").
@@ -112,7 +112,11 @@ movement, and fog-of-war in the whole codebase.
 
 ## Multiplayer design
 
-- **Lobby.** Three options: **Create Room** (generates a 5-character room
+- **Front page / lobby.** A designed landing page (dark graphite, a hero
+  backdrop that is a *real generated battlefield* rendered once by the game's
+  own canvas renderer, with a static gradient fallback), then three ways in:
+  the primary **Play vs Bot** row (Easy / Medium / Hard), then **Create Room**
+  (generates a 5-character room
   code from an unambiguous alphabet — no `0/O/1/I/L` — and waits), **Join
   Room** (enter a code), and **Quick Match** (joins a one-slot waiting queue;
   the next Quick Match request pairs with it immediately). A room starts the
@@ -197,11 +201,12 @@ screen — lobby included — with:
 
 ## What's playable end-to-end
 
-1. A procedurally generated **80×80 topographic battlefield** (6,400 tiles,
-   ~1.8× the previous area): a continuous fractal heightfield with coherent
+1. A procedurally generated **72×72 topographic battlefield** (5,184 tiles —
+   trimmed ~19% from 80×80 in phase 3 so the board reads at a glance and the
+   two forces meet sooner): a continuous fractal heightfield with coherent
    ridges and massifs, a coastline derived from sea level, a dendritic river
    network that actually flows downhill to the sea with confluences, large
-   continuous forest stands, six settlements grown around water and road
+   continuous forest stands, five settlements grown around water and road
    junctions, industrial ground on coastal fringes, two airfields, two ports,
    two supply depots, an A*-routed road network with bridges at the river
    crossings, and ~22 capture objectives spread across the map (urban
@@ -237,7 +242,7 @@ screen — lobby included — with:
    "Suspected Contact" markers with a confidence value that decays over
    turns since last seen — a client literally cannot query the server for
    what it isn't allowed to know.
-8. ~22 objectives generate VP for whoever holds them uncontested; land
+8. ~20 objectives generate VP for whoever holds them uncontested; land
    objectives are held by ground formations, the three open-sea anchorages
    only by warships. VP are paid out once per **round** (at the end of
    REDFOR's turn) to both holders at once, and victory is only adjudicated at
@@ -245,7 +250,7 @@ screen — lobby included — with:
    scoring every round. First to 200 VP (or the higher score after 24 rounds)
    wins, with an end-game screen driven by server-pushed `phase: 'GAME_OVER'`.
 9. Supply is a **positional modifier, not a logistics mini-game**: a formation
-   is in supply within 16 tiles of one of its side's supply sources — its
+   is in supply within 14 tiles of one of its side's supply sources — its
    depots, or any Port / Airfield / Supply Depot objective it currently holds.
    Outside that it loses supply/readiness each turn and fights and moves
    worse. Warships carry their own stores. A Supply overlay toggle highlights
@@ -403,7 +408,7 @@ each other.
 - **Logistics units are gone.** The `LOGISTICS` formation type was removed
   along with supply-convoy positioning. Supply and readiness survive as
   combat/movement **modifiers** and the Resupply action remains, but supply
-  range is now purely positional (16 tiles from a depot or a held
+  range is now purely positional (14 tiles from a depot or a held
   Port/Airfield/Depot objective). Warships resupply themselves.
 - The bot (`server/bot.ts`) was updated in step: it no longer reasons about
   removed systems, sails its warships toward maritime objectives and coastal
@@ -414,7 +419,7 @@ each other.
 
 ## Map generation
 
-`src/game/mapgen.ts` builds an 80×80 sheet the way a landscape is built,
+`src/game/mapgen.ts` builds a 72×72 sheet the way a landscape is built,
 rather than by scattering terrain tiles:
 
 1. **Heightfield.** Hand-rolled seeded value-noise fBm (6 octaves, with a
@@ -479,7 +484,7 @@ rate plus terrain statistics.
 
 ### Wire size
 
-The tile grid is 6,400 tiles (~440 KB of JSON) and changes only when an
+The tile grid is 5,184 tiles (~355 KB of JSON) and changes only when an
 engineer throws a bridge, so `road` / `river` / `bridge` / `navigable` are
 only serialised when true, the per-tile render noise is derived from a hash of
 `(x, y)` in the renderer instead of being carried on the wire, and the server
@@ -581,9 +586,55 @@ grid only whispers in above 15 px/tile, a 10-tile graticule replaces it below
 that, settlement names are lettered onto the sheet from round 6 px/tile, and
 off-sheet space is drawn as open sea inside a framed map edge.
 
+**Map legibility (phase 3).** A pass whose only goal was to make units,
+objectives and overlays the most legible things on screen, without flattening
+the topographic character:
+
+- **The river fringe is gone.** Narrow watercourses are now lifted *out* of the
+  smoothed water mask entirely (`terrainFields` marks a river tile with four or
+  fewer water neighbours as a `channel`, zeroes its water value and paints it
+  with the mean colour of its own banks), so the isotropic blur has no blue to
+  smear. Rivers are then drawn purely as cased lines that bend round each tile
+  centre with a quadratic curve, so a watercourse meanders instead of climbing
+  a staircase of right angles. Estuaries and broad lower reaches keep enough
+  water neighbours to stay real water, with a coastline and a depth ramp.
+- **Built-up areas are blocks and streets, not a stamped grid.** Each urban or
+  industrial tile is one city block: the streets are the block boundaries (so
+  they run continuously across a whole settlement and line up with the road
+  network), every fourth world line is a wider avenue, and each block's
+  interior is split into varied building footprints by a deterministic binary
+  subdivision, with a share of blocks left open as yards.
+- **Contour labels and spot heights.** Index contours carry a height figure at
+  ≥14 px/tile, placed on a coarse lattice and rotated along the line with a
+  pale halo standing in for the cartographer's break; the dominant summits
+  carry a spot dot and figure at ≥13 px/tile.
+- **Less noise, more contrast where it counts.** Per-tile colour jitter halved,
+  forest stipple cut to two low-contrast crowns, hillshade softened, minor
+  contours faded in from 9 px/tile. Every counter, objective, contact and the
+  selection ring now gets a dark casing ring, and the movement wash strokes
+  only the *outer boundary* of the reachable set instead of outlining every
+  tile in it — that amber grid was the noisiest thing on the old sheet.
+
 **Legend (`L`).** Collapsible pop-up covering terrain (including **beach**) and
 markers (including **anchorage**, movement range, attack range, unknown
 contact, fortified). Every entry carries both a colour swatch and a symbol.
+
+**Front page (phase 3).** The lobby was rebuilt as a game front page rather
+than a stack of form panels: a full-bleed hero, an oversized COMMAND wordmark
+with the tagline, then a deliberate menu hierarchy — a primary *Play vs Bot*
+row with Easy/Medium/Hard, a multiplayer block (Create Room / Quick Match /
+join-by-code), and Tutorial and Field Manual as secondary text entries. The
+hero is a **real generated battlefield**: `HeroBackdrop` calls the game's own
+`initGame()` and `render()` once, off the first paint (via
+`requestIdleCallback`), into a single over-sized canvas that is then darkened,
+desaturated and blurred in CSS and drifted by a compositor-only transform
+animation — there is no game loop and no per-frame JavaScript. It is skipped on
+obviously low-powered devices, honours `prefers-reduced-motion`, and anything
+that throws simply leaves the CSS gradient underneath showing, which the page
+is designed to look finished without. The room-code, quick-match and
+connecting states are designed cards in the same column, and a lobby-phase
+server error (bad room code, room full) now returns to the menu with the reason
+instead of leaving the connecting card spinning.
 
 **Tutorial.** Reached from the landing page. Seven illustrated sections — the
 basic loop, movement, attack, recon (stated plainly as *gathering information
@@ -626,6 +677,63 @@ away.
 - **DIS/cyber warfare mechanics.**
 
 ## Testing performed
+
+### Phase-3 refinement pass (front page, 72×72 board, map legibility)
+
+- `npm run build` (client `tsc -b` + Vite) and `npx tsc -p
+  server/tsconfig.json --noEmit` — both clean.
+- **Map soak at the new size** (`npm run mapcheck -- 120`): 120 independent
+  seeds on the 72×72 grid, **120/120 pass (100%)** — water connectivity, river
+  continuity, road-network connectivity, land reachability and the independent
+  "sail from BLUEFOR's first ship to every spawn, berth and anchorage"
+  re-derivation all hold. Typical map: ~1,927 water tiles (all one navigable
+  body), ~222 river tiles, ~239 road tiles, ~14 bridges, ~994 forest tiles,
+  20 objectives; 1.1 attempts and ~45 ms per map (was ~75 ms at 80×80).
+- **Bot-vs-bot balance sim** over the real engine + real `decideBotAction`:
+  - MEDIUM vs MEDIUM, 30 games: **13.1 rounds** average (8–19), BLUEFOR 14 /
+    REDFOR 14 / 2 draws, average final VP difference **+4.6** to BLUEFOR.
+  - HARD vs HARD, 24 games: **12.6 rounds** average (8–15), BLUEFOR 11 /
+    REDFOR 12 / 1 draw, average VP difference −4.5.
+  - First contact (any two opposing formations within 3 tiles) now happens on
+    **round 5.1** on average, against **round 6.0** for the same code at
+    80×80 — the size cut does exactly what it was meant to do.
+- **Retuning that the size change required, and nothing else:** settlements
+  6 → 5 (objectives 22 → ~20, so objective *density* is unchanged),
+  named bridge crossings 4 → 3, and the minimum spacings for settlements,
+  bridges, hills, airfields, depots and deployment rings scaled with the
+  board. Artillery range 8 → 7 tiles and supply radius 16 → 14 tiles keep
+  those reaches the same fraction of the battlefield they were tuned against.
+  Deployment separation is derived from N, so it scaled on its own.
+- **Live app driven with Playwright/Chromium** against the combined server
+  (`npm start`, 1600×950):
+  - the landing page renders with the hero battlefield behind it
+    (`.hero-canvas.is-ready` present), the COMMAND wordmark and the tagline;
+  - **Create Room** shows a five-character code (`PCWZW`) in the designed
+    room-code card; **Quick Match** shows the searching card; joining `ZZZZZ`
+    returns to the menu with "No room with that code." instead of spinning on
+    the connecting card forever (a real bug this pass fixed);
+  - at 720×900 the page reflows to a single column with **no horizontal
+    overflow** (`scrollWidth === clientWidth === 720`);
+  - **Play vs Bot → Medium** starts a game on a 72×72 map with 20 objectives;
+    a formation selects from the roster, `M` arms MOVE, `Esc` cancels, `Tab`
+    cycles to the next formation with orders (`f_21 → f_22`), `L` opens the
+    legend, `H` the field manual, arrow keys pan (9,30 → 15,36), and a real
+    server-validated MOVE lands the unit at its target with `movesUsed = 1`;
+  - **14 rounds** of HARD bot play with scripted advances (every ready
+    formation ordered toward a contested objective each turn) produced **no
+    page or console errors** and the bot scored 158 VP off objectives.
+  - Honest caveat: no two formations ever came within one tile in that run, so
+    the `A` → ATTACK arming was only observed *refusing* (correctly, with a
+    "cannot perform Attack" toast, since nothing was in range). The attack
+    path itself is unchanged this pass and is exercised heavily by the 54
+    bot-vs-bot simulation games above, which resolve combat through the same
+    `attackAction`.
+- **Render frame time re-measured** the same way as phase 2 (smoothed, full
+  redraw every animation frame, 1600×950), against the phase-2 baseline of
+  4.5–9.0 ms: **7.6 ms** at 7 px/tile, **7.5 ms** at 13, **6.7 ms** at 24 and
+  **6.4 ms** at 34 — flat across zoom and slightly *better* at the worst
+  point, even though the relief raster budget was raised (46k → 62k subpixels)
+  to sharpen close zooms.
 
 ### Phase-2 UI/UX pass (identity, actions, layout, cartography)
 

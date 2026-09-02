@@ -15,7 +15,7 @@ import { Camera, Overlays } from './render/renderMap';
 import { TargetMode } from './App.types';
 import { ActionAvailability, actionAvailability, ACTION_BY_SHORTCUT, formationsWithActions } from './game/actions';
 import { computeReachable, formationAt } from './game/engine';
-import { AP_COSTS, Formation } from './game/types';
+import { AP_COSTS, Formation, GRID_SIZE } from './game/types';
 
 const TARGET_HINTS: Record<string, string> = {
   MOVE: 'Click a highlighted tile to move there.',
@@ -41,7 +41,7 @@ export default function App() {
   const { state, you } = net;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [targetMode, setTargetMode] = useState<TargetMode>(null);
-  const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, scale: 11 });
+  const [camera, setCamera] = useState<Camera>({ x: GRID_SIZE / 2, y: GRID_SIZE / 2, scale: 11 });
   const [overlays, setOverlays] = useState<Overlays>({ terrain: true, movement: true, intel: true, supply: false, objectives: true });
   const [showReportId, setShowReportId] = useState<string | null>(null);
   const [legendOpen, setLegendOpen] = useState(false);

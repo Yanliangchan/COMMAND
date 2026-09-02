@@ -331,7 +331,7 @@ export function fortifyAction(state: GameState, formationId: string): GameState 
 }
 
 /** Radius each kind of supply source projects. */
-export const SUPPLY_RADIUS = 16;
+export const SUPPLY_RADIUS = 14;
 
 /**
  * Supply is a POSITIONAL modifier, not a logistics mini-game: a formation is

@@ -568,9 +568,11 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     }
   }
   candidates.sort((a, b) => b.s - a.s + (rand() - 0.5) * 0.4);
-  const MIN_SETTLEMENT_GAP = 13;
+  // Spacings below are tuned for the 72x72 board (phase 3). Settlement count
+  // came down 6 -> 5 with the map size so objective *density* stays constant.
+  const MIN_SETTLEMENT_GAP = 12;
   for (const c of candidates) {
-    if (settlements.length >= 6) break;
+    if (settlements.length >= 5) break;
     if (settlements.some((s) => Math.hypot(s.x - c.x, s.y - c.y) < MIN_SETTLEMENT_GAP)) continue;
     let coastal = false;
     for (let dy = -3; dy <= 3 && !coastal; dy++) {
@@ -685,13 +687,13 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     { x: Math.round(N * 0.62), y: Math.round(N * 0.16) },
   ]) {
     let best: { x: number; y: number; s: number } | null = null;
-    for (let y = Math.max(3, anchor.y - 14); y < Math.min(N - 3, anchor.y + 14); y++) {
-      for (let x = Math.max(3, anchor.x - 14); x < Math.min(N - 3, anchor.x + 14); x++) {
+    for (let y = Math.max(3, anchor.y - 13); y < Math.min(N - 3, anchor.y + 13); y++) {
+      for (let x = Math.max(3, anchor.x - 13); x < Math.min(N - 3, anchor.x + 13); x++) {
         const s = flatScore(x, y);
         if (s > -Infinity && (!best || s > best.s)) best = { x, y, s };
       }
     }
-    if (best && !airfields.some((a) => Math.hypot(a.x - best!.x, a.y - best!.y) < 12)) {
+    if (best && !airfields.some((a) => Math.hypot(a.x - best!.x, a.y - best!.y) < 11)) {
       airfields.push({ x: best.x, y: best.y });
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -2; dx <= 2; dx++) terrain[idx(best.x + dx, best.y + dy)] = 'AIRFIELD';
@@ -701,7 +703,7 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
 
   // ---- 10. Depots ----------------------------------------------------------
   const pickLandNear = (cx: number, cy: number, avoid: { x: number; y: number }[] = []): { x: number; y: number } | null => {
-    for (let r = 0; r < 22; r++) {
+    for (let r = 0; r < 20; r++) {
       for (let a = 0; a < 24; a++) {
         const ang = (a / 24) * Math.PI * 2;
         const x = Math.round(cx + Math.cos(ang) * r);
@@ -1015,8 +1017,8 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
   crossings.sort((a, b) => b.size - a.size);
   const namedCrossings: typeof crossings = [];
   for (const c of crossings) {
-    if (namedCrossings.length >= 4) break;
-    if (namedCrossings.some((n) => Math.hypot(n.x - c.x, n.y - c.y) < 10)) continue;
+    if (namedCrossings.length >= 3) break;
+    if (namedCrossings.some((n) => Math.hypot(n.x - c.x, n.y - c.y) < 9)) continue;
     namedCrossings.push(c);
   }
   namedCrossings.forEach((c, i) => addObjective(c.x, c.y, `Bridge ${i + 1}`, 'Bridge', 2));
@@ -1036,7 +1038,7 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
   const chosenPeaks: typeof peaks = [];
   for (const p of peaks) {
     if (chosenPeaks.length >= 3) break;
-    if (chosenPeaks.some((c) => Math.hypot(c.x - p.x, c.y - p.y) < 14)) continue;
+    if (chosenPeaks.some((c) => Math.hypot(c.x - p.x, c.y - p.y) < 13)) continue;
     chosenPeaks.push(p);
   }
   chosenPeaks.forEach((p) => addObjective(p.x, p.y, `Hill ${Math.round(norm(p.h) * 400 + 60)}`, 'Hill', 2));
@@ -1090,7 +1092,7 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
   const pickStartZone = (cx: number, cy: number, count: number): { x: number; y: number }[] => {
     const out: { x: number; y: number }[] = [];
     const seen = new Set<number>();
-    for (let r = 0; r <= 26 && out.length < count; r++) {
+    for (let r = 0; r <= 23 && out.length < count; r++) {
       for (let a = 0; a < 40 && out.length < count; a++) {
         const ang = (a / 40) * Math.PI * 2;
         const x = Math.round(cx + Math.cos(ang) * r);

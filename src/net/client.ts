@@ -147,6 +147,12 @@ export function useMultiplayer() {
           break;
         case 'error':
           setError(msg.message);
+          // A LOBBY-phase failure (no such room code, room full, server refused
+          // the queue) has to hand the player back to the menu with the reason
+          // — otherwise the "connecting" card spins forever. An in-game action
+          // rejection arrives on the same message and must NOT eject anyone, so
+          // the status only moves for the pre-game states.
+          setStatus((prev) => (prev === 'connecting' || prev === 'waiting' || prev === 'searching' ? 'error' : prev));
           break;
       }
     });

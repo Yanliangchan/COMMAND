@@ -76,7 +76,9 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     baseAttack: 9,
     baseDefense: 3,
     moveRange: 3,
-    attackRange: 8,
+    // Phase 3: 8 -> 7 with the 80x80 -> 72x72 board, so the gun's reach stays
+    // the same *fraction* of the battlefield it was tuned against.
+    attackRange: 7,
     sightRadius: 2,
     reconRadius: 2,
     isNaval: false,

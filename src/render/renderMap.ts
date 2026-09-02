@@ -20,7 +20,7 @@ const CONTOUR_BANDS = 20;
 /** Every Nth contour is an "index" contour — thicker and darker, as on a real sheet. */
 const INDEX_EVERY = 5;
 /** Subpixel budget for the relief raster; drives the adaptive supersample factor. */
-const RELIEF_PIXEL_BUDGET = 46000;
+const RELIEF_PIXEL_BUDGET = 62000;
 
 export interface Camera {
   x: number; // world-space (tile units) of viewport center
@@ -171,12 +171,22 @@ interface TerrainFields {
   /** Smoothed height gradient, used for hillshade. */
   gx: Float32Array;
   gy: Float32Array;
-  /** 1 for water tiles, 0 otherwise. */
+  /**
+   * 1 for *broad* water (sea, estuaries, lakes) — the only water the smoothed
+   * raster and the coastline iso-line know about. Narrow river channels are
+   * deliberately EXCLUDED (see `channel`): a one-tile watercourse pushed
+   * through an isotropic blur bled a soft blue fringe a full tile wide across
+   * both banks, which was the single biggest source of mush on the sheet.
+   */
   water: Float32Array;
+  /** 1 for narrow river-channel tiles, which are drawn purely as cased lines. */
+  channel: Float32Array;
   /** Per-tile base colour channels of the terrain palette. */
   r: Float32Array;
   g: Float32Array;
   b: Float32Array;
+  /** Dominant local maxima, for spot heights. Derived once per map. */
+  peaks: { x: number; y: number; h: number }[];
 }
 
 let fieldCacheKey: Tile[][] | null = null;
@@ -187,9 +197,12 @@ function terrainFields(tiles: Tile[][]): TerrainFields {
   const N = GRID_SIZE;
   const raw = new Float32Array(N * N);
   const water = new Float32Array(N * N);
+  const channel = new Float32Array(N * N);
   const r = new Float32Array(N * N);
   const g = new Float32Array(N * N);
   const b = new Float32Array(N * N);
+  const isWater = (x: number, y: number) =>
+    x >= 0 && y >= 0 && x < N && y < N && tiles[y][x].terrain === 'WATER';
   for (let y = 0; y < N; y++) {
     for (let x = 0; x < N; x++) {
       const t = tiles[y][x];
@@ -199,11 +212,59 @@ function terrainFields(tiles: Tile[][]): TerrainFields {
       const hex = TERRAIN_COLORS[t.terrain].base;
       const n = parseInt(hex.slice(1), 16);
       // A touch of deterministic per-tile variance keeps large flats from
-      // reading as flat vector fill once the raster is smoothed.
-      const jitter = (tileNoise(x, y) - 0.5) * 10;
+      // reading as flat vector fill once the raster is smoothed. Kept low —
+      // the old amount read as film grain over every field on the sheet.
+      const jitter = (tileNoise(x, y) - 0.5) * 4;
       r[i] = ((n >> 16) & 255) + jitter;
       g[i] = ((n >> 8) & 255) + jitter;
       b[i] = (n & 255) + jitter;
+    }
+  }
+  // Narrow watercourses are lifted OUT of the smoothed water mask and painted
+  // with their own banks' colour; `drawRiver` then draws them as crisp cased
+  // lines. A channel is a river tile with few water neighbours — an estuary or
+  // a broad lower reach keeps enough neighbours to stay "real" water and so
+  // still gets a coastline and a depth ramp.
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const t = tiles[y][x];
+      if (t.terrain !== 'WATER' || !t.river) continue;
+      let wet = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          if (isWater(x + dx, y + dy)) wet++;
+        }
+      }
+      if (wet > 4) continue;
+      const i = y * N + x;
+      channel[i] = 1;
+      water[i] = 0;
+      // Bank colour: mean of the surrounding dry land, so the channel sits in
+      // its valley instead of punching a blue hole in it.
+      let cr = 0;
+      let cg = 0;
+      let cb = 0;
+      let cnt = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+          if (tiles[ny][nx].terrain === 'WATER') continue;
+          const hex = TERRAIN_COLORS[tiles[ny][nx].terrain].base;
+          const n = parseInt(hex.slice(1), 16);
+          cr += (n >> 16) & 255;
+          cg += (n >> 8) & 255;
+          cb += n & 255;
+          cnt++;
+        }
+      }
+      if (cnt) {
+        r[i] = cr / cnt;
+        g[i] = cg / cnt;
+        b[i] = cb / cnt;
+      }
     }
   }
   // 3x3 box blur of the heightfield — the relief shading reads as landform
@@ -237,7 +298,33 @@ function terrainFields(tiles: Tile[][]): TerrainFields {
       gy[y * N + x] = (ys - yn) * 0.5;
     }
   }
-  fieldCache = { h, gx, gy, water, r, g, b };
+  // Dominant local maxima, for spot heights. Cheap, and derived once per map.
+  const peaks: { x: number; y: number; h: number }[] = [];
+  for (let y = 2; y < N - 2; y++) {
+    for (let x = 2; x < N - 2; x++) {
+      const i = y * N + x;
+      if (water[i] > 0.5 || h[i] < 0.5) continue;
+      let top = true;
+      for (let dy = -2; dy <= 2 && top; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          if ((!dx && !dy) || h[(y + dy) * N + (x + dx)] <= h[i]) continue;
+          top = false;
+          break;
+        }
+      }
+      if (top) peaks.push({ x, y, h: h[i] });
+    }
+  }
+  peaks.sort((a, c) => c.h - a.h);
+  // Thin to a well-spread set so spot heights never crowd each other.
+  const spread: typeof peaks = [];
+  for (const p of peaks) {
+    if (spread.length >= 26) break;
+    if (spread.some((q) => Math.abs(q.x - p.x) + Math.abs(q.y - p.y) < 9)) continue;
+    spread.push(p);
+  }
+
+  fieldCache = { h, gx, gy, water, channel, r, g, b, peaks: spread };
   fieldCacheKey = tiles;
   return fieldCache;
 }
@@ -275,7 +362,7 @@ function drawRelief(rc: RenderContext, x0: number, x1: number, y0: number, y1: n
   const f = terrainFields(state.tiles);
   const tw = x1 - x0 + 1;
   const th = y1 - y0 + 1;
-  const ss = Math.max(2, Math.min(6, Math.floor(Math.sqrt(RELIEF_PIXEL_BUDGET / Math.max(1, tw * th)))));
+  const ss = Math.max(2, Math.min(8, Math.floor(Math.sqrt(RELIEF_PIXEL_BUDGET / Math.max(1, tw * th)))));
   const pw = tw * ss;
   const ph = th * ss;
 
@@ -330,11 +417,12 @@ function drawRelief(rc: RenderContext, x0: number, x1: number, y0: number, y1: n
         cr += tint * 1.05;
         cg += tint * 0.95;
         cb += tint * 0.6;
-        if (wet > 0.12) {
+        if (wet > 0.2) {
           // Shoreline blend — a soft wet fringe instead of a stair-stepped edge.
-          // Kept deliberately narrow so a one-tile river channel does not bleed
-          // a two-tile blue smear across the bank.
-          const k = Math.max(0, Math.min(1, (wet - 0.18) / 0.42)) * 0.9;
+          // Only broad water reaches this code now (narrow river channels are
+          // masked out upstream), so the fringe belongs to real shorelines and
+          // is tightened further to keep the coast a *line*, not a gradient.
+          const k = Math.max(0, Math.min(1, (wet - 0.28) / 0.34)) * 0.85;
           cr += (WATER_SHALLOW[0] - cr) * k;
           cg += (WATER_SHALLOW[1] - cg) * k;
           cb += (WATER_SHALLOW[2] - cb) * k;
@@ -342,16 +430,18 @@ function drawRelief(rc: RenderContext, x0: number, x1: number, y0: number, y1: n
         // Hillshade from a north-west light over the smoothed gradient.
         const dx = bilinear(f.gx, ix, iy, fx, fy, N);
         const dy = bilinear(f.gy, ix, iy, fx, fy, N);
-        let lit = (-dx - dy) * 13;
+        let lit = (-dx - dy) * 12;
         lit = lit > 1 ? 1 : lit < -1 ? -1 : lit;
         const dry = 1 - Math.min(1, wet * 2);
         if (lit > 0) {
-          const k = lit * 0.34 * dry;
+          // Softer than phase 2: relief should describe the landform, not
+          // compete with the counters standing on it.
+          const k = lit * 0.26 * dry;
           cr += (255 - cr) * k;
           cg += (250 - cg) * k;
           cb += (228 - cb) * k;
         } else {
-          const k = -lit * 0.42 * dry;
+          const k = -lit * 0.32 * dry;
           cr += (12 - cr) * k;
           cg += (16 - cg) * k;
           cb += (22 - cb) * k;
@@ -451,6 +541,41 @@ function msCell(path: Path2D, a: number, b: number, c: number, d: number, L: num
   }
 }
 
+/**
+ * Height 0..1 -> a plausible metre figure for contour labels and spot heights.
+ * Matches the scale the generator uses when it names hills ("Hill 312").
+ */
+function metres(hNorm: number) {
+  return Math.round(hNorm * 400 + 60);
+}
+
+/** Midpoint + direction of the first marching-squares segment in one cell. */
+function msMidpoint(a: number, b: number, c: number, d: number, L: number, sx: number, sy: number, s: number) {
+  const code = (a > L ? 1 : 0) | (b > L ? 2 : 0) | (c > L ? 4 : 0) | (d > L ? 8 : 0);
+  if (code === 0 || code === 15 || code === 5 || code === 10) return null;
+  const lerp = (v0: number, v1: number) => (L - v0) / (v1 - v0 || 1e-6);
+  const top = { x: sx + s * lerp(a, b), y: sy };
+  const right = { x: sx + s, y: sy + s * lerp(b, c) };
+  const bottom = { x: sx + s * lerp(d, c), y: sy + s };
+  const left = { x: sx, y: sy + s * lerp(a, d) };
+  let p = left;
+  let q = top;
+  switch (code) {
+    case 1: case 14: p = left; q = top; break;
+    case 2: case 13: p = top; q = right; break;
+    case 3: case 12: p = left; q = right; break;
+    case 4: case 11: p = right; q = bottom; break;
+    case 6: case 9: p = top; q = bottom; break;
+    case 7: case 8: p = left; q = bottom; break;
+    default: return null;
+  }
+  let ang = Math.atan2(q.y - p.y, q.x - p.x);
+  // Keep labels upright.
+  if (ang > Math.PI / 2) ang -= Math.PI;
+  if (ang < -Math.PI / 2) ang += Math.PI;
+  return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, ang };
+}
+
 function drawContours(rc: RenderContext, x0: number, x1: number, y0: number, y1: number) {
   const { ctx, width, height, camera, state } = rc;
   const s = camera.scale;
@@ -458,7 +583,14 @@ function drawContours(rc: RenderContext, x0: number, x1: number, y0: number, y1:
   const minor = new Path2D();
   const index = new Path2D();
   const coast = new Path2D();
-  const showMinor = s >= 7;
+  // Minor contours only appear once there is room for them to read as lines
+  // rather than as texture, and they fade in rather than snapping on.
+  const showMinor = s >= 9;
+  const minorAlpha = Math.min(0.3, 0.12 + (s - 9) * 0.025);
+  // Index contours carry a height figure at close zoom, placed on a coarse
+  // lattice so they are spread over the sheet instead of clustered.
+  const labelContours = s >= 14;
+  const labels: { x: number; y: number; ang: number; text: string }[] = [];
 
   for (let y = y0; y <= y1 + 1; y++) {
     for (let x = x0; x <= x1 + 1; x++) {
@@ -487,7 +619,12 @@ function drawContours(rc: RenderContext, x0: number, x1: number, y0: number, y1:
       for (let k = kStart; k <= kEnd; k++) {
         const isIndex = k % INDEX_EVERY === 0;
         if (!isIndex && !showMinor) continue;
-        msCell(isIndex ? index : minor, a, b, c, d, k / CONTOUR_BANDS, sx, sy, s);
+        const L = k / CONTOUR_BANDS;
+        msCell(isIndex ? index : minor, a, b, c, d, L, sx, sy, s);
+        if (isIndex && labelContours && labels.length < 14 && x % 11 === 4 && y % 11 === 4) {
+          const m = msMidpoint(a, b, c, d, L, sx, sy, s);
+          if (m) labels.push({ ...m, text: `${metres(L)}` });
+        }
       }
     }
   }
@@ -495,16 +632,74 @@ function drawContours(rc: RenderContext, x0: number, x1: number, y0: number, y1:
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   if (showMinor) {
-    ctx.strokeStyle = 'rgba(58,40,20,0.30)';
-    ctx.lineWidth = Math.max(0.6, s * 0.022);
+    ctx.strokeStyle = `rgba(58,40,20,${minorAlpha.toFixed(3)})`;
+    ctx.lineWidth = Math.max(0.6, s * 0.02);
     ctx.stroke(minor);
   }
-  ctx.strokeStyle = 'rgba(50,32,12,0.55)';
-  ctx.lineWidth = Math.max(1, s * 0.055);
+  ctx.strokeStyle = 'rgba(56,36,12,0.52)';
+  ctx.lineWidth = Math.max(1, s * 0.045);
   ctx.stroke(index);
-  ctx.strokeStyle = 'rgba(14,32,48,0.75)';
-  ctx.lineWidth = Math.max(1, s * 0.06);
+  // Coastline: a dark casing plus a pale inner line reads as a drawn shore at
+  // every zoom, where a single mid-tone stroke used to disappear over sand.
+  ctx.strokeStyle = 'rgba(10,26,40,0.85)';
+  ctx.lineWidth = Math.max(1.4, s * 0.075);
   ctx.stroke(coast);
+  ctx.strokeStyle = 'rgba(196,222,238,0.35)';
+  ctx.lineWidth = Math.max(0.6, s * 0.028);
+  ctx.stroke(coast);
+
+  if (labels.length) drawContourLabels(rc, labels, s);
+  if (s >= 13) drawSpotHeights(rc, f, x0, x1, y0, y1, s);
+}
+
+/** Height figures lettered along the index contours, as on a real sheet. */
+function drawContourLabels(rc: RenderContext, labels: { x: number; y: number; ang: number; text: string }[], s: number) {
+  const { ctx } = rc;
+  const size = Math.max(8, Math.min(12, s * 0.34));
+  ctx.save();
+  ctx.font = `600 ${size}px Rajdhani, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const l of labels) {
+    ctx.save();
+    ctx.translate(l.x, l.y);
+    ctx.rotate(l.ang);
+    // A pale halo stands in for the cartographer's break in the line: the
+    // contour reads as passing behind the figure without punching a hole in
+    // the sheet.
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(240,234,214,0.72)';
+    ctx.strokeText(l.text, 0, 0);
+    ctx.fillStyle = 'rgba(46,30,10,0.85)';
+    ctx.fillText(l.text, 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/** Spot heights on the dominant summits — the quickest read of "high ground". */
+function drawSpotHeights(rc: RenderContext, f: TerrainFields, x0: number, x1: number, y0: number, y1: number, s: number) {
+  const { ctx, width, height, camera } = rc;
+  const size = Math.max(8, Math.min(12, s * 0.32));
+  ctx.save();
+  ctx.font = `600 ${size}px Rajdhani, sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  for (const p of f.peaks) {
+    if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) continue;
+    const { sx, sy } = worldToScreen(camera, width, height, p.x, p.y);
+    ctx.fillStyle = 'rgba(46,30,10,0.85)';
+    ctx.beginPath();
+    ctx.arc(sx, sy, Math.max(1.2, s * 0.055), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = 'rgba(244,238,222,0.5)';
+    ctx.lineJoin = 'round';
+    ctx.strokeText(`${metres(p.h)}`, sx + size * 0.45, sy - size * 0.1);
+    ctx.fillText(`${metres(p.h)}`, sx + size * 0.45, sy - size * 0.1);
+  }
+  ctx.restore();
 }
 
 /** A neat drawn edge to the sheet, so the map ends deliberately. */
@@ -590,14 +785,12 @@ export function render(rc: RenderContext) {
   drawSheetEdge(rc);
 
   // ---- Linear water features (rivers) and bridges ----
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const tile = state.tiles[y][x];
-      if (tile.river && tile.terrain === 'WATER') drawRiver(rc, tile);
-    }
-  }
+  drawRivers(rc, x0, x1, y0, y1);
 
-  // ---- Sprite detail (forest stipple, buildings, runways, quays, depots) ----
+  // ---- Built-up areas (street grid + building footprints) ----
+  if (s >= 9) drawBuiltUp(rc, x0, x1, y0, y1);
+
+  // ---- Sprite detail (forest stipple, runways, quays, depots) ----
   if (detail) {
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) drawTileDetail(rc, state.tiles[y][x], s);
@@ -647,16 +840,44 @@ export function render(rc: RenderContext) {
   // ---- Movement range overlay ----
   if (rc.overlays.movement && rc.selected && rc.reachable.size) {
     const region = new Path2D();
+    // Only the OUTER boundary of the reachable set is stroked. Stroking every
+    // tile rect (phase 2) drew a bright amber grid across the whole wash, which
+    // was the noisiest thing on the sheet and hid everything under it.
+    const border = new Path2D();
     rc.reachable.forEach((_cost, key) => {
       const [x, y] = key.split(',').map(Number);
       const { sx, sy } = worldToScreen(camera, width, height, x, y);
-      region.rect(sx - s / 2, sy - s / 2, s + 0.6, s + 0.6);
+      region.rect(sx - s / 2 - 0.3, sy - s / 2 - 0.3, s + 0.6, s + 0.6);
+      const l = sx - s / 2;
+      const r = sx + s / 2;
+      const t = sy - s / 2;
+      const bm = sy + s / 2;
+      if (!rc.reachable.has(`${x - 1},${y}`)) {
+        border.moveTo(l, t);
+        border.lineTo(l, bm);
+      }
+      if (!rc.reachable.has(`${x + 1},${y}`)) {
+        border.moveTo(r, t);
+        border.lineTo(r, bm);
+      }
+      if (!rc.reachable.has(`${x},${y - 1}`)) {
+        border.moveTo(l, t);
+        border.lineTo(r, t);
+      }
+      if (!rc.reachable.has(`${x},${y + 1}`)) {
+        border.moveTo(l, bm);
+        border.lineTo(r, bm);
+      }
     });
-    ctx.fillStyle = 'rgba(207,154,68,0.22)';
+    ctx.fillStyle = 'rgba(207,154,68,0.16)';
     ctx.fill(region);
-    ctx.strokeStyle = 'rgba(230,182,101,0.5)';
-    ctx.lineWidth = 1;
-    ctx.stroke(region);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(18,14,8,0.55)';
+    ctx.lineWidth = Math.max(2.4, s * 0.1);
+    ctx.stroke(border);
+    ctx.strokeStyle = 'rgba(236,190,110,0.95)';
+    ctx.lineWidth = Math.max(1.2, s * 0.05);
+    ctx.stroke(border);
   }
 
   // ---- Objectives ----
@@ -666,11 +887,17 @@ export function render(rc: RenderContext) {
       const { sx, sy } = worldToScreen(camera, width, height, o.x, o.y);
       const color = o.controlledBy ? PLAYER_COLORS[o.controlledBy].main : UI.amber;
       const r = Math.max(5, s * 0.34);
+      // Dark casing first: an objective must never get lost in forest, urban
+      // fabric or a hillshade shadow.
+      ctx.beginPath();
+      ctx.arc(sx, sy, r + Math.max(1.6, r * 0.2), 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(10,13,17,0.72)';
+      ctx.fill();
       ctx.beginPath();
       ctx.arc(sx, sy, r, 0, Math.PI * 2);
-      ctx.fillStyle = o.controlledBy ? PLAYER_COLORS[o.controlledBy].glow : 'rgba(207,154,68,0.32)';
+      ctx.fillStyle = o.controlledBy ? PLAYER_COLORS[o.controlledBy].glow : 'rgba(207,154,68,0.42)';
       ctx.fill();
-      ctx.lineWidth = 2;
+      ctx.lineWidth = Math.max(2, r * 0.22);
       ctx.strokeStyle = color;
       ctx.stroke();
       if (s >= 7) {
@@ -713,11 +940,14 @@ export function render(rc: RenderContext) {
     Object.values(state.formations).forEach((f) => {
       if (!rc.attackable.has(f.id)) return;
       const { sx, sy } = worldToScreen(camera, width, height, f.x, f.y);
-      ctx.strokeStyle = UI.danger;
-      ctx.lineWidth = 2.5;
       ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = 'rgba(12,10,10,0.7)';
+      ctx.lineWidth = 5;
       ctx.beginPath();
       ctx.arc(sx, sy, s * 0.58, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = '#e06a5e';
+      ctx.lineWidth = 2.5;
       ctx.stroke();
       ctx.setLineDash([]);
     });
@@ -761,10 +991,13 @@ export function render(rc: RenderContext) {
     const f = state.formations[rc.selected.id];
     const { sx, sy } = worldToScreen(camera, width, height, f.x, f.y);
     const r = Math.max(9, s * 0.62);
-    ctx.strokeStyle = 'rgba(230,182,101,0.95)';
-    ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(10,13,17,0.7)';
+    ctx.lineWidth = 5.5;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(240,196,112,0.98)';
+    ctx.lineWidth = 2.5;
     ctx.stroke();
     // Rotating dashed outer ring — unmistakable at any zoom.
     ctx.save();
@@ -856,36 +1089,20 @@ function drawTileDetail(rc: RenderContext, tile: Tile, s: number) {
   const colors = TERRAIN_COLORS[tile.terrain];
 
   if (tile.terrain === 'FOREST') {
-    for (let i = 0; i < 3; i++) {
-      const jx = (((n * 977 * (i + 1)) % 1) - 0.5) * 0.72;
-      const jy = (((n * 613 * (i + 2)) % 1) - 0.5) * 0.72;
+    // Two low-contrast crowns per tile. Phase 2 drew three hard, dark blobs,
+    // which turned every stand into a field of noise that swallowed counters.
+    for (let i = 0; i < 2; i++) {
+      const jx = (((n * 977 * (i + 1)) % 1) - 0.5) * 0.62;
+      const jy = (((n * 613 * (i + 2)) % 1) - 0.5) * 0.62;
       const tx = sx + jx * s;
       const ty = sy + jy * s;
-      const r = s * 0.15;
+      const r = s * 0.16;
       ctx.beginPath();
       ctx.arc(tx, ty - r * 0.3, r, 0, Math.PI * 2);
-      ctx.fillStyle = shade(colors.dark, -14 + i * 7);
-      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = shade(colors.dark, -4 + i * 8);
+      ctx.globalAlpha = 0.42;
       ctx.fill();
       ctx.globalAlpha = 1;
-    }
-  }
-
-  if (tile.terrain === 'URBAN' || tile.terrain === 'INDUSTRIAL') {
-    for (let i = 0; i < 2; i++) {
-      for (let j = 0; j < 2; j++) {
-        const seed = (n * (i + 1) * (j + 2) * 17) % 1;
-        if (seed < 0.28) continue;
-        const bw = s * 0.3;
-        const bh = s * (0.24 + seed * 0.2);
-        const bx = sx - half + s * 0.12 + i * s * 0.46;
-        const by = sy - half + s * 0.14 + j * s * 0.42;
-        ctx.fillStyle = tile.terrain === 'URBAN' ? shade('#74747a', seed * 30 - 15) : shade('#57554d', seed * 24 - 12);
-        ctx.fillRect(bx, by, bw, bh);
-        ctx.strokeStyle = 'rgba(20,22,26,0.5)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
-      }
     }
   }
 
@@ -927,34 +1144,205 @@ function drawTileDetail(rc: RenderContext, tile: Tile, s: number) {
   }
 }
 
-function drawRiver(rc: RenderContext, tile: Tile) {
+/**
+ * Rivers, drawn as proper cased lines over the terrain raster.
+ *
+ * Narrow channels no longer exist in the smoothed water mask at all (see
+ * `terrainFields`), so this pass is the *only* thing that puts a river on the
+ * sheet — which is exactly why it can be crisp: a dark casing, a blue core and
+ * a hairline highlight, batched into three strokes for the whole window.
+ */
+function drawRivers(rc: RenderContext, x0: number, x1: number, y0: number, y1: number) {
   const { ctx, width, height, camera, state } = rc;
   const s = camera.scale;
-  const { sx, sy } = worldToScreen(camera, width, height, tile.x, tile.y);
-  ctx.strokeStyle = 'rgba(41,96,138,0.95)';
-  ctx.lineWidth = Math.max(1.2, s * 0.22);
-  ctx.lineCap = 'round';
-  let any = false;
-  for (const [dx, dy] of [
+  const path = new Path2D();
+  const dots: { x: number; y: number }[] = [];
+  const N4D: [number, number][] = [
     [1, 0],
     [-1, 0],
     [0, 1],
     [0, -1],
-  ] as [number, number][]) {
-    const nt = state.tiles[tile.y + dy]?.[tile.x + dx];
-    if (nt && nt.terrain === 'WATER') {
-      any = true;
-      ctx.beginPath();
-      ctx.moveTo(sx, sy);
-      ctx.lineTo(sx + (dx * s) / 2, sy + (dy * s) / 2);
-      ctx.stroke();
+  ];
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const tile = state.tiles[y][x];
+      if (!tile.river || tile.terrain !== 'WATER') continue;
+      const { sx, sy } = worldToScreen(camera, width, height, x, y);
+      const ends: { x: number; y: number }[] = [];
+      for (const [dx, dy] of N4D) {
+        const nt = state.tiles[y + dy]?.[x + dx];
+        if (nt && nt.terrain === 'WATER') ends.push({ x: sx + (dx * s) / 2, y: sy + (dy * s) / 2 });
+      }
+      if (ends.length === 0) {
+        dots.push({ x: sx, y: sy });
+      } else if (ends.length === 2) {
+        // A through-flowing tile: bend the channel round its centre so the
+        // watercourse meanders instead of climbing a staircase of right angles.
+        path.moveTo(ends[0].x, ends[0].y);
+        path.quadraticCurveTo(sx, sy, ends[1].x, ends[1].y);
+      } else {
+        // Source, mouth or confluence: straight spokes from the centre.
+        for (const e of ends) {
+          path.moveTo(sx, sy);
+          path.lineTo(e.x, e.y);
+        }
+      }
     }
   }
-  if (!any) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const core = Math.max(1, s * 0.1);
+  ctx.strokeStyle = 'rgba(16,42,64,0.55)';
+  ctx.lineWidth = core + Math.max(1, s * 0.055);
+  ctx.stroke(path);
+  ctx.strokeStyle = '#3f7fac';
+  ctx.lineWidth = core;
+  ctx.stroke(path);
+  for (const d of dots) {
     ctx.beginPath();
-    ctx.arc(sx, sy, s * 0.11, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(41,96,138,0.95)';
+    ctx.arc(d.x, d.y, Math.max(1, s * 0.09), 0, Math.PI * 2);
+    ctx.fillStyle = '#3f7fac';
     ctx.fill();
+  }
+  ctx.restore();
+}
+
+/**
+ * Built-up areas.
+ *
+ * Phase 2 stamped a 2x2 grid of identical blocks into every urban tile, which
+ * read as a texture swatch rather than a town. Here each urban tile is one
+ * CITY BLOCK: the streets are the tile boundaries (so they run continuously
+ * across the whole settlement and line up with the road network), every fourth
+ * world line is a wider avenue, and the interior of each block is split into a
+ * handful of varied building footprints by a deterministic binary subdivision.
+ * A share of blocks are left open as yards/parks so the town is not uniform.
+ */
+function isBuiltUp(t: Tile) {
+  return t.terrain === 'URBAN' || t.terrain === 'INDUSTRIAL';
+}
+
+function drawBuiltUp(rc: RenderContext, x0: number, x1: number, y0: number, y1: number) {
+  const { ctx, width, height, camera, state } = rc;
+  const s = camera.scale;
+  const half = s / 2;
+  const tiles = state.tiles;
+
+  // --- 1. Block ground: a flat paved base so buildings sit on something. ---
+  const ground = new Path2D();
+  let anyBuilt = false;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (!isBuiltUp(tiles[y][x])) continue;
+      anyBuilt = true;
+      const { sx, sy } = worldToScreen(camera, width, height, x, y);
+      ground.rect(sx - half, sy - half, s + 1, s + 1);
+    }
+  }
+  if (!anyBuilt) return;
+  ctx.save();
+  ctx.fillStyle = 'rgba(58,58,60,0.30)';
+  ctx.fill(ground);
+
+  // --- 2. Streets along block boundaries, avenues every fourth line. -------
+  const street = new Path2D();
+  const avenue = new Path2D();
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (!isBuiltUp(tiles[y][x])) continue;
+      const { sx, sy } = worldToScreen(camera, width, height, x, y);
+      // A vertical street on this block's west edge, if the neighbour is built.
+      if (tiles[y][x - 1] && isBuiltUp(tiles[y][x - 1])) {
+        (x % 4 === 1 ? avenue : street).moveTo(sx - half, sy - half);
+        (x % 4 === 1 ? avenue : street).lineTo(sx - half, sy + half);
+      }
+      if (tiles[y - 1]?.[x] && isBuiltUp(tiles[y - 1][x])) {
+        (y % 4 === 2 ? avenue : street).moveTo(sx - half, sy - half);
+        (y % 4 === 2 ? avenue : street).lineTo(sx + half, sy - half);
+      }
+    }
+  }
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = 'rgba(206,198,178,0.42)';
+  ctx.lineWidth = Math.max(1, s * 0.09);
+  ctx.stroke(street);
+  ctx.strokeStyle = 'rgba(222,214,192,0.6)';
+  ctx.lineWidth = Math.max(1.4, s * 0.15);
+  ctx.stroke(avenue);
+
+  // --- 3. Building footprints inside each block. --------------------------
+  if (s < 11) {
+    ctx.restore();
+    return;
+  }
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const t = tiles[y][x];
+      if (!isBuiltUp(t)) continue;
+      const n = tileNoise(x, y);
+      // Open ground: yards, parks, car parks. Keeps a town from tiling.
+      if (n < 0.14) continue;
+      const { sx, sy } = worldToScreen(camera, width, height, x, y);
+      const inset = Math.max(1, s * 0.11);
+      const industrial = t.terrain === 'INDUSTRIAL';
+      const rects: { x: number; y: number; w: number; h: number }[] = [];
+      subdivide(
+        sx - half + inset,
+        sy - half + inset,
+        s - inset * 2,
+        s - inset * 2,
+        industrial ? 1 : 2,
+        n,
+        Math.max(2.5, s * (industrial ? 0.3 : 0.19)),
+        rects
+      );
+      for (let i = 0; i < rects.length; i++) {
+        const b = rects[i];
+        const v = (n * 997 * (i + 3)) % 1;
+        if (v < (industrial ? 0.1 : 0.2)) continue; // a gap in the terrace
+        const g = Math.max(0.5, s * 0.02);
+        const bw = b.w - g;
+        const bh = b.h - g;
+        if (bw < 1 || bh < 1) continue;
+        ctx.fillStyle = industrial ? shade('#6d6a60', v * 24 - 12) : shade(v > 0.68 ? '#8d8478' : '#83838a', v * 34 - 17);
+        ctx.fillRect(b.x, b.y, bw, bh);
+        // One dark south-east edge gives the block relief without a shadow pass.
+        ctx.fillStyle = 'rgba(22,24,28,0.45)';
+        ctx.fillRect(b.x, b.y + bh - Math.max(0.6, s * 0.02), bw, Math.max(0.6, s * 0.02));
+        ctx.fillRect(b.x + bw - Math.max(0.6, s * 0.02), b.y, Math.max(0.6, s * 0.02), bh);
+      }
+    }
+  }
+  ctx.restore();
+}
+
+/** Deterministic binary subdivision of a block into building footprints. */
+function subdivide(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  depth: number,
+  seed: number,
+  minSize: number,
+  out: { x: number; y: number; w: number; h: number }[]
+) {
+  if (depth <= 0 || (w < minSize * 2 && h < minSize * 2) || out.length > 12) {
+    out.push({ x, y, w, h });
+    return;
+  }
+  const v = Math.sin(seed * 91.7 + out.length * 13.1 + depth * 3.7) * 43758.5453;
+  const r = v - Math.floor(v);
+  const t = 0.35 + r * 0.3;
+  if (w >= h) {
+    const cut = w * t;
+    subdivide(x, y, cut, h, depth - 1, seed * 1.37 + 0.11, minSize, out);
+    subdivide(x + cut, y, w - cut, h, depth - 1, seed * 0.71 + 0.29, minSize, out);
+  } else {
+    const cut = h * t;
+    subdivide(x, y, w, cut, depth - 1, seed * 1.61 + 0.07, minSize, out);
+    subdivide(x, y + cut, w, h - cut, depth - 1, seed * 0.83 + 0.43, minSize, out);
   }
 }
 
@@ -1011,21 +1399,24 @@ function drawFormation(rc: RenderContext, f: Formation) {
   const pc = PLAYER_COLORS[f.owner];
   const r = Math.max(6, s * 0.34);
 
+  // A dark halo under every counter. This is what guarantees a formation reads
+  // over forest, urban fabric, a hillshade shadow or the movement wash — the
+  // counter is always the highest-contrast thing in its own patch of sheet.
   ctx.beginPath();
-  ctx.ellipse(sx, sy + r * 0.7, r * 0.9, r * 0.35, 0, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.arc(sx, sy, r + Math.max(1.8, r * 0.26), 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(9,12,16,0.68)';
   ctx.fill();
 
   ctx.beginPath();
   ctx.arc(sx, sy, r, 0, Math.PI * 2);
   ctx.fillStyle = pc.dark;
   ctx.fill();
-  ctx.lineWidth = Math.max(1.5, r * 0.18);
+  ctx.lineWidth = Math.max(1.8, r * 0.22);
   ctx.strokeStyle = pc.main;
   ctx.stroke();
 
   if (s >= 8) {
-    ctx.fillStyle = pc.main;
+    ctx.fillStyle = pc.light;
     ctx.font = `bold ${Math.max(8, r * 0.85)}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

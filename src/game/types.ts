@@ -3,11 +3,12 @@
 // ============================================================================
 
 /**
- * Battlefield grid edge length. Raised from 60 to 80 in the phase-1 refinement
- * pass (6,400 tiles, ~1.8x the previous playable area) so battles develop in
- * several places at once. See README "Map generation".
+ * Battlefield grid edge length. Raised 60 -> 80 in phase 1, then trimmed to 72
+ * in phase 3 (5,184 tiles, ~19% fewer than 80x80): the board reads better at a
+ * glance and engagement distances tighten so the two forces meet sooner.
+ * See README "Map generation".
  */
-export const GRID_SIZE = 80;
+export const GRID_SIZE = 72;
 
 export type PlayerId = 'BLUEFOR' | 'REDFOR';
 
