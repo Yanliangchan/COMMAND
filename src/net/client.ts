@@ -9,9 +9,28 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GameState, PlayerId } from '../game/types';
-import { ClientMsg, GameAction, ServerMsg } from './protocol';
+import { BotDifficulty, ClientMsg, GameAction, ServerMsg } from './protocol';
 
-export const WS_URL = (import.meta as any).env?.VITE_WS_URL || 'ws://localhost:8787';
+// Resolution order:
+//  1. VITE_WS_URL — explicit override, handy for local dev pointed at a
+//     non-default server, or a split (non-single-process) deployment.
+//  2. `import.meta.env.DEV` (Vite dev server) — the two-terminal `npm run
+//     dev:all` workflow: client on :5173, server on :8787.
+//  3. Otherwise (a production build, single combined process) — derive the
+//     URL from the page's own origin: same host/port, matching ws:/wss:
+//     protocol, `/ws` path. Zero env config required.
+function resolveWsUrl(): string {
+  const env = (import.meta as any).env;
+  if (env?.VITE_WS_URL) return env.VITE_WS_URL;
+  if (env?.DEV) return 'ws://localhost:8787';
+  if (typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}/ws`;
+  }
+  return 'ws://localhost:8787';
+}
+
+export const WS_URL = resolveWsUrl();
 
 export type ConnStatus =
   | 'lobby' // showing the lobby screen, no active room
@@ -155,6 +174,13 @@ export function useMultiplayer() {
     openSocket((ws) => ws.send(JSON.stringify({ t: 'quick' } satisfies ClientMsg)));
   }, [openSocket]);
 
+  const vsBot = useCallback(
+    (difficulty: BotDifficulty) => {
+      openSocket((ws) => ws.send(JSON.stringify({ t: 'bot', difficulty } satisfies ClientMsg)));
+    },
+    [openSocket]
+  );
+
   const sendAction = useCallback((action: GameAction) => send({ t: 'action', action }), [send]);
   const endTurn = useCallback(() => send({ t: 'action', action: { type: 'END_TURN' } }), [send]);
 
@@ -192,6 +218,7 @@ export function useMultiplayer() {
     createRoom,
     joinRoom,
     quickMatch,
+    vsBot,
     sendAction,
     endTurn,
     leaveToLobby,

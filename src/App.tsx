@@ -67,6 +67,7 @@ export default function App() {
         onCreate={net.createRoom}
         onJoin={net.joinRoom}
         onQuickMatch={net.quickMatch}
+        onVsBot={net.vsBot}
         onCancel={net.leaveToLobby}
       />
     );

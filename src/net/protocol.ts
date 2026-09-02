@@ -6,6 +6,8 @@
 
 import { GameState, PlayerId } from '../game/types';
 
+export type BotDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
+
 export type GameAction =
   | { type: 'MOVE'; formationId: string; x: number; y: number }
   | { type: 'ATTACK'; attackerId: string; targetId: string }
@@ -24,6 +26,7 @@ export type ClientMsg =
   | { t: 'create' }
   | { t: 'join'; code: string }
   | { t: 'quick' }
+  | { t: 'bot'; difficulty: BotDifficulty }
   | { t: 'reconnect'; code: string; token: string }
   | { t: 'action'; action: GameAction }
   | { t: 'leave' };

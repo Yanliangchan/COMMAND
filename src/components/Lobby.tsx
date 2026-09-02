@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ConnStatus } from '../net/client';
+import { BotDifficulty } from '../net/protocol';
 
 interface Props {
   status: ConnStatus;
@@ -8,10 +9,17 @@ interface Props {
   onCreate: () => void;
   onJoin: (code: string) => void;
   onQuickMatch: () => void;
+  onVsBot: (difficulty: BotDifficulty) => void;
   onCancel: () => void;
 }
 
-export const Lobby: React.FC<Props> = ({ status, roomCode, error, onCreate, onJoin, onQuickMatch, onCancel }) => {
+const BOT_DIFFICULTIES: { level: BotDifficulty; label: string; blurb: string }[] = [
+  { level: 'EASY', label: 'Easy', blurb: 'Mostly improvised orders — good for learning the ropes.' },
+  { level: 'MEDIUM', label: 'Medium', blurb: 'Plays for objectives and avoids obviously bad attacks.' },
+  { level: 'HARD', label: 'Hard', blurb: 'Combined-arms, target-priority, efficient with its AP.' },
+];
+
+export const Lobby: React.FC<Props> = ({ status, roomCode, error, onCreate, onJoin, onQuickMatch, onVsBot, onCancel }) => {
   const [joinCode, setJoinCode] = useState('');
   const [copied, setCopied] = useState(false);
   const busy = status === 'connecting' || status === 'waiting' || status === 'searching';
@@ -112,6 +120,23 @@ export const Lobby: React.FC<Props> = ({ status, roomCode, error, onCreate, onJo
               <button className="btn-primary" onClick={onQuickMatch} disabled={busy}>
                 Quick Match
               </button>
+            </div>
+            <div className="lobby-panel">
+              <div className="lobby-panel-title">VS BOT</div>
+              <p className="lobby-hint">Play a solo operation against an AI opponent — no second commander needed.</p>
+              <div className="bot-difficulty-row">
+                {BOT_DIFFICULTIES.map((d) => (
+                  <button
+                    key={d.level}
+                    className="btn-secondary bot-difficulty-btn"
+                    title={d.blurb}
+                    onClick={() => onVsBot(d.level)}
+                    disabled={busy}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}

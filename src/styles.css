@@ -361,6 +361,9 @@ canvas { display: block; touch-action: none; }
   text-align: center;
 }
 
+.bot-difficulty-row { display: flex; gap: 8px; }
+.bot-difficulty-btn { flex: 1; }
+
 .join-row { display: flex; gap: 8px; }
 .join-input {
   flex: 1;

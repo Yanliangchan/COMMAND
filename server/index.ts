@@ -7,17 +7,85 @@
 // their own fog-of-war-filtered view via src/game/fog.ts. The client never
 // computes combat or fog itself — it only renders what this process sends.
 //
-// Run with `npm run server` (tsx, dev-only — no build step needed).
+// In dev, run with `npm run server` (tsx, no build step needed) alongside
+// `npm run dev` (Vite) — two processes, client points at ws://localhost:PORT.
+//
+// In production, `npm start` runs this same file as a SINGLE process: it
+// serves the built client (vite build's dist/) over plain HTTP *and* the
+// WebSocket server on the `/ws` path of that same HTTP server/port, so the
+// whole app is one reachable service with no separate host/CORS/URL config.
 // ============================================================================
 
 import { randomBytes, randomUUID } from 'node:crypto';
+import { createServer, IncomingMessage, ServerResponse } from 'node:http';
+import { readFile, stat as fsStat } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import * as engine from '../src/game/engine';
 import { filterStateForPlayer } from '../src/game/fog';
 import { GameState, PlayerId, otherPlayer } from '../src/game/types';
 import { ClientMsg, GameAction, ServerMsg } from '../src/net/protocol';
+import { BotDifficulty, decideBotAction } from './bot';
 
 const PORT = Number(process.env.PORT) || 8787;
+
+// ---------------------------------------------------------------------------
+// Static file serving (the built client) — same process, same port as WS.
+// ---------------------------------------------------------------------------
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DIST_DIR = path.join(__dirname, '../dist');
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+};
+
+async function serveStatic(req: IncomingMessage, res: ServerResponse) {
+  if (req.url === '/healthz') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('ok');
+    return;
+  }
+  try {
+    const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+    let filePath = path.normalize(path.join(DIST_DIR, urlPath));
+    if (!filePath.startsWith(DIST_DIR)) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
+    let isFile = false;
+    try {
+      const s = await fsStat(filePath);
+      isFile = s.isFile();
+    } catch {
+      isFile = false;
+    }
+    // SPA fallback: any non-file GET (client-side routes, deep links) serves index.html.
+    if (!isFile) filePath = path.join(DIST_DIR, 'index.html');
+    const data = await readFile(filePath);
+    const ext = path.extname(filePath);
+    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+    res.end(data);
+  } catch {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found. Did you run `npm run build`?');
+  }
+}
 
 // No 0/O/1/I/L — visually ambiguous in a shared room code.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -45,6 +113,9 @@ interface Room {
   seats: Record<PlayerId, Seat>;
   createdAt: number;
   lastActivity: number;
+  botSide: PlayerId | null;
+  botDifficulty: BotDifficulty | null;
+  botTimer: NodeJS.Timeout | null;
 }
 
 const rooms = new Map<string, Room>();
@@ -82,9 +153,50 @@ function createRoom(): Room {
     seats: makeSeats(),
     createdAt: Date.now(),
     lastActivity: Date.now(),
+    botSide: null,
+    botDifficulty: null,
+    botTimer: null,
   };
   rooms.set(code, room);
   return room;
+}
+
+function clearBotTimer(room: Room) {
+  if (room.botTimer) {
+    clearTimeout(room.botTimer);
+    room.botTimer = null;
+  }
+}
+
+const BOT_STEP_DELAY_MIN_MS = 400;
+const BOT_STEP_DELAY_MAX_MS = 800;
+const BOT_MAX_STEPS_PER_TURN = 40; // safety valve against a pathological infinite loop
+
+/** Drives the bot's turn one action at a time, with a human-watchable delay between each. */
+function scheduleBotStep(room: Room, stepsTaken = 0) {
+  clearBotTimer(room);
+  if (!room.botSide || !room.botDifficulty) return;
+  if (room.state.phase !== 'PLAYING' || room.state.activePlayer !== room.botSide) return;
+  if (stepsTaken >= BOT_MAX_STEPS_PER_TURN) {
+    applyAction(room, room.botSide, { type: 'END_TURN' });
+    broadcastState(room);
+    return;
+  }
+  const delay = BOT_STEP_DELAY_MIN_MS + Math.random() * (BOT_STEP_DELAY_MAX_MS - BOT_STEP_DELAY_MIN_MS);
+  room.botTimer = setTimeout(() => {
+    room.botTimer = null;
+    if (!rooms.has(room.code)) return; // room was deleted meanwhile
+    if (room.state.phase !== 'PLAYING' || room.state.activePlayer !== room.botSide) return;
+    const action = decideBotAction(room.state, room.botSide!, room.botDifficulty!);
+    if (action) {
+      applyAction(room, room.botSide!, action);
+      broadcastState(room);
+      scheduleBotStep(room, stepsTaken + 1);
+    } else {
+      applyAction(room, room.botSide!, { type: 'END_TURN' });
+      broadcastState(room);
+    }
+  }, delay);
 }
 
 function firstOpenSeat(room: Room): Seat | null {
@@ -127,6 +239,7 @@ function handleDisconnect(room: Room, seat: Seat) {
     // Grace period lapsed without a reconnect — end the game for whoever remains.
     const stillOther = room.seats[otherPlayer(seat.playerId)];
     if (stillOther.ws) send(stillOther.ws, { t: 'opponent_left' });
+    clearBotTimer(room);
     rooms.delete(room.code);
   }, RECONNECT_GRACE_MS);
 }
@@ -183,8 +296,10 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): string
   return null;
 }
 
-const wss = new WebSocketServer({ port: PORT });
-console.log(`[COMMAND] WebSocket server listening on ws://localhost:${PORT}`);
+const httpServer = createServer((req, res) => {
+  void serveStatic(req, res);
+});
+const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
@@ -226,6 +341,25 @@ wss.on('connection', (ws) => {
             send(s.ws, { t: 'start', state: filterStateForPlayer(room.state, pid), you: pid, opponentConnected: true });
           });
         }
+        break;
+      }
+      case 'bot': {
+        const room = createRoom();
+        const humanSeat = firstOpenSeat(room)!;
+        humanSeat.ws = ws;
+        humanSeat.connected = true;
+        const botSeat = firstOpenSeat(room)!;
+        botSeat.connected = true; // no socket — the bot is always "connected"
+        room.botSide = botSeat.playerId;
+        room.botDifficulty = msg.difficulty;
+        send(ws, { t: 'joined', code: room.code, token: humanSeat.token, you: humanSeat.playerId });
+        send(ws, {
+          t: 'start',
+          state: filterStateForPlayer(room.state, humanSeat.playerId),
+          you: humanSeat.playerId,
+          opponentConnected: true,
+        });
+        scheduleBotStep(room); // in case the bot drew BLUEFOR and moves first
         break;
       }
       case 'quick': {
@@ -288,6 +422,7 @@ wss.on('connection', (ws) => {
           return;
         }
         broadcastState(room);
+        scheduleBotStep(room);
         break;
       }
       case 'leave': {
@@ -296,6 +431,7 @@ wss.on('connection', (ws) => {
           const { room, seat } = found;
           const other = room.seats[otherPlayer(seat.playerId)];
           if (other.ws) send(other.ws, { t: 'opponent_left' });
+          clearBotTimer(room);
           rooms.delete(room.code);
         }
         break;
@@ -318,11 +454,16 @@ wss.on('connection', (ws) => {
 });
 
 // Periodic sweep: drop rooms nobody has touched or reconnected to in a while.
+// A bot seat is never "connected" via a real socket, so only the human
+// seat(s) count toward whether a bot room is still in use.
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
-    const anyoneConnected = room.seats.BLUEFOR.connected || room.seats.REDFOR.connected;
+    const anyoneConnected = room.botSide
+      ? room.seats[otherPlayer(room.botSide)].connected
+      : room.seats.BLUEFOR.connected || room.seats.REDFOR.connected;
     if (!anyoneConnected && now - room.lastActivity > EMPTY_ROOM_TTL_MS) {
+      clearBotTimer(room);
       rooms.delete(code);
     }
   }
@@ -330,4 +471,8 @@ setInterval(() => {
 
 process.on('uncaughtException', (err) => {
   console.error('[COMMAND] Uncaught exception (server kept alive):', err);
+});
+
+httpServer.listen(PORT, () => {
+  console.log(`[COMMAND] listening on :${PORT} — HTTP (static: ${DIST_DIR}) + WebSocket on /ws`);
 });
