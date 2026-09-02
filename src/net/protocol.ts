@@ -6,6 +6,14 @@
 
 import { GameState, PlayerId } from '../game/types';
 
+/**
+ * The tile grid is 6,400 tiles (~400 KB of JSON) and changes only when an
+ * engineer throws a bridge, so incremental `state` pushes elide it and the
+ * client reuses the grid it already has. `start` (and any resync) always
+ * carries the full grid.
+ */
+export type WireGameState = Omit<GameState, 'tiles'> & { tiles?: GameState['tiles'] };
+
 export type BotDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
 
 export type GameAction =
@@ -19,7 +27,6 @@ export type GameAction =
   | { type: 'ARTILLERY'; formationId: string; x: number; y: number }
   | { type: 'AIR'; x: number; y: number }
   | { type: 'SPECIAL_OP'; formationId: string; x: number; y: number }
-  | { type: 'AMPHIBIOUS'; transportId: string; cargoId: string; x: number; y: number }
   | { type: 'END_TURN' };
 
 export type ClientMsg =
@@ -37,7 +44,7 @@ export type ServerMsg =
   | { t: 'waiting' }
   | { t: 'searching' }
   | { t: 'start'; state: GameState; you: PlayerId; opponentConnected: boolean }
-  | { t: 'state'; state: GameState }
+  | { t: 'state'; state: WireGameState }
   | { t: 'opponent_disconnected' }
   | { t: 'opponent_reconnected' }
   | { t: 'opponent_left' }

@@ -4,18 +4,20 @@
 // expected to clone the state before calling a mutator, see store.ts).
 // ============================================================================
 
-import { FORMATION_DEFS, MORALE_MULTIPLIER, TERRAIN_DEFS } from './data';
+import { FORMATION_DEFS, MORALE_MULTIPLIER, ORDERS_OF_BATTLE, TERRAIN_DEFS } from './data';
 import { generateBattlefield } from './mapgen';
 import {
+  AP_CAP,
   AP_COSTS,
   AP_PER_TURN,
   AIR_SORTIES_PER_TURN,
+  MAX_ROUNDS,
+  VP_WIN_THRESHOLD,
   ActionKind,
   BattleFactor,
   BattleReport,
   Contact,
   Formation,
-  FormationType,
   GameState,
   GRID_SIZE,
   LossLevel,
@@ -36,23 +38,18 @@ function nextId(prefix: string) {
 // Setup
 // ---------------------------------------------------------------------------
 
-const ROSTER: { type: FormationType; name: string }[] = [
-  { type: 'INFANTRY', name: '1st Infantry Coy' },
-  { type: 'INFANTRY', name: '2nd Infantry Coy' },
-  { type: 'COMMANDO', name: 'Commando Det.' },
-  { type: 'ARMOUR', name: 'Armour Sqn' },
-  { type: 'ARTILLERY', name: 'Artillery Bty' },
-  { type: 'ENGINEER', name: 'Engineer Det.' },
-  { type: 'RECON', name: 'Recon Det.' },
-  { type: 'LOGISTICS', name: 'Log. Element' },
-];
-
-function makeFormation(owner: PlayerId, type: FormationType, name: string, x: number, y: number): Formation {
+function makeFormation(owner: PlayerId, profileIndex: number, x: number, y: number): Formation {
+  const p = ORDERS_OF_BATTLE[owner][profileIndex];
+  const def = FORMATION_DEFS[p.type];
   return {
     id: nextId('f'),
     owner,
-    type,
-    name,
+    type: p.type,
+    name: p.name,
+    shortName: p.shortName,
+    echelon: p.echelon,
+    arm: p.arm,
+    equipment: p.equipment,
     x,
     y,
     strength: 100,
@@ -60,6 +57,8 @@ function makeFormation(owner: PlayerId, type: FormationType, name: string, x: nu
     readiness: 100,
     supply: 100,
     ammo: 100,
+    movesUsed: 0,
+    movesMax: def.movesPerRound,
     hasActedThisTurn: false,
     fortified: false,
     lastOrder: 'Deployed',
@@ -71,17 +70,14 @@ export function initGame(seed = 1337): GameState {
   const formations: Record<string, Formation> = {};
 
   (['BLUEFOR', 'REDFOR'] as PlayerId[]).forEach((side) => {
-    const zones = map.startZones[side];
-    ROSTER.forEach((r, i) => {
-      const pos = zones[i % zones.length];
-      const f = makeFormation(side, r.type, `${side === 'BLUEFOR' ? 'BF' : 'RF'} ${r.name}`, pos.x, pos.y);
+    const landSlots = [...map.startZones[side]];
+    const seaSlots = [...map.navalSpawns[side]];
+    ORDERS_OF_BATTLE[side].forEach((profile, i) => {
+      const naval = FORMATION_DEFS[profile.type].isNaval;
+      const pos = naval ? seaSlots.shift() ?? seaSlots[0] : landSlots.shift() ?? landSlots[landSlots.length - 1];
+      const f = makeFormation(side, i, pos.x, pos.y);
       formations[f.id] = f;
     });
-    const port = map.ports.find((p) => p.owner === side)!;
-    const naval = makeFormation(side, 'NAVAL_TRANSPORT', `${side === 'BLUEFOR' ? 'BF' : 'RF'} Naval Transport`, port.x, port.y);
-    const frigate = makeFormation(side, 'FRIGATE', `${side === 'BLUEFOR' ? 'BF' : 'RF'} Frigate`, port.x, port.y + 1);
-    formations[naval.id] = naval;
-    formations[frigate.id] = frigate;
   });
 
   const state: GameState = {
@@ -114,7 +110,7 @@ export function tileAt(state: GameState, x: number, y: number): Tile | undefined
 }
 
 export function formationAt(state: GameState, x: number, y: number): Formation | undefined {
-  return Object.values(state.formations).find((f) => f.x === x && f.y === y && !f.embarkedOn);
+  return Object.values(state.formations).find((f) => f.x === x && f.y === y);
 }
 
 function inBounds(x: number, y: number) {
@@ -141,18 +137,32 @@ function moraleMult(m: Morale) {
 function crossable(state: GameState, formation: Formation, tile: Tile): boolean {
   const def = FORMATION_DEFS[formation.type];
   if (tile.terrain === 'WATER') {
-    if (tile.bridge) return true;
-    return def.isNaval; // naval units can enter open water freely
+    // Ships stay on the single validated navigable body — mapgen guarantees it
+    // reaches every port berth, naval spawn and maritime objective, so a ship
+    // can never be boxed into a dead pool.
+    if (def.isNaval) return tile.navigable === true;
+    return tile.bridge === true; // land units cross water only on a bridge
   }
-  if (def.isNaval) return false; // naval units restricted to water + port tiles they start on
-  return true;
+  return !def.isNaval; // ships cannot go ashore
+}
+
+/** Movement actions this formation still has left this round. */
+export function movesRemaining(f: Formation): number {
+  return Math.max(0, f.movesMax - f.movesUsed);
+}
+
+export function canMove(state: GameState, f: Formation): boolean {
+  return f.owner === state.activePlayer && movesRemaining(f) > 0 && canAfford(state, 'MOVE');
 }
 
 /** Dijkstra-style reachable-tile search bounded by the formation's move range. */
 export function computeReachable(state: GameState, formationId: string): Map<string, number> {
   const f = state.formations[formationId];
   const result = new Map<string, number>();
-  if (!f || f.hasActedThisTurn) return result;
+  // Movement is gated by the per-round movement-action allowance, NOT by the
+  // single "major action" flag — a formation may still manoeuvre after having
+  // fired, and may manoeuvre more than once per round (see MOVES_PER_ROUND).
+  if (!f || movesRemaining(f) <= 0) return result;
   const def = FORMATION_DEFS[f.type];
   const budget = def.moveRange * (f.readiness < 50 ? 0.6 : 1) * (f.supply < 30 ? 0.6 : 1);
   const visited = new Map<string, number>();
@@ -169,6 +179,11 @@ export function computeReachable(state: GameState, formationId: string): Map<str
       const terrainDef = TERRAIN_DEFS[tile.terrain];
       let cost = tile.terrain === 'WATER' ? 1 : terrainDef.moveCost;
       if (tile.road && tile.terrain !== 'WATER') cost = 0.5;
+      else if (tile.terrain !== 'WATER') {
+        // Climbing costs more than contouring — movement follows the ground.
+        const climb = tile.elevation - state.tiles[cur.y][cur.x].elevation;
+        if (climb > 0) cost += climb * 0.5;
+      }
       const newCost = cur.cost + cost;
       if (newCost > budget) continue;
       const key = `${nx},${ny}`;
@@ -206,7 +221,8 @@ function log(state: GameState, msg: string) {
 
 export function moveFormation(state: GameState, formationId: string, x: number, y: number): GameState {
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn) return state;
+  if (!f || f.owner !== state.activePlayer) return state;
+  if (movesRemaining(f) <= 0) return state; // per-round movement allowance exhausted
   if (!canAfford(state, 'MOVE')) return state;
   const reachable = computeReachable(state, formationId);
   if (!reachable.has(`${x},${y}`)) return state;
@@ -214,9 +230,9 @@ export function moveFormation(state: GameState, formationId: string, x: number, 
   f.x = x;
   f.y = y;
   f.fortified = false;
-  f.hasActedThisTurn = true;
-  f.lastOrder = `Moved to (${x},${y})`;
-  log(state, `${f.name} moved to (${x}, ${y}).`);
+  f.movesUsed += 1;
+  f.lastOrder = `Moved to (${x},${y}) — bound ${f.movesUsed}/${f.movesMax}`;
+  log(state, `${f.shortName} moved to (${x}, ${y}) [${f.movesUsed}/${f.movesMax} bounds].`);
   refreshFogOfWar(state, state.activePlayer);
   return state;
 }
@@ -231,11 +247,11 @@ export function refreshFogOfWar(state: GameState, player: PlayerId) {
   const visibleNow = new Set<string>();
 
   Object.values(state.formations)
-    .filter((f) => f.owner === player && !f.embarkedOn)
+    .filter((f) => f.owner === player)
     .forEach((f) => {
       const def = FORMATION_DEFS[f.type];
       Object.values(state.formations)
-        .filter((e) => e.owner === enemy && !e.embarkedOn)
+        .filter((e) => e.owner === enemy)
         .forEach((e) => {
           if (distance(f.x, f.y, e.x, e.y) <= def.sightRadius) {
             visibleNow.add(e.id);
@@ -314,17 +330,32 @@ export function fortifyAction(state: GameState, formationId: string): GameState 
   return state;
 }
 
-export function isInSupplyRange(state: GameState, f: Formation): boolean {
-  // In range if within a road-connected radius of a friendly depot, or adjacent
-  // to a friendly Logistics formation.
-  const depotTiles = state.tiles.flat().filter((t) => t.isDepot && t.depotOwner === f.owner);
-  for (const d of depotTiles) {
-    if (distance(f.x, f.y, d.x, d.y) <= 10) return true;
+/** Radius each kind of supply source projects. */
+export const SUPPLY_RADIUS = 16;
+
+/**
+ * Supply is a POSITIONAL modifier, not a logistics mini-game: a formation is
+ * in supply if it sits inside the radius of one of its side's supply sources —
+ * its depots, or any Port / Airfield / Supply Depot objective it currently
+ * holds. There are no supply convoys or transport routes to shepherd; pushing
+ * your front line beyond your held rear areas is what costs you supply.
+ */
+export function supplySources(state: GameState, owner: PlayerId): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  for (const row of state.tiles) {
+    for (const t of row) {
+      if (t.isDepot && t.depotOwner === owner) out.push({ x: t.x, y: t.y });
+    }
   }
-  const logi = Object.values(state.formations).find(
-    (o) => o.owner === f.owner && o.type === 'LOGISTICS' && distance(o.x, o.y, f.x, f.y) <= 3
-  );
-  return !!logi;
+  for (const o of state.objectives) {
+    if (o.controlledBy !== owner) continue;
+    if (o.kind === 'Port' || o.kind === 'Airfield' || o.kind === 'Supply Depot') out.push({ x: o.x, y: o.y });
+  }
+  return out;
+}
+
+export function isInSupplyRange(state: GameState, f: Formation): boolean {
+  return supplySources(state, f.owner).some((s) => distance(f.x, f.y, s.x, s.y) <= SUPPLY_RADIUS);
 }
 
 export function resupplyAction(state: GameState, formationId: string): GameState {
@@ -489,11 +520,13 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   if (target.owner === attacker.owner) return state;
   if (!canAfford(state, 'ATTACK')) return state;
 
-  const isArtillery = attacker.type === 'ARTILLERY';
-  const range = isArtillery ? 6 : 1;
+  const attackerDef = FORMATION_DEFS[attacker.type];
+  const range = attackerDef.attackRange;
   const d = distance(attacker.x, attacker.y, target.x, target.y);
-  if (d > range) return state;
-  if (!isArtillery && d !== 1) return state; // non-artillery must be adjacent (orthogonal range=1 via distance metric covers diagonal too loosely, acceptable for prototype)
+  if (d < 1 || d > range) return state;
+  // Only a close assault (range-1 engagement) can take ground; standoff fire
+  // from a ship or a gun battalion damages but does not occupy.
+  const closeAssault = d === 1 && !attackerDef.isNaval;
 
   spendAP(state, 'ATTACK');
 
@@ -519,7 +552,7 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   let defenderDelta = 0;
   let captured = false;
 
-  if (ratio > 0.65) {
+  if (ratio > 0.65 && closeAssault) {
     outcome = 'Position Captured';
     defenderDelta = -(20 + (ratio - 0.65) * 80);
     attackerDelta = -(5 + (1 - ratio) * 20);
@@ -558,8 +591,10 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
       if (captured && !destroyedTarget) {
         // survives but retreats off the tile — simplified as removal from board for prototype clarity
       }
-      attacker.x = target.x;
-      attacker.y = target.y;
+      if (closeAssault) {
+        attacker.x = target.x;
+        attacker.y = target.y;
+      }
     }
   }
   if (attacker.strength <= 0) {
@@ -568,7 +603,7 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
 
   attacker.hasActedThisTurn = true;
   attacker.fortified = false;
-  attacker.lastOrder = `Attacked ${target.name}`;
+  attacker.lastOrder = closeAssault ? `Assaulted ${target.shortName}` : `Engaged ${target.shortName} at range`;
 
   const report: BattleReport = {
     id: nextId('battle'),
@@ -607,7 +642,7 @@ export function artilleryAction(state: GameState, formationId: string, x: number
     return state;
   }
   const d = distance(f.x, f.y, x, y);
-  if (d > 6) return state;
+  if (d > FORMATION_DEFS.ARTILLERY.attackRange) return state;
   const target = formationAt(state, x, y);
   if (!target || target.owner === f.owner) return state;
   spendAP(state, 'ARTILLERY');
@@ -674,33 +709,18 @@ export function specialOpAction(state: GameState, formationId: string, x: number
   return state;
 }
 
-export function amphibiousAction(state: GameState, transportId: string, cargoId: string, x: number, y: number): GameState {
-  const transport = state.formations[transportId];
-  const cargo = state.formations[cargoId];
-  if (!transport || !cargo) return state;
-  if (transport.owner !== state.activePlayer || transport.type !== 'NAVAL_TRANSPORT') return state;
-  if (!canAfford(state, 'AMPHIBIOUS')) return state;
-  const destTile = tileAt(state, x, y);
-  if (!destTile || (destTile.terrain !== 'PORT' && distance(x, y, transport.x, transport.y) > 1)) return state;
-  spendAP(state, 'AMPHIBIOUS');
-  cargo.x = x;
-  cargo.y = y;
-  cargo.embarkedOn = undefined;
-  cargo.hasActedThisTurn = true;
-  transport.hasActedThisTurn = true;
-  transport.lastOrder = `Landed ${cargo.name} at (${x},${y})`;
-  log(state, `${transport.name} landed ${cargo.name} at (${x}, ${y}).`);
-  refreshFogOfWar(state, state.activePlayer);
-  return state;
-}
-
 // ---------------------------------------------------------------------------
-// Objectives, logistics tick, turn management
+// Objectives, supply tick, turn management
 // ---------------------------------------------------------------------------
 
-function tickObjectives(state: GameState) {
+function tickObjectives(state: GameState, awardVp: boolean) {
   state.objectives.forEach((o) => {
-    const occupants = Object.values(state.formations).filter((f) => distance(f.x, f.y, o.x, o.y) <= 1 && !f.embarkedOn);
+    const occupants = Object.values(state.formations).filter((f) => {
+      if (distance(f.x, f.y, o.x, o.y) > 1) return false;
+      // A maritime objective is contested by warships; a land objective by
+      // ground forces. A frigate cannot "hold" a bridge.
+      return FORMATION_DEFS[f.type].isNaval === !!o.maritime;
+    });
     const sides = new Set(occupants.map((f) => f.owner));
     if (sides.size === 1) {
       const side = [...sides][0];
@@ -709,14 +729,24 @@ function tickObjectives(state: GameState) {
         log(state, `${side} secured objective: ${o.name}.`);
       }
     }
-    if (o.controlledBy) {
+    // VP are paid out once per ROUND, to both holders at once, at the end of
+    // the round. Paying each side at the end of its own turn would give the
+    // first player half a round of free scoring every single round.
+    if (awardVp && o.controlledBy) {
       state.players[o.controlledBy].vp += o.vpPerTurn;
     }
   });
 }
 
-function tickSupply(state: GameState) {
+function tickSupply(state: GameState, owner: PlayerId) {
   Object.values(state.formations).forEach((f) => {
+    if (f.owner !== owner) return;
+    if (FORMATION_DEFS[f.type].isNaval) {
+      // Warships carry their own stores — no shore logistics to babysit.
+      f.supply = Math.min(100, f.supply + 10);
+      f.readiness = Math.min(100, f.readiness + 8);
+      return;
+    }
     if (isInSupplyRange(state, f)) {
       f.supply = Math.min(100, f.supply + 15);
       f.readiness = Math.min(100, f.readiness + 10);
@@ -730,14 +760,21 @@ function tickSupply(state: GameState) {
   });
 }
 
-function checkVictory(state: GameState) {
+/**
+ * Victory is only adjudicated at a ROUND boundary (after REDFOR's turn), so
+ * both sides have banked the same number of scoring turns — otherwise BLUEFOR,
+ * who always scores first, would cross the threshold half a round early every
+ * single game.
+ */
+function checkVictory(state: GameState, roundComplete: boolean) {
+  if (!roundComplete) return;
   const b = state.players.BLUEFOR.vp;
   const r = state.players.REDFOR.vp;
-  if (b >= 150 || r >= 150) {
+  if (b >= VP_WIN_THRESHOLD || r >= VP_WIN_THRESHOLD) {
     state.phase = 'GAME_OVER';
     state.winner = b === r ? 'DRAW' : b > r ? 'BLUEFOR' : 'REDFOR';
     log(state, `Victory point threshold reached. Winner: ${state.winner}.`);
-  } else if (state.round >= 20) {
+  } else if (state.round > MAX_ROUNDS) {
     state.phase = 'GAME_OVER';
     state.winner = b === r ? 'DRAW' : b > r ? 'BLUEFOR' : 'REDFOR';
     log(state, `Final round complete. Winner: ${state.winner}.`);
@@ -746,27 +783,32 @@ function checkVictory(state: GameState) {
 
 export function endTurn(state: GameState): GameState {
   const finishing = state.activePlayer;
-  tickObjectives(state);
-  if (finishing === 'REDFOR') {
-    tickSupply(state);
-    state.round += 1;
-  }
+  tickObjectives(state, finishing === 'REDFOR');
+  tickSupply(state, finishing);
+  if (finishing === 'REDFOR') state.round += 1;
+  // Reset the finishing side's per-round budgets so everything is fresh when
+  // control comes back to them.
   Object.values(state.formations).forEach((f) => {
-    if (f.owner === finishing) f.hasActedThisTurn = false;
+    if (f.owner !== finishing) return;
+    f.hasActedThisTurn = false;
+    f.movesUsed = 0;
   });
   const nextPlayer = otherPlayer(finishing);
-  const carry = Math.min(25, state.players[nextPlayer].ap + AP_PER_TURN);
+  const carry = Math.min(AP_CAP, state.players[nextPlayer].ap + AP_PER_TURN);
   state.players[nextPlayer].ap = carry;
   state.players[nextPlayer].airSorties = AIR_SORTIES_PER_TURN;
   state.activePlayer = nextPlayer;
   refreshFogOfWar(state, nextPlayer);
-  checkVictory(state);
+  checkVictory(state, finishing === 'REDFOR');
   if (state.phase !== 'GAME_OVER') state.phase = 'TURN_HANDOFF';
   log(state, `Turn passed to ${nextPlayer}. Round ${state.round}.`);
   return state;
 }
 
 export function beginPlayerTurn(state: GameState): GameState {
+  // Never resurrect a finished game — endTurn() may have just declared a
+  // winner, and the server calls this immediately afterwards.
+  if (state.phase === 'GAME_OVER') return state;
   state.phase = 'PLAYING';
   return state;
 }

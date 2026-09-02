@@ -10,7 +10,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "prestart": "npm run build",
-    "start": "tsx server/index.ts"
+    "start": "tsx server/index.ts",
+    "mapcheck": "tsx scripts/mapcheck.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

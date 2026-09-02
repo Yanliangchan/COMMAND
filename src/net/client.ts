@@ -73,6 +73,8 @@ export function useMultiplayer() {
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [you, setYou] = useState<PlayerId | null>(null);
   const [state, setState] = useState<GameState | null>(null);
+  // Cached tile grid — the server only resends it when the map actually changes.
+  const tilesRef = useRef<GameState['tiles'] | null>(null);
   const [opponentConnected, setOpponentConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -115,14 +117,21 @@ export function useMultiplayer() {
           setStatus('searching');
           break;
         case 'start':
+          tilesRef.current = msg.state.tiles;
           setState(msg.state);
           setYou(msg.you);
           setOpponentConnected(msg.opponentConnected);
           setStatus('in_game');
           break;
-        case 'state':
-          setState(msg.state);
+        case 'state': {
+          // The server elides the (large, near-static) tile grid on routine
+          // pushes — splice back in the grid we already hold.
+          const tiles = msg.state.tiles ?? tilesRef.current;
+          if (tiles) tilesRef.current = tiles;
+          if (!tiles) return; // no map yet: ignore until a `start` arrives
+          setState({ ...msg.state, tiles });
           break;
+        }
         case 'opponent_disconnected':
           setOpponentConnected(false);
           setStatus('opponent_disconnected');
@@ -191,6 +200,7 @@ export function useMultiplayer() {
     sessionRef.current = null;
     saveSession(null);
     setState(null);
+    tilesRef.current = null;
     setYou(null);
     setRoomCode(null);
     setOpponentConnected(false);

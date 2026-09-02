@@ -25,7 +25,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import * as engine from '../src/game/engine';
 import { filterStateForPlayer } from '../src/game/fog';
 import { GameState, PlayerId, otherPlayer } from '../src/game/types';
-import { ClientMsg, GameAction, ServerMsg } from '../src/net/protocol';
+import { ClientMsg, GameAction, ServerMsg, WireGameState } from '../src/net/protocol';
 import { BotDifficulty, decideBotAction } from './bot';
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -128,10 +128,24 @@ function send(ws: WebSocket | null, msg: ServerMsg) {
   ws.send(JSON.stringify(msg));
 }
 
-function broadcastState(room: Room) {
+/**
+ * Push each seat its own fog-filtered view. The tile grid is only included
+ * when the map itself changed (an engineer bridge) — otherwise it is elided
+ * and the client reuses the grid it was sent at `start`, which keeps a routine
+ * per-action broadcast to a few tens of KB instead of ~400 KB.
+ */
+function broadcastState(room: Room, includeTiles = false) {
   (['BLUEFOR', 'REDFOR'] as PlayerId[]).forEach((pid) => {
     const seat = room.seats[pid];
-    if (seat.ws) send(seat.ws, { t: 'state', state: filterStateForPlayer(room.state, pid) });
+    if (!seat.ws) return;
+    const full = filterStateForPlayer(room.state, pid);
+    let payload: WireGameState = full;
+    if (!includeTiles) {
+      const { tiles, ...rest } = full;
+      void tiles;
+      payload = rest;
+    }
+    send(seat.ws, { t: 'state', state: payload });
   });
 }
 
@@ -168,9 +182,9 @@ function clearBotTimer(room: Room) {
   }
 }
 
-const BOT_STEP_DELAY_MIN_MS = 400;
-const BOT_STEP_DELAY_MAX_MS = 800;
-const BOT_MAX_STEPS_PER_TURN = 40; // safety valve against a pathological infinite loop
+const BOT_STEP_DELAY_MIN_MS = 250;
+const BOT_STEP_DELAY_MAX_MS = 550;
+const BOT_MAX_STEPS_PER_TURN = 80; // safety valve against a pathological infinite loop
 
 /** Drives the bot's turn one action at a time, with a human-watchable delay between each. */
 function scheduleBotStep(room: Room, stepsTaken = 0) {
@@ -189,8 +203,8 @@ function scheduleBotStep(room: Room, stepsTaken = 0) {
     if (room.state.phase !== 'PLAYING' || room.state.activePlayer !== room.botSide) return;
     const action = decideBotAction(room.state, room.botSide!, room.botDifficulty!);
     if (action) {
-      applyAction(room, room.botSide!, action);
-      broadcastState(room);
+      const res = applyAction(room, room.botSide!, action);
+      broadcastState(room, res.mapChanged);
       scheduleBotStep(room, stepsTaken + 1);
     } else {
       applyAction(room, room.botSide!, { type: 'END_TURN' });
@@ -244,10 +258,16 @@ function handleDisconnect(room: Room, seat: Seat) {
   }, RECONNECT_GRACE_MS);
 }
 
-function applyAction(room: Room, playerId: PlayerId, action: GameAction): string | null {
+interface ActionResult {
+  error: string | null;
+  /** True when the action can have mutated the tile grid (bridge building). */
+  mapChanged: boolean;
+}
+
+function applyAction(room: Room, playerId: PlayerId, action: GameAction): ActionResult {
   const state = room.state;
-  if (state.phase === 'GAME_OVER') return 'Game is already over.';
-  if (state.activePlayer !== playerId) return 'Not your turn.';
+  if (state.phase === 'GAME_OVER') return { error: 'Game is already over.', mapChanged: false };
+  if (state.activePlayer !== playerId) return { error: 'Not your turn.', mapChanged: false };
 
   switch (action.type) {
     case 'MOVE':
@@ -280,9 +300,6 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): string
     case 'SPECIAL_OP':
       engine.specialOpAction(state, action.formationId, action.x, action.y);
       break;
-    case 'AMPHIBIOUS':
-      engine.amphibiousAction(state, action.transportId, action.cargoId, action.x, action.y);
-      break;
     case 'END_TURN':
       engine.endTurn(state);
       // Skip the (now meaningless, single-tab-only) TURN_HANDOFF phase —
@@ -290,10 +307,10 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): string
       engine.beginPlayerTurn(state);
       break;
     default:
-      return 'Unknown action.';
+      return { error: 'Unknown action.', mapChanged: false };
   }
   room.lastActivity = Date.now();
-  return null;
+  return { error: null, mapChanged: action.type === 'ENGINEER_BRIDGE' };
 }
 
 const httpServer = createServer((req, res) => {
@@ -416,12 +433,12 @@ wss.on('connection', (ws) => {
           return;
         }
         const { room, seat } = found;
-        const err = applyAction(room, seat.playerId, msg.action);
-        if (err) {
-          send(ws, { t: 'error', message: err });
+        const res = applyAction(room, seat.playerId, msg.action);
+        if (res.error) {
+          send(ws, { t: 'error', message: res.error });
           return;
         }
-        broadcastState(room);
+        broadcastState(room, res.mapChanged);
         scheduleBotStep(room);
         break;
       }

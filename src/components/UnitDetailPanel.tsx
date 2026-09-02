@@ -36,11 +36,15 @@ export const UnitDetailPanel: React.FC<{
 }> = ({ state, formation: f, targetMode, setTargetMode, onFortify, onRecon, onResupply, onAir }) => {
   const def = FORMATION_DEFS[f.type];
   const ap = state.players[state.activePlayer].ap;
-  const canAct = !f.hasActedThisTurn && f.owner === state.activePlayer;
+  const isMine = f.owner === state.activePlayer;
+  const canAct = !f.hasActedThisTurn && isMine;
+  const movesLeft = Math.max(0, f.movesMax - f.movesUsed);
+  const canMove = isMine && movesLeft > 0;
   const supplied = isInSupplyRange(state, f);
 
-  const btn = (label: string, cost: number, mode: TargetMode | null, onClick?: () => void, disabledExtra?: boolean) => {
-    const disabled = !canAct || ap < cost || disabledExtra;
+  const btn = (label: string, cost: number, mode: TargetMode | null, onClick?: () => void, disabledExtra?: boolean, useMoveGate = false) => {
+    const gate = useMoveGate ? canMove : canAct;
+    const disabled = !gate || ap < cost || disabledExtra;
     return (
       <button
         key={label}
@@ -60,9 +64,16 @@ export const UnitDetailPanel: React.FC<{
   return (
     <div className="unit-panel">
       <div className="panel-title">
-        {f.name} <span className="unit-owner">{f.owner}</span>
+        {f.shortName} <span className="unit-owner">{f.owner}</span>
       </div>
-      <div className="unit-flavor">{def.flavor}</div>
+      <div className="unit-order">{f.name}</div>
+      <div className="unit-order">
+        {def.label} · {f.echelon} · {f.arm}
+      </div>
+      <div className="unit-flavor">{f.equipment}</div>
+      <div className="unit-order">
+        Movement actions: {f.movesUsed} / {f.movesMax} used
+      </div>
       <div className="unit-order">Last order: {f.lastOrder}</div>
 
       <Stat label="Strength" value={f.strength} color="var(--olive)" />
@@ -82,28 +93,29 @@ export const UnitDetailPanel: React.FC<{
         ACTIONS
       </div>
       <div className="action-grid">
-        {btn('Move', AP_COSTS.MOVE, 'MOVE')}
+        {btn('Move', AP_COSTS.MOVE, 'MOVE', undefined, false, true)}
         {btn('Attack', AP_COSTS.ATTACK, 'ATTACK')}
-        {f.type !== 'LOGISTICS' && f.type !== 'ENGINEER' && btn('Recon', AP_COSTS.RECON, null, onRecon)}
+        {f.type !== 'ENGINEER' && btn('Recon', AP_COSTS.RECON, null, onRecon)}
         {btn('Fortify', AP_COSTS.FORTIFY, null, onFortify)}
         {btn('Resupply', AP_COSTS.RESUPPLY, null, onResupply, !supplied)}
         {f.type === 'ARTILLERY' && btn('Fire Mission', AP_COSTS.ARTILLERY, 'ARTILLERY', undefined, f.ammo < 10)}
         {f.type === 'ENGINEER' && btn('Build Bridge', AP_COSTS.ENGINEER_BRIDGE, 'ENGINEER_BRIDGE')}
         {f.type === 'ENGINEER' && btn('Clear Obstacle', AP_COSTS.ENGINEER_CLEAR, 'ENGINEER_CLEAR')}
         {f.type === 'COMMANDO' && btn('Special Op', AP_COSTS.SPECIAL_OP, 'SPECIAL_OP')}
-        {f.type === 'NAVAL_TRANSPORT' && btn('Amphibious Landing', AP_COSTS.AMPHIBIOUS, 'AMPHIBIOUS')}
         {btn('Air Strike (call-in)', AP_COSTS.AIR, 'AIR_TARGET', undefined, state.players[state.activePlayer].airSorties < 1)}
       </div>
       {targetMode && (
         <div className="target-hint">
           {targetMode === 'MOVE' && 'Click a highlighted tile to move.'}
-          {targetMode === 'ATTACK' && 'Click a red-ringed enemy formation to attack.'}
-          {targetMode === 'ARTILLERY' && 'Click a target tile within range (6) for a fire mission.'}
+          {targetMode === 'ATTACK' &&
+            (def.attackRange > 1
+              ? `Click a red-ringed enemy within ${def.attackRange} tiles to engage.`
+              : 'Click a red-ringed adjacent enemy formation to assault.')}
+          {targetMode === 'ARTILLERY' && `Click a target tile within range (${def.attackRange}) for a fire mission.`}
           {targetMode === 'AIR_TARGET' && 'Click a tile with a visible enemy formation to call an air strike.'}
           {targetMode === 'ENGINEER_BRIDGE' && 'Click an adjacent river tile to build a bridge.'}
           {targetMode === 'ENGINEER_CLEAR' && 'Click an adjacent tile to clear obstacles/fortification.'}
           {targetMode === 'SPECIAL_OP' && 'Click a tile within recon radius for a raid or deep recon.'}
-          {targetMode === 'AMPHIBIOUS' && 'Select an embarked/adjacent formation, then a coastal destination tile.'}
           <button className="cancel-btn" onClick={() => setTargetMode(null)}>
             Cancel
           </button>

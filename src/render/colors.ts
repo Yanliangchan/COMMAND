@@ -8,6 +8,7 @@ export const TERRAIN_COLORS: Record<TerrainType, { base: string; light: string; 
   URBAN: { base: '#8b8b8f', light: '#9c9ca0', dark: '#75757a' },
   INDUSTRIAL: { base: '#78766e', light: '#8a8880', dark: '#615f58' },
   WATER: { base: '#3572a0', light: '#4483b3', dark: '#265a83' },
+  BEACH: { base: '#d8caa0', light: '#e6d9b3', dark: '#c2b389' },
   AIRFIELD: { base: '#9a9a86', light: '#aaaa96', dark: '#828270' },
   PORT: { base: '#8a8570', light: '#9a9580', dark: '#736e5c' },
 };

@@ -10,7 +10,7 @@ import { EndGameScreen } from './components/EndGameScreen';
 import { Lobby } from './components/Lobby';
 import { Camera, Overlays } from './render/renderMap';
 import { TargetMode } from './App.types';
-import { computeReachable, distance, formationAt } from './game/engine';
+import { computeReachable, formationAt } from './game/engine';
 import { Formation } from './game/types';
 
 export default function App() {
@@ -131,14 +131,6 @@ export default function App() {
         net.sendAction({ type: 'SPECIAL_OP', formationId: selected.id, x, y });
         clearMode();
         break;
-      case 'AMPHIBIOUS': {
-        const cargo = Object.values(state.formations).find(
-          (o) => o.owner === selected.owner && o.id !== selected.id && distance(o.x, o.y, selected.x, selected.y) <= 1 && o.type !== 'FRIGATE' && o.type !== 'NAVAL_TRANSPORT'
-        );
-        if (cargo) net.sendAction({ type: 'AMPHIBIOUS', transportId: selected.id, cargoId: cargo.id, x, y });
-        clearMode();
-        break;
-      }
       default:
         break;
     }

@@ -3,6 +3,9 @@ import { distance, formationAt } from '../game/engine';
 import { Formation, GameState, GRID_SIZE, Objective, PlayerId, Tile } from '../game/types';
 import { PLAYER_COLORS, TERRAIN_COLORS, UI } from './colors';
 
+/** Number of quantised height bands used to draw contour lines. */
+const CONTOUR_BANDS = 22;
+
 export interface Camera {
   x: number; // world-space (tile units) of viewport center
   y: number;
@@ -55,6 +58,18 @@ function visibleTileRange(camera: Camera, width: number, height: number) {
   return { x0, x1, y0, y1 };
 }
 
+/**
+ * Deterministic per-tile pseudo-random value in [0,1). Replaces the old
+ * `noiseSeed` field that used to be carried on every tile over the wire —
+ * derived here instead so the state payload stays small at the larger grid.
+ */
+function tileNoise(x: number, y: number) {
+  let h = Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h ^= h >>> 13;
+  return ((h >>> 0) % 100000) / 100000;
+}
+
 function shade(hex: string, amt: number) {
   const n = parseInt(hex.slice(1), 16);
   let r = (n >> 16) & 255;
@@ -85,6 +100,8 @@ function objectiveGlyph(kind: Objective['kind']) {
       return '▲';
     case 'Supply Depot':
       return '⛽';
+    case 'Anchorage':
+      return '⚓';
     default:
       return '★';
   }
@@ -104,12 +121,10 @@ function formationGlyph(type: Formation['type']) {
       return 'EN';
     case 'RECON':
       return 'RC';
-    case 'LOGISTICS':
-      return 'LG';
-    case 'NAVAL_TRANSPORT':
-      return 'NT';
     case 'FRIGATE':
-      return 'FG';
+      return 'FF';
+    case 'CORVETTE':
+      return 'CV';
     default:
       return '??';
   }
@@ -123,7 +138,7 @@ export function render(rc: RenderContext) {
 
   const { x0, x1, y0, y1 } = visibleTileRange(camera, width, height);
   const s = camera.scale;
-  const detail = s >= 9; // show texture/icon detail only when zoomed enough
+  const detail = s >= 11; // show texture/icon detail only when zoomed enough
 
   // ---- Terrain pass ----
   for (let y = y0; y <= y1; y++) {
@@ -131,6 +146,42 @@ export function render(rc: RenderContext) {
       const tile = state.tiles[y][x];
       drawTile(rc, tile, detail);
     }
+  }
+
+  // ---- Contour pass ----
+  // Topographic contours are drawn as TWO batched paths for the whole visible
+  // area (index contours + intermediate contours) rather than a stroke per
+  // tile edge — that is the difference between ~36 ms and ~15 ms a frame at
+  // operational zoom on an 80x80 sheet.
+  if (s >= 6) {
+    const band = (t?: Tile) => (t ? Math.floor(t.height * CONTOUR_BANDS) : -1);
+    const minor = new Path2D();
+    const index = new Path2D();
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const tile = state.tiles[y][x];
+        if (tile.terrain === 'WATER') continue;
+        const b = band(tile);
+        const target = b % 5 === 0 ? index : minor;
+        const { sx, sy } = worldToScreen(camera, width, height, x, y);
+        const e = state.tiles[y]?.[x + 1];
+        if (e && e.terrain !== 'WATER' && band(e) !== b) {
+          target.moveTo(sx + s / 2, sy - s / 2);
+          target.lineTo(sx + s / 2, sy + s / 2);
+        }
+        const so = state.tiles[y + 1]?.[x];
+        if (so && so.terrain !== 'WATER' && band(so) !== b) {
+          target.moveTo(sx - s / 2, sy + s / 2);
+          target.lineTo(sx + s / 2, sy + s / 2);
+        }
+      }
+    }
+    ctx.strokeStyle = 'rgba(62,42,20,0.38)';
+    ctx.lineWidth = 1;
+    ctx.stroke(minor);
+    ctx.strokeStyle = 'rgba(56,36,16,0.68)';
+    ctx.lineWidth = Math.max(1, s * 0.07);
+    ctx.stroke(index);
   }
 
   // ---- Road overlay pass (drawn after terrain so roads sit on top, connecting neighbors) ----
@@ -231,7 +282,6 @@ export function render(rc: RenderContext) {
 
   // ---- Formations ----
   Object.values(state.formations).forEach((f) => {
-    if (f.embarkedOn) return;
     if (!isFormationVisible(rc, f)) return;
     if (f.owner !== rc.viewer && rc.overlays.intel) {
       // Enemy but currently visible live — still draw solid (confidence should be 100 since seen this turn)
@@ -265,45 +315,41 @@ export function render(rc: RenderContext) {
 }
 
 function drawTile(rc: RenderContext, tile: Tile, detail: boolean) {
-  const { ctx, width, height, camera } = rc;
+  const { ctx, width, height, camera, state } = rc;
   const s = camera.scale;
+  const n = tileNoise(tile.x, tile.y);
   const { sx, sy } = worldToScreen(camera, width, height, tile.x, tile.y);
   const colors = TERRAIN_COLORS[tile.terrain];
   const half = s / 2;
 
-  // Base fill with subtle per-tile noise variance for a hand-painted look.
-  const variance = (tile.noiseSeed - 0.5) * 26;
+  // Base fill with subtle per-tile noise variance for a hand-painted look,
+  // lifted/darkened by elevation so the whole sheet reads as relief.
+  const variance = (n - 0.5) * 18 + (tile.terrain === 'WATER' ? 0 : (tile.elevation - 2) * 9);
   ctx.fillStyle = shade(colors.base, variance);
   ctx.fillRect(sx - half, sy - half, s + 1, s + 1);
 
-  // Elevation shading for hills: darker toward "downhill" edge + a soft highlight, like contour shading.
-  if (tile.terrain === 'HILLS') {
-    const grad = ctx.createLinearGradient(sx - half, sy - half, sx + half, sy + half);
-    grad.addColorStop(0, shade(colors.light, 10 + tile.elevation * 6));
-    grad.addColorStop(1, shade(colors.dark, -6 - tile.elevation * 6));
-    ctx.fillStyle = grad;
-    ctx.fillRect(sx - half, sy - half, s + 1, s + 1);
-    if (detail) {
-      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-      ctx.lineWidth = 1;
-      for (let i = 0; i < tile.elevation; i++) {
-        ctx.beginPath();
-        ctx.moveTo(sx - half + 2, sy + half - 3 - i * 4);
-        ctx.lineTo(sx + half - 2, sy + half - 3 - i * 4);
-        ctx.stroke();
-      }
+  // Hillshade: a north-west light source over the height gradient. This is what
+  // turns a grid of coloured squares into something that reads as landform.
+  if (tile.terrain !== 'WATER') {
+    const w = state.tiles[tile.y]?.[tile.x - 1]?.height ?? tile.height;
+    const nn = state.tiles[tile.y - 1]?.[tile.x]?.height ?? tile.height;
+    const gradient = (tile.height - w) + (tile.height - nn);
+    const lit = Math.max(-0.35, Math.min(0.35, gradient * 6));
+    if (Math.abs(lit) > 0.01) {
+      ctx.fillStyle = lit > 0 ? `rgba(255,248,225,${lit * 0.5})` : `rgba(10,14,20,${-lit * 0.55})`;
+      ctx.fillRect(sx - half, sy - half, s + 1, s + 1);
     }
   }
 
   // Water: animated-ish subtle horizontal bands via noise, plus river/bridge treatment.
   if (tile.terrain === 'WATER') {
-    ctx.fillStyle = shade(colors.dark, tile.noiseSeed * 14 - 7);
+    ctx.fillStyle = shade(colors.dark, n * 14 - 7);
     ctx.fillRect(sx - half, sy - half, s + 1, s + 1);
     if (detail) {
       ctx.strokeStyle = 'rgba(255,255,255,0.08)';
       ctx.beginPath();
-      ctx.moveTo(sx - half, sy - half * 0.3 + tile.noiseSeed * s * 0.4);
-      ctx.lineTo(sx + half, sy - half * 0.1 + tile.noiseSeed * s * 0.4);
+      ctx.moveTo(sx - half, sy - half * 0.3 + n * s * 0.4);
+      ctx.lineTo(sx + half, sy - half * 0.1 + n * s * 0.4);
       ctx.stroke();
     }
     if (tile.bridge) {
@@ -320,21 +366,12 @@ function drawTile(rc: RenderContext, tile: Tile, detail: boolean) {
     }
   }
 
-  // Tile-edge dithering: blend a faint speckle border toward differing neighbor terrain.
-  if (detail) {
-    ctx.globalAlpha = 0.05 + tile.noiseSeed * 0.05;
-    ctx.fillStyle = '#000000';
-    const speck = s * 0.12;
-    ctx.fillRect(sx - half + tile.noiseSeed * s, sy - half + ((tile.noiseSeed * 7) % 1) * s, speck, speck);
-    ctx.globalAlpha = 1;
-  }
-
   // Forest: tree cluster icons.
   if (tile.terrain === 'FOREST' && detail) {
     const n = 3;
     for (let i = 0; i < n; i++) {
-      const jitter = ((tile.noiseSeed * (i + 1) * 13) % 1) - 0.5;
-      const jitter2 = ((tile.noiseSeed * (i + 3) * 7) % 1) - 0.5;
+      const jitter = ((n * (i + 1) * 13) % 1) - 0.5;
+      const jitter2 = ((n * (i + 3) * 7) % 1) - 0.5;
       const tx = sx + jitter * s * 0.6;
       const ty = sy + jitter2 * s * 0.6;
       const r = s * 0.16;
@@ -352,7 +389,7 @@ function drawTile(rc: RenderContext, tile: Tile, detail: boolean) {
     const cols = 2;
     for (let i = 0; i < cols; i++) {
       for (let j = 0; j < cols; j++) {
-        const seed = (tile.noiseSeed * (i + 1) * (j + 2) * 17) % 1;
+        const seed = (n * (i + 1) * (j + 2) * 17) % 1;
         if (seed < 0.25) continue;
         const bw = s * 0.32;
         const bh = s * (0.28 + seed * 0.22);

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { computeReachable, distance, formationAt } from '../game/engine';
+import { computeReachable, distance, formationAt, supplySources, SUPPLY_RADIUS } from '../game/engine';
 import { FORMATION_DEFS } from '../game/data';
 import { Formation, GameState, GRID_SIZE, PlayerId } from '../game/types';
 import { Camera, Overlays, render, screenToTile } from '../render/renderMap';
@@ -16,13 +16,14 @@ interface Props {
   setCamera: React.Dispatch<React.SetStateAction<Camera>>;
 }
 
+/** Mirrors engine.isInSupplyRange so the overlay shows exactly what the rules use. */
 function computeSupplySet(state: GameState, viewer: PlayerId): Set<string> {
   const set = new Set<string>();
-  const depotTiles = state.tiles.flat().filter((t) => t.isDepot && t.depotOwner === viewer);
+  const sources = supplySources(state, viewer);
   for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
-      for (const d of depotTiles) {
-        if (distance(x, y, d.x, d.y) <= 10) {
+      for (const src of sources) {
+        if (distance(x, y, src.x, src.y) <= SUPPLY_RADIUS) {
           set.add(`${x},${y}`);
           break;
         }
@@ -53,7 +54,7 @@ export const MapCanvas: React.FC<Props> = ({ state, viewer, selected, overlays, 
   const attackable = new Set<string>();
   if (selected) {
     const def = FORMATION_DEFS[selected.type];
-    const range = selected.type === 'ARTILLERY' ? 6 : 1;
+    const range = def.attackRange;
     Object.values(state.formations).forEach((f) => {
       if (f.owner !== selected.owner && distance(selected.x, selected.y, f.x, f.y) <= range) {
         attackable.add(f.id);

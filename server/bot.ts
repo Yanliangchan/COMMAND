@@ -23,7 +23,7 @@
 import * as engine from '../src/game/engine';
 import { filterStateForPlayer } from '../src/game/fog';
 import { FORMATION_DEFS } from '../src/game/data';
-import { ActionKind, AP_COSTS, Formation, GameState, Objective, PlayerId } from '../src/game/types';
+import { ActionKind, AP_COSTS, AP_PER_TURN, Formation, GameState, Objective, PlayerId } from '../src/game/types';
 import { GameAction } from '../src/net/protocol';
 
 export type BotDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
@@ -37,18 +37,24 @@ interface Weights {
   clusterWeight: number; // reward massing near friendlies (crude combined-arms positioning)
   randomness: number; // chance to ignore the best-scoring candidate and pick a weaker one
   minScore: number; // candidates below this aren't worth spending AP on
+  /**
+   * How many of a formation's per-round movement actions this difficulty will
+   * actually use. EASY leaves the extra bounds on the table; MEDIUM and HARD
+   * exploit the full allowance to manoeuvre aggressively.
+   */
+  maxBoundsPerUnit: number;
 }
 
 const WEIGHTS: Record<BotDifficulty, Weights> = {
   // Mostly-random legal moves, weak objective/combined-arms awareness, will
   // take bad attacks and can waste AP on low-value actions.
-  EASY: { objectiveWeight: 0.4, attackThreshold: 0, isolationBonus: 0, reconPriority: 0.2, resupplyThreshold: 15, clusterWeight: 0, randomness: 0.45, minScore: -100 },
+  EASY: { objectiveWeight: 0.4, attackThreshold: 0, isolationBonus: 0, reconPriority: 0.2, resupplyThreshold: 15, clusterWeight: 0, randomness: 0.45, minScore: -100, maxBoundsPerUnit: 1 },
   // Prioritizes objectives, recons before committing when AP allows, avoids
   // clearly bad attacks, keeps an eye on supply.
-  MEDIUM: { objectiveWeight: 1.1, attackThreshold: 0.42, isolationBonus: 4, reconPriority: 0.7, resupplyThreshold: 35, clusterWeight: 0.3, randomness: 0.12, minScore: 0.2 },
+  MEDIUM: { objectiveWeight: 1.1, attackThreshold: 0.42, isolationBonus: 4, reconPriority: 0.7, resupplyThreshold: 35, clusterWeight: 0.3, randomness: 0.12, minScore: 0.2, maxBoundsPerUnit: 3 },
   // Combined-arms aware, target-prioritizes weakened/isolated formations,
   // defends held objectives, manages logistics, spends its AP efficiently.
-  HARD: { objectiveWeight: 1.4, attackThreshold: 0.5, isolationBonus: 9, reconPriority: 1.1, resupplyThreshold: 55, clusterWeight: 0.8, randomness: 0.02, minScore: 0.5 },
+  HARD: { objectiveWeight: 1.4, attackThreshold: 0.5, isolationBonus: 9, reconPriority: 1.1, resupplyThreshold: 55, clusterWeight: 0.8, randomness: 0.02, minScore: 0.5, maxBoundsPerUnit: 3 },
 };
 
 interface Candidate {
@@ -60,10 +66,22 @@ function dist(x0: number, y0: number, x1: number, y1: number) {
   return Math.abs(x0 - x1) + Math.abs(y0 - y1);
 }
 
-function nearestUncontrolledObjective(objectives: Objective[], bot: PlayerId, x: number, y: number): { obj: Objective; d: number } | null {
+/**
+ * Nearest objective this formation could actually take: warships go for
+ * maritime objectives, ground formations for land ones — the bot never walks a
+ * frigate at a bridge or an infantry battalion at an open-sea anchorage.
+ */
+function nearestUncontrolledObjective(
+  objectives: Objective[],
+  bot: PlayerId,
+  x: number,
+  y: number,
+  naval: boolean
+): { obj: Objective; d: number } | null {
   let best: { obj: Objective; d: number } | null = null;
   for (const o of objectives) {
     if (o.controlledBy === bot) continue;
+    if (!!o.maritime !== naval) continue;
     const d = dist(x, y, o.x, o.y);
     if (!best || d < best.d) best = { obj: o, d };
   }
@@ -105,28 +123,29 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
   // player in this seat would have been sent over the wire.
   const view = filterStateForPlayer(state, bot);
   const visibleEnemies = Object.values(view.formations).filter((f) => f.owner !== bot);
-  const mine = Object.values(state.formations).filter((f) => f.owner === bot && !f.hasActedThisTurn && !f.embarkedOn);
+  const mine = Object.values(state.formations).filter((f) => f.owner === bot);
   if (mine.length === 0) return null;
 
   const candidates: Candidate[] = [];
 
   for (const f of mine) {
     const def = FORMATION_DEFS[f.type];
+    const boundsLeft = Math.min(w.maxBoundsPerUnit, f.movesMax) - f.movesUsed;
+    const majorAvailable = !f.hasActedThisTurn;
 
     // --- RESUPPLY: logistics management — don't push an offense on empty tanks.
-    if (f.supply < w.resupplyThreshold && affordable(state, 'RESUPPLY') && engine.isInSupplyRange(state, f)) {
+    if (majorAvailable && !def.isNaval && f.supply < w.resupplyThreshold && affordable(state, 'RESUPPLY') && engine.isInSupplyRange(state, f)) {
       candidates.push({ action: { type: 'RESUPPLY', formationId: f.id }, score: 6 - f.supply / 20 });
     }
 
     // --- ATTACK (melee adjacency, or artillery fire mission at range).
     const isArtillery = f.type === 'ARTILLERY';
-    const range = isArtillery ? 6 : 1;
+    const range = def.attackRange;
     const attackKind: ActionKind = isArtillery ? 'ARTILLERY' : 'ATTACK';
-    if ((def.maxAmmo === null || f.ammo > 0) && affordable(state, attackKind)) {
+    if (majorAvailable && (def.maxAmmo === null || f.ammo > 0) && affordable(state, attackKind)) {
       for (const e of visibleEnemies) {
         const d = dist(f.x, f.y, e.x, e.y);
         if (d === 0 || d > range) continue;
-        if (!isArtillery && d !== 1) continue;
         const ratio = predictRatio(state, f, e);
         const iso = isolationScore(view, e);
         let score = (ratio - 0.5) * 10 + iso * w.isolationBonus;
@@ -140,7 +159,7 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
     }
 
     // --- AIR: on-call support strikes, reserved for clearly worthwhile (weak/isolated) targets.
-    if (difficulty !== 'EASY' && state.players[bot].airSorties > 0 && affordable(state, 'AIR')) {
+    if (majorAvailable && difficulty !== 'EASY' && state.players[bot].airSorties > 0 && affordable(state, 'AIR')) {
       for (const e of visibleEnemies) {
         const iso = isolationScore(view, e);
         if (iso < 0.5) continue;
@@ -149,8 +168,8 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
     }
 
     // --- RECON: reveal before committing, when there's AP surplus to spend on it.
-    if ((f.type === 'RECON' || f.type === 'COMMANDO') && affordable(state, 'RECON') && state.players[bot].ap > 4) {
-      const nearestObj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y);
+    if (majorAvailable && (f.type === 'RECON' || f.type === 'COMMANDO') && affordable(state, 'RECON') && state.players[bot].ap > 4) {
+      const nearestObj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y, def.isNaval);
       let score = w.reconPriority;
       if (nearestObj && nearestObj.d <= def.reconRadius + 2) score += 1.5;
       candidates.push({ action: { type: 'RECON', formationId: f.id }, score });
@@ -158,19 +177,21 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
 
     // --- FORTIFY: defend an objective already held when the enemy is in sight.
     const heldNearby = state.objectives.find((o) => o.controlledBy === bot && dist(o.x, o.y, f.x, f.y) <= 1);
-    if (heldNearby && !f.fortified && affordable(state, 'FORTIFY') && visibleEnemies.some((e) => dist(e.x, e.y, f.x, f.y) <= def.sightRadius)) {
+    if (majorAvailable && !def.isNaval && heldNearby && !f.fortified && affordable(state, 'FORTIFY') && visibleEnemies.some((e) => dist(e.x, e.y, f.x, f.y) <= def.sightRadius)) {
       candidates.push({ action: { type: 'FORTIFY', formationId: f.id }, score: 1.5 + w.objectiveWeight * 0.5 });
     }
 
     // --- MOVE: the main map driver — path toward the nearest uncontrolled objective,
     // or (Medium/Hard) toward a visible enemy when no objective is known.
-    if (affordable(state, 'MOVE') && !def.isNaval) {
+    // Naval formations manoeuvre too — they contest anchorages and bring their
+    // guns within range of the coast.
+    if (boundsLeft > 0 && affordable(state, 'MOVE')) {
       const reachable = engine.computeReachable(state, f.id);
       if (reachable.size > 0) {
         let targetX = f.x;
         let targetY = f.y;
         let haveTarget = false;
-        const nearestObj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y);
+        const nearestObj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y, def.isNaval);
         if (nearestObj) {
           targetX = nearestObj.obj.x;
           targetY = nearestObj.obj.y;
@@ -199,6 +220,9 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
           const improvement = haveTarget ? currentD - bestD : 1;
           let score = improvement * w.objectiveWeight * 0.4;
           score += clusterScore(state, bot, chosenTile.x, chosenTile.y) * w.clusterWeight;
+          // A second or third bound in the same round is still worth taking,
+          // but slightly less than the first — keeps AP available elsewhere.
+          if (f.movesUsed > 0) score *= 0.8;
           if (difficulty === 'EASY') score = score * 0.3 + Math.random() * 2; // weak, occasionally aimless movement
           candidates.push({ action: { type: 'MOVE', formationId: f.id, x: chosenTile.x, y: chosenTile.y }, score });
         }
@@ -209,7 +233,12 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => b.score - a.score);
 
-  let viable = candidates.filter((c) => c.score >= w.minScore);
+  // AP pressure: holding a big unspent AP pool at the end of a turn is pure
+  // waste, so the more AP is still banked the lower the bar a candidate has to
+  // clear. This is what stops the bot ending turns on a full wallet.
+  const apLeft = state.players[bot].ap;
+  const relaxed = apLeft >= AP_PER_TURN * 0.6 ? 0.15 : apLeft >= AP_PER_TURN * 0.35 ? 0.5 : 1;
+  let viable = candidates.filter((c) => c.score >= w.minScore * relaxed);
   if (viable.length === 0) viable = difficulty === 'EASY' ? candidates : [];
   if (viable.length === 0) return null;
 

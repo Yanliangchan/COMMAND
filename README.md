@@ -53,7 +53,11 @@ src/
   game/                 Pure game logic — no DOM/canvas/React/Node imports.
     types.ts             Core types: Tile, Formation, GameState, etc.
     data.ts              Terrain & formation definitions (stats, flavor text).
-    mapgen.ts             Deterministic battlefield generator (60x60 grid).
+    mapgen.ts             Deterministic TOPOGRAPHIC battlefield generator
+                           (80x80 grid): fBm heightfield -> depression fill ->
+                           D8 flow routing -> rivers -> moisture/terrain ->
+                           settlements -> A* road network -> objectives, with a
+                           hard validation + retry loop (see "Map generation").
     engine.ts             All game rules: movement, combat, fog-of-war refresh,
                            logistics, objectives, turn management.
     fog.ts                 filterStateForPlayer(state, viewer) — redacts a
@@ -185,27 +189,33 @@ screen — lobby included — with:
 
 ## What's playable end-to-end
 
-1. A hand-tuned procedurally generated 60×60 battlefield: forest clusters,
-   grassland, open terrain, three hill masses (with elevation hachures),
-   a winding river with two engineer-buildable bridge crossings, two urban
-   districts, an industrial zone, an airfield, two ports (one per side, each
-   with its own coastal bay), two supply depots, and eight capture-point
-   objectives (bridges, port, airfield, city center, hill, depots) —
-   generated **once, server-side**, when a room is created (not per-client).
+1. A procedurally generated **80×80 topographic battlefield** (6,400 tiles,
+   ~1.8× the previous area): a continuous fractal heightfield with coherent
+   ridges and massifs, a coastline derived from sea level, a dendritic river
+   network that actually flows downhill to the sea with confluences, large
+   continuous forest stands, six settlements grown around water and road
+   junctions, industrial ground on coastal fringes, two airfields, two ports,
+   two supply depots, an A*-routed road network with bridges at the river
+   crossings, and ~22 capture objectives spread across the map (urban
+   districts, ports, airfields, bridges, hills, depots and three open-sea
+   anchorages). Generated **once, server-side**, when a room is created, and
+   **validated before it is served** (see "Map generation" below).
 2. Pan (drag) and zoom (scroll wheel, continuous 3.5×–28× covering
    strategic/operational/tactical framing) camera over the canvas.
-3. Nine formation types per side (Infantry ×2, Commando, Armour, Artillery,
-   Engineers, Recon, Logistics, Naval Transport, Frigate), each with
-   strength/morale/readiness/supply/ammo stats that all affect combat power
-   or movement.
-4. 15 AP/turn (rollover, capped at 25), with the documented per-action AP
+3. Ten formations per side (Infantry ×3, Commandos, Armour, Artillery,
+   Combat Engineers, C4I/ISR, Frigate squadron, Littoral combat squadron),
+   each with strength/morale/readiness/supply/ammo stats that all affect
+   combat power or movement, and each with a **per-round movement-action
+   allowance** (see "Movement actions and the AP economy").
+4. 26 AP/turn (rollover, capped at 34), with the documented per-action AP
    costs. Move, Attack, Recon, Fortify, Resupply, Artillery fire mission,
-   Air strike call-in, Engineer bridge/clear, Commando special ops, and
-   amphibious landings are all implemented, validated, and applied
-   server-side.
-5. Click a formation → see its movement range (Dijkstra over terrain cost,
-   roads halve cost, rivers block unless bridged, water blocks land units).
-   Click a reachable tile to send a `MOVE` action for 1 AP.
+   Air strike call-in, Engineer bridge/clear and Commando special ops are
+   implemented, validated and applied server-side.
+5. Click a formation → see its movement range (Dijkstra over terrain cost;
+   roads halve cost, climbing a band of elevation costs extra, rivers block
+   land units unless bridged, ships are confined to the validated navigable
+   water body). Click a reachable tile to send a `MOVE` action for 1 AP —
+   and do it again, up to that formation's movement allowance for the round.
 6. Click "Attack", then an adjacent (or in-range, for artillery) enemy to
    send an `ATTACK` action: terrain defense bonus, morale/readiness/supply/
    ammo multipliers, recon-revealed vs. unrevealed penalty, combined-arms
@@ -219,53 +229,279 @@ screen — lobby included — with:
    "Suspected Contact" markers with a confidence value that decays over
    turns since last seen — a client literally cannot query the server for
    what it isn't allowed to know.
-8. Eight objectives generate VP/turn for whoever holds them uncontested;
-   first to 150 VP (or the higher score after 20 rounds) wins, with an
-   end-game screen driven by server-pushed `phase: 'GAME_OVER'` state.
-9. Supply depots project a 10-tile supply range (or adjacency to a friendly
-   Logistics formation); formations outside it lose supply/readiness each
-   turn and fight/move worse. A Supply overlay toggle highlights
-   supplied vs. isolated ground. Resupply action restores a formation.
+8. ~22 objectives generate VP for whoever holds them uncontested; land
+   objectives are held by ground formations, the three open-sea anchorages
+   only by warships. VP are paid out once per **round** (at the end of
+   REDFOR's turn) to both holders at once, and victory is only adjudicated at
+   a round boundary, so the first player does not get half a round of free
+   scoring every round. First to 200 VP (or the higher score after 24 rounds)
+   wins, with an end-game screen driven by server-pushed `phase: 'GAME_OVER'`.
+9. Supply is a **positional modifier, not a logistics mini-game**: a formation
+   is in supply within 16 tiles of one of its side's supply sources — its
+   depots, or any Port / Airfield / Supply Depot objective it currently holds.
+   Outside that it loses supply/readiness each turn and fights and moves
+   worse. Warships carry their own stores. A Supply overlay toggle highlights
+   supplied vs. isolated ground; the Resupply action restores a formation.
+   There are no supply convoys, transports or routes to shepherd.
 10. Real two-client multiplayer via room code or Quick Match (see
     "Multiplayer design" above) — no pass-and-play, no shared browser tab.
 
 ## Real-World Reference vs. Fictional Game Mechanics
 
 Per the design brief, this prototype does **not** reproduce any real SAF
-organisational structure, unit counts, or classified/sensitive information.
+organisational structure, unit counts, order of battle, or
+classified/sensitive information.
 
-- **Real-world reference (flavor only):** platform names — SAR 21, Terrex
-  ICV, SPIKE-LR ATGM, M110, Leopard 2SG, Hunter AFV, Bionix, SSPH Primus,
-  SLWH Pegasus, F-15SG, F-16, Heron 1, Hermes 450, Formidable-class frigate,
-  Endurance-class landing ship — appear only as descriptive flavor text on
-  each formation type (see `FORMATION_DEFS[...].flavor` in
-  `src/game/data.ts`). They do not imply any real organisational structure,
-  unit strength, or capability figure.
+### Formation naming
+
+BLUEFOR formations use **real, publicly documented SAF naming conventions**,
+verified against public sources before being adopted:
+
+| In-game formation | Designation | Echelon | Arm |
+| --- | --- | --- | --- |
+| 1st Battalion, Singapore Infantry Regiment | 1 SIR | Battalion | Infantry |
+| 2nd Battalion, Singapore Infantry Regiment | 2 SIR | Battalion | Infantry |
+| 5th Battalion, Singapore Infantry Regiment | 5 SIR | Battalion | Infantry |
+| 1st Commando Battalion | 1 CDO BN | Battalion | Commandos |
+| 40th Battalion, Singapore Armoured Regiment | 40 SAR | Battalion | Armour |
+| 21st Battalion, Singapore Artillery | 21 SA | Battalion | Artillery |
+| 35th Battalion, Singapore Combat Engineers | 35 SCE | Battalion | Combat Engineers |
+| 24th C4I Battalion | 24 C4I | Battalion | C4I / Signals & ISR |
+| 185 Squadron, Republic of Singapore Navy | 185 SQN | Squadron | RSN |
+| 188 Squadron, Republic of Singapore Navy | 188 SQN | Squadron | RSN |
+
+What was checked, and what that means:
+
+- The **convention** is `<ordinal> Battalion, <Regiment/Corps name>`,
+  abbreviated `<number> <initials>` — e.g. "40th Battalion, Singapore Armoured
+  Regiment (40 SAR)". Note the corps names differ in form: it is the
+  Singapore Infantry **Regiment** and the Singapore Armoured **Regiment**, but
+  the **Singapore Artillery** and the **Singapore Combat Engineers** (so the
+  correct form is "21st Battalion, Singapore Artillery / 21 SA", *not*
+  "21st Battalions Singapore Artillery Regiment" — the typo'd form in the
+  original brief has been corrected here rather than copied).
+- The Commandos use a **battalion** designation ("1st Commando Battalion",
+  1 CDO BN), not a company or squadron one.
+- The intelligence/recon formation is a **C4I battalion** — the SAF publicly
+  formed C4I battalions from earlier Signal battalions, and the convention is
+  `<number> C4I Battalion` (e.g. "10 C4I"). The number **24** used in game is
+  a fictional assignment; it is not a claim about any real unit.
+- The RSN organises ships into numbered **squadrons** (e.g. 185 Squadron for
+  the Formidable-class frigates, 188 Squadron for the Victory-class
+  corvettes), not battalions.
+
+> **The specific battalion/squadron numbers assigned to in-game formations,
+> and the roles, stats and capabilities attached to them, are fictional
+> gameplay assignments that merely follow real SAF naming conventions.** They
+> are not, and must not be read as, a real SAF order of battle. Where a real
+> unit's actual role is not publicly documented, a plausible designation
+> following the correct convention and echelon was chosen rather than
+> inventing an "organisational fact".
+
+**REDFOR is a wholly fictional opposing force** — the "Northern Union
+Forces" — with its own coherent, deliberately non-SAF scheme (3/7/11
+Motorised Rifle Battalions, 1st Special Purpose Battalion, 22nd Tank
+Battalion, 14th Gun & Rocket Artillery Battalion, 6th Assault Engineer
+Battalion, 9th Reconnaissance & EW Battalion, 1st Guided-Missile Frigate
+Group, 5th Missile Corvette Flotilla). It is not a mirror of real SAF unit
+numbers, and its equipment text names no real platform.
+
+### Equipment flavour
+
+- **Real-world reference (flavour only):** platform names — SAR 21, Terrex
+  ICV, Bronco, SPIKE-LR ATGM, Leopard 2SG, Hunter AFV, Bionix, SSPH Primus,
+  SLWH Pegasus, FH2000, HIMARS, F-15SG, F-16, Heron 1, Hermes 450,
+  Formidable-class frigate, Victory-class corvette, Independence-class LMV —
+  appear only as descriptive flavour text on BLUEFOR formations
+  (`ORDERS_OF_BATTLE` in `src/game/data.ts`). They do not imply any real
+  organisational structure, unit strength, or capability figure, and no
+  platform is attributed to any real unit.
 - **Fictional, game-balance data:** every number that affects gameplay —
-  base attack/defense, movement range, sight/recon radius, AP costs, VP
-  thresholds, morale multipliers, terrain cost/defense bonuses, supply
-  radius, combat roll bounds — is an invented design choice for a playable
-  prototype, not real SAF data. These live in `src/game/data.ts`,
-  `src/game/types.ts` (`AP_COSTS`, `AP_PER_TURN`, `VP_WIN_THRESHOLD`, ...)
-  and `src/game/engine.ts`.
+  base attack/defense, movement range, movement-action allowance,
+  attack range, sight/recon radius, AP costs, VP thresholds, morale
+  multipliers, terrain cost/defense bonuses, supply radius, combat roll
+  bounds — is an invented design choice for a playable prototype, not real
+  SAF data. These live in `src/game/data.ts`, `src/game/types.ts`
+  (`AP_COSTS`, `AP_PER_TURN`, `MOVES_PER_ROUND`, `VP_WIN_THRESHOLD`, …) and
+  `src/game/engine.ts`.
+- The map is a **fictional generated landmass**. It is not Singapore and does
+  not depict any real terrain, base, installation or coastline.
+
+## Movement actions and the AP economy
+
+The old build gave every formation exactly one "major action" a round, which
+made manoeuvre glacial and left players ending turns with unspent AP. That is
+replaced by a **two-budget** model:
+
+- **A global AP pool** — 26 AP per turn, rolling over up to a 34 AP cap. Every
+  action still costs AP exactly as before (Move 1, Attack 2, Recon 1, Fortify
+  1, Resupply 1, Artillery 2, Engineer bridge 2 / clear 1, Special Op 3, Air
+  strike 3).
+- **A per-unit, per-round movement-action allowance** (`MOVES_PER_ROUND` in
+  `src/game/types.ts`), surfaced on every `Formation` as `movesUsed` /
+  `movesMax` so the UI can show "1 / 2 movement actions used":
+
+  | Formation | Movement actions / round |
+  | --- | --- |
+  | Infantry (1/2/5 SIR) | 2 |
+  | Armour (40 SAR) | 2 |
+  | Commandos (1 CDO BN) | 3 |
+  | C4I / ISR (24 C4I) | 3 |
+  | Littoral combat squadron (188 SQN) | 3 |
+  | Frigate squadron (185 SQN) | 2 |
+  | Artillery (21 SA) | 1 |
+  | Combat Engineers (35 SCE) | 1 |
+
+Crucially, **movement and the major action are now separate budgets**: a
+formation may move, fire, and move again in the same round. Movement *range*
+per action is still computed from unit type, terrain cost, roads, elevation
+change and a readiness/supply penalty — the allowance only caps how many
+separate bounds it may make. The counters reset at the end of that side's
+turn.
+
+### What was changed and why
+
+| Change | Before | After | Why |
+| --- | --- | --- | --- |
+| AP per turn | 15 | **26** | Ten formations × 1–3 bounds + a major action is a ~35–40 AP appetite; 26 keeps the budget a real constraint while making a fully-unspent turn very hard. |
+| AP carry cap | 25 | **34** | Scaled with the per-turn figure; still low enough to discourage hoarding for an alpha strike. |
+| Moving blocks the unit's action | yes | **no** | The single biggest source of "nothing left worth doing". |
+| Engineer "Clear Obstacle" | 2 AP | **1 AP** | It was never worth 2; now it is a genuine AP sink. |
+| Sight radii | 2–4 | **2–5** | The map is much larger; the old radii made a 6,400-tile board unreadable. |
+| Artillery range | 6 | **8** | Ditto — gun battalions must still matter at map scale. |
+| Objective count | 8 | **~22** | Fighting develops in several places at once instead of one blob. |
+| VP threshold / rounds | 150 / 20 | **200 / 24** | Rebalanced against the new objective count; games resolve in ~12–15 rounds in simulation. |
+| VP payout | per player-turn | **once per round, both sides together** | The first player was banking half a round of free scoring every round. |
+
+Measured over automated bot-vs-bot games (`decideBotAction` driving both
+seats), formations now take **~1.9 movement actions per unit per turn** and
+games resolve in **12–15 rounds** with final scores within a few percent of
+each other.
+
+## Naval and logistics rework
+
+- **Naval transports and the amphibious-ferry flow are gone.** The
+  `NAVAL_TRANSPORT` formation type, the `AMPHIBIOUS` action, the `canEmbark`
+  / `embarkedOn` machinery and the associated UI target-mode were all
+  removed. They existed only to shuttle land units and were a micromanagement
+  tax that mostly resulted in a ship sitting in a corner doing nothing.
+- **Naval forces are now purely combat assets.** Each side fields a frigate
+  squadron (Formidable-class flavour; attack range 4) and a littoral combat
+  squadron (Victory-class corvette with Independence-class LMV in company;
+  attack range 3, faster, 3 movement actions). They engage coastal targets by
+  standoff fire — a standoff engagement damages but never occupies ground —
+  and they contest the three open-sea **Anchorage** objectives, which only
+  warships can hold.
+- **Logistics units are gone.** The `LOGISTICS` formation type was removed
+  along with supply-convoy positioning. Supply and readiness survive as
+  combat/movement **modifiers** and the Resupply action remains, but supply
+  range is now purely positional (16 tiles from a depot or a held
+  Port/Airfield/Depot objective). Warships resupply themselves.
+- The bot (`server/bot.ts`) was updated in step: it no longer reasons about
+  removed systems, sails its warships toward maritime objectives and coastal
+  targets, uses per-type attack ranges, and — at Medium and Hard — spends its
+  formations' **full movement allowance** (Easy deliberately uses only one
+  bound per unit per round). It also relaxes its "is this worth doing"
+  threshold as unspent AP piles up, so it stops ending turns on a full wallet.
+
+## Map generation
+
+`src/game/mapgen.ts` builds an 80×80 sheet the way a landscape is built,
+rather than by scattering terrain tiles:
+
+1. **Heightfield.** Hand-rolled seeded value-noise fBm (6 octaves, with a
+   domain warp and a ridged component) over a mulberry32 PRNG — no new
+   dependencies. A south-east sea mask opens the map onto one ocean.
+2. **Coastline.** Sea level is a percentile of the heightfield, and the sea
+   itself is the below-sea-level region *connected to the map border* — so
+   inland basins are simply low ground, never stray lakes.
+3. **Hydrology.** Priority-flood depression filling guarantees every land cell
+   drains to salt water; D8 flow routing plus flow accumulation then produces
+   a dendritic river network with real confluences. Diagonal flow steps have
+   their elbow filled so channels are orthogonally continuous (this is what
+   keeps rivers from degenerating into disconnected blue speckle), and only
+   the largest trunks are widened.
+4. **Terrain.** Elevation bands are *quantiles* of the land heights (so high
+   ground stays on genuine ridges), and a second noise field plus
+   distance-to-water gives moisture. Forest/grass/open/hills fall out of
+   (elevation, moisture, slope), producing large continuous stands. Beaches
+   are low land on the open sea. A three-pass majority filter removes any
+   isolated single-tile speckle.
+5. **Settlements.** Sites are scored on flatness, proximity to fresh water or
+   coast, and spacing, then grown as blobs; the seaward fringe of coastal
+   settlements becomes industrial ground.
+6. **Roads.** A minimum spanning tree over settlements, ports, airfields and
+   depots, with each edge routed by **A\* over a terrain-and-slope cost
+   field** — roads therefore prefer low slope, follow valleys, bundle into
+   shared corridors, and cross rivers only where a **bridge** is laid.
+7. **Objectives.** Urban districts at settlement centres, ports at berths,
+   airfields on flat inland ground, the four largest river crossings, the
+   three dominant peaks, both depots, and three sea anchorages placed
+   deliberately *balanced* — one nearer each side's naval spawn plus one
+   contested middle — so neither side gets the maritime VP for free.
+
+### Validation — a broken map can never reach a room
+
+`generateBattlefield()` generates, **validates, and retries** (up to 24
+attempts on decorrelated seeds) before returning; if it cannot produce a valid
+map it throws rather than serving a broken one. `validateMap()` asserts:
+
+- all water forms **one** body, and every naval spawn, every maritime
+  objective and every port berth is on it (ships can never be stranded);
+- every land objective and every deployment tile is on one land component,
+  reachable across bridges;
+- no orphan river tiles (rivers are continuous);
+- no isolated single-tile terrain speckle above a tiny tolerance;
+- the road network reaches every settlement, port and depot.
+
+Generation additionally repairs before it rejects: isolated pools are
+converted to land, and if two objective-bearing land components are separated
+by a river it bridges the crossing that joins them.
+
+Run the soak test yourself:
+
+```bash
+npm run mapcheck        # 60 seeds by default
+npm run mapcheck -- 200 # more
+```
+
+It re-derives the naval-reachability claim independently (sailing from
+BLUEFOR's first ship) rather than trusting the generator, and reports a pass
+rate plus terrain statistics.
+
+### Wire size
+
+The tile grid is 6,400 tiles (~440 KB of JSON) and changes only when an
+engineer throws a bridge, so `road` / `river` / `bridge` / `navigable` are
+only serialised when true, the per-tile render noise is derived from a hash of
+`(x, y)` in the renderer instead of being carried on the wire, and the server
+**elides the grid entirely** from routine `state` pushes (`WireGameState` in
+`src/net/protocol.ts`); the client reuses the grid it received at `start`.
+A routine per-action broadcast is **7 KB** instead of ~440 KB.
 
 ## Design choices / documented deviations
 
 - **AP rollover cap:** leftover AP carries over uncapped in the brief's base
-  rule; this prototype caps the carry at 25 (`AP_CAP`) to avoid runaway
+  rule; this prototype caps the carry at 34 (`AP_CAP`) to avoid runaway
   hoarding turning into a first-turn alpha strike, while still rewarding a
   quiet turn with a stronger follow-up.
 - **Movement:** flat 1 AP per Move action regardless of distance travelled
   within range, per the brief; the *range* itself is computed from
-  unit-type move points, terrain cost, and a readiness/supply penalty.
+  unit-type move points, terrain cost, roads, elevation change, and a
+  readiness/supply penalty. The number of Move actions a formation may take
+  in a round is capped separately (`MOVES_PER_ROUND`) — see "Movement actions
+  and the AP economy".
 - **Combat resolution on capture:** a "Position Captured" outcome removes
   the defending formation from the board (retreat is not separately
   modeled) and the attacker occupies the tile — a simplification called out
   here rather than left implicit.
-- **Amphibious action:** implemented as a single 3-AP action on the Naval
-  Transport that ferries an adjacent friendly formation directly to a
-  destination tile, rather than a separate embark/disembark pair — kept
-  deliberately simple per the brief's "keep this simple" instruction.
+- **Standoff fire never takes ground.** Only a range-1 assault by a ground
+  formation can produce a "Position Captured" outcome; an artillery fire
+  mission or a naval engagement at range damages and can destroy, but the
+  firing unit does not advance onto the tile.
+- **Maritime objectives are naval-only, land objectives ground-only.** A
+  frigate cannot "hold" a bridge and an infantry battalion cannot hold an
+  open-sea anchorage.
 - **Side assignment on room join** is randomized per room, not "creator is
   always BLUEFOR" — called out explicitly since the brief left the choice
   open.
@@ -279,6 +515,32 @@ organisational structure, unit counts, or classified/sensitive information.
   are fixed constants (`RECONNECT_GRACE_MS`, `EMPTY_ROOM_TTL_MS` in
   `server/index.ts`) rather than configurable — reasonable prototype
   defaults, not tuned against real usage data.
+
+## Deferred to the phase-2 UI/UX pass
+
+Phase 1 (this pass) was scoped to gameplay, data and map generation. The
+following were deliberately **left alone** and are the follow-up pass's job —
+everything they need is already exposed in the state the client receives:
+
+- **Action bar, keyboard shortcuts, legend, tutorial/help system, branding
+  rename and overall layout.** `UnitDetailPanel` / `FormationList` / `TopBar`
+  were touched only enough to keep the app compiling and to surface the new
+  data; they are not redesigned.
+- **Movement-allowance UI.** Every `Formation` now carries `movesUsed` /
+  `movesMax` (and `shortName` / `echelon` / `arm` / `equipment`), and the
+  panel shows a plain "N / M used" line — the proper affordance (a pip row,
+  disabled-state styling, a "bounds left" badge on the map counter) is phase-2
+  work.
+- **Topographic map styling.** Every `Tile` now carries a continuous `height`
+  (0–1) alongside the quantised `elevation` band, and the renderer already
+  draws hillshade plus batched index/intermediate contour lines from it. A
+  fuller cartographic treatment (hypsometric tinting, labelled spot heights,
+  smoothed coastlines) is available from that data without further engine
+  changes.
+- **New terrain and objective kinds in the legend.** `BEACH` terrain and the
+  `Anchorage` objective kind are new and need legend entries.
+- **Settlement names.** Urban/industrial tiles carry a `settlement` id and the
+  generator names each settlement; the UI does not surface those names yet.
 
 ## Explicitly out of scope / deferred (future work)
 
@@ -298,9 +560,47 @@ organisational structure, unit counts, or classified/sensitive information.
 - **Spectators, team modes (2v2+), or ranked matchmaking.**
 - **Map editor / force-builder points economy.**
 - **DIS/cyber warfare mechanics.**
-- **AI opponent** — both seats are human-controlled.
 
 ## Testing performed
+
+### Phase-1 refinement pass (naming, movement/AP, naval & logistics, mapgen)
+
+- `npm run build` (client `tsc -b` + Vite) and `npx tsc -p
+  server/tsconfig.json --noEmit` — both clean.
+- **Map soak test** (`npm run mapcheck -- 80`): 80 independent seeds, **80/80
+  pass (100%)**. Each map is checked by `validateMap()` *and* by an
+  independent re-derivation in the script that sails from BLUEFOR's first ship
+  and asserts it can reach every naval spawn, every port berth and every
+  anchorage. Typical map: ~2,390 water tiles (all one navigable body), ~280
+  river tiles, ~280 road tiles, ~15 bridge tiles, ~1,200 forest tiles, 22
+  objectives; ~1.2 generation attempts and ~75 ms per map.
+- **Headless bot-vs-bot simulation** over the real engine + real
+  `decideBotAction`: games resolve in 12–15 rounds with final scores within a
+  few percent, formations take ~1.9 movement actions per unit per turn, and
+  neither side wins systematically.
+- **Live app driven with Playwright/Chromium** against the combined server
+  (`npm start`), vs-Bot on Medium:
+  - a game starts on an 80×80 map with 22 objectives and the correct ten
+    named formations per side (1 SIR / 2 SIR / 5 SIR / 1 CDO BN / 40 SAR /
+    21 SA / 35 SCE / 24 C4I / 185 SQN / 188 SQN);
+  - **1 SIR performed a 2nd movement action in the same round and was then
+    blocked from a 3rd** — after two bounds `computeReachable` returns zero
+    tiles and the move is rejected server-side;
+  - **185 SQN (frigate) sailed twice across open water** (13,66 → 18,68 →
+    25,68) with 43 and then 75 reachable water tiles — no stranding;
+  - the bot played four consecutive turns with no client or server errors,
+    used its full 3/3 movement allowance on 9 REB, and captured both land and
+    maritime objectives (Bridge 4, Sungei Lanjut District, Anchorage B).
+- **Render cost measured in-browser** at the new size, forcing a full React +
+  canvas redraw every animation frame (a worst case; normal play redraws only
+  on interaction): 16–23 ms per frame across 4, 5, 9, 16 and 24 px/tile —
+  roughly 45–60 fps at every zoom level. Batching the contour lines into two
+  `Path2D` strokes per frame and raising the sprite-detail threshold took the
+  worst zoom level from 36 ms to 20 ms.
+- **Wire size measured**: full `start` payload 444 KB (once), routine
+  per-action `state` push **7.2 KB**.
+
+### Earlier multiplayer pass
 
 - `npm run build` — TypeScript project build (client, `tsc -b`, scoped to
   `src/`) + Vite production build, no errors. `npx tsc -p

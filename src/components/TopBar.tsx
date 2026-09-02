@@ -1,5 +1,5 @@
 import React from 'react';
-import { AP_CAP, GameState, PlayerId } from '../game/types';
+import { AP_CAP, MAX_ROUNDS, GameState, PlayerId } from '../game/types';
 
 export const TopBar: React.FC<{ state: GameState; you: PlayerId }> = ({ state, you }) => {
   const mine = state.players[you];
@@ -9,7 +9,9 @@ export const TopBar: React.FC<{ state: GameState; you: PlayerId }> = ({ state, y
       <div className="topbar-left">
         <span className="op-name">OPERATION IRON HORIZON</span>
         <span className="divider">|</span>
-        <span>Round {state.round} / 20</span>
+        <span>
+          Round {state.round} / {MAX_ROUNDS}
+        </span>
       </div>
       <div className="topbar-center">
         <span className={`player-chip ${you.toLowerCase()}`}>YOU: {you}</span>
