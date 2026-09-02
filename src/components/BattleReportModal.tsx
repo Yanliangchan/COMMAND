@@ -2,7 +2,12 @@ import React from 'react';
 import { BattleReport } from '../game/types';
 
 export const BattleReportModal: React.FC<{ report: BattleReport; onClose: () => void }> = ({ report, onClose }) => {
-  const outcomeColor = report.outcome === 'Position Captured' || report.outcome === 'Defender Repelled' ? '#8fd694' : report.outcome === 'Attack Repulsed' ? '#e2604f' : '#e0b13a';
+  const outcomeColor =
+    report.outcome === 'Position Captured' || report.outcome === 'Defender Repelled'
+      ? 'var(--olive-bright)'
+      : report.outcome === 'Attack Repulsed'
+      ? 'var(--danger)'
+      : 'var(--amber)';
   return (
     <div className="modal-backdrop">
       <div className="modal battle-report">

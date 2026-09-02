@@ -1,73 +1,97 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useGameStore } from './game/store';
+import { useMultiplayer } from './net/client';
 import { TopBar } from './components/TopBar';
 import { FormationList } from './components/FormationList';
 import { UnitDetailPanel } from './components/UnitDetailPanel';
 import { MapCanvas } from './components/MapCanvas';
 import { OverlayToggles } from './components/OverlayToggles';
 import { BattleReportModal } from './components/BattleReportModal';
-import { TurnHandoffScreen } from './components/TurnHandoffScreen';
 import { EndGameScreen } from './components/EndGameScreen';
+import { Lobby } from './components/Lobby';
 import { Camera, Overlays } from './render/renderMap';
 import { TargetMode } from './App.types';
-import { distance, formationAt, refreshFogOfWar } from './game/engine';
+import { computeReachable, distance, formationAt } from './game/engine';
 import { Formation } from './game/types';
 
 export default function App() {
-  const { state, actions } = useGameStore();
+  const net = useMultiplayer();
+  const { state, you } = net;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [targetMode, setTargetMode] = useState<TargetMode>(null);
   const [camera, setCamera] = useState<Camera>({ x: 20, y: 30, scale: 11 });
   const [overlays, setOverlays] = useState<Overlays>({ terrain: true, movement: true, intel: true, supply: false, objectives: true });
   const [showReportId, setShowReportId] = useState<string | null>(null);
   const shownRef = useRef<string | null>(null);
+  const lastRoundRef = useRef<number | null>(null);
 
-  const selected = selectedId ? state.formations[selectedId] ?? null : null;
+  const selected = state && selectedId ? state.formations[selectedId] ?? null : null;
 
   useEffect(() => {
-    // Dev/QA hook only — lets automated smoke tests drive the game without
-    // clicking through pixel-exact canvas coordinates. Harmless in prod.
-    (window as any).__COMMAND_DEBUG__ = { state, actions, setSelectedId, setCamera, refreshFogOfWar };
+    // Dev/QA hook only — lets automated smoke tests inspect connection + game
+    // state without clicking through pixel-exact canvas coordinates.
+    (window as any).__COMMAND_DEBUG__ = { net, state, you, setSelectedId, setCamera, computeReachable };
   });
 
   useEffect(() => {
-    if (state.lastBattleReport && state.lastBattleReport.id !== shownRef.current) {
+    if (state?.lastBattleReport && state.lastBattleReport.id !== shownRef.current) {
       shownRef.current = state.lastBattleReport.id;
       setShowReportId(state.lastBattleReport.id);
     }
-  }, [state.lastBattleReport]);
+  }, [state?.lastBattleReport]);
 
   useEffect(() => {
-    // Recenter camera on the active player's forces when the turn changes.
-    const mine = Object.values(state.formations).filter((f) => f.owner === state.activePlayer);
+    if (!state || !you) return;
+    // Recenter the camera on the viewer's own forces the first time their
+    // game state arrives, and whenever a new round starts.
+    if (lastRoundRef.current === state.round) return;
+    lastRoundRef.current = state.round;
+    const mine = Object.values(state.formations).filter((f) => f.owner === you);
     if (mine.length) {
       const avgX = mine.reduce((s, f) => s + f.x, 0) / mine.length;
       const avgY = mine.reduce((s, f) => s + f.y, 0) / mine.length;
       setCamera((c) => ({ ...c, x: avgX, y: avgY }));
     }
+  }, [state, you]);
+
+  useEffect(() => {
     setSelectedId(null);
     setTargetMode(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.activePlayer, state.round]);
+  }, [state?.activePlayer]);
+
+  if (!state || !you) {
+    return (
+      <Lobby
+        status={net.status}
+        roomCode={net.roomCode}
+        error={net.error}
+        onCreate={net.createRoom}
+        onJoin={net.joinRoom}
+        onQuickMatch={net.quickMatch}
+        onCancel={net.leaveToLobby}
+      />
+    );
+  }
+
+  const myTurn = state.activePlayer === you;
 
   const clearMode = () => setTargetMode(null);
 
   const handleFormationClick = (f: Formation) => {
     if (targetMode === 'ATTACK' && selected) {
       if (f.owner !== selected.owner) {
-        actions.attack(selected.id, f.id);
+        net.sendAction({ type: 'ATTACK', attackerId: selected.id, targetId: f.id });
         clearMode();
         return;
       }
     }
     if (targetMode === 'AIR_TARGET') {
-      if (f.owner !== state.activePlayer) {
-        actions.air(f.x, f.y);
+      if (f.owner !== you) {
+        net.sendAction({ type: 'AIR', x: f.x, y: f.y });
         clearMode();
         return;
       }
     }
-    if (f.owner === state.activePlayer) {
+    if (f.owner === you) {
       setSelectedId(f.id);
       if (!targetMode) clearMode();
     }
@@ -77,40 +101,40 @@ export default function App() {
     if (!selected) return;
     switch (targetMode) {
       case 'MOVE':
-        actions.move(selected.id, x, y);
+        net.sendAction({ type: 'MOVE', formationId: selected.id, x, y });
         clearMode();
         break;
       case 'ATTACK': {
         const f = formationAt(state, x, y);
-        if (f && f.owner !== selected.owner) actions.attack(selected.id, f.id);
+        if (f && f.owner !== selected.owner) net.sendAction({ type: 'ATTACK', attackerId: selected.id, targetId: f.id });
         clearMode();
         break;
       }
       case 'ARTILLERY':
-        actions.artillery(selected.id, x, y);
+        net.sendAction({ type: 'ARTILLERY', formationId: selected.id, x, y });
         clearMode();
         break;
       case 'AIR_TARGET':
-        actions.air(x, y);
+        net.sendAction({ type: 'AIR', x, y });
         clearMode();
         break;
       case 'ENGINEER_BRIDGE':
-        actions.engineerBridge(selected.id, x, y);
+        net.sendAction({ type: 'ENGINEER_BRIDGE', formationId: selected.id, x, y });
         clearMode();
         break;
       case 'ENGINEER_CLEAR':
-        actions.engineerClear(selected.id, x, y);
+        net.sendAction({ type: 'ENGINEER_CLEAR', formationId: selected.id, x, y });
         clearMode();
         break;
       case 'SPECIAL_OP':
-        actions.specialOp(selected.id, x, y);
+        net.sendAction({ type: 'SPECIAL_OP', formationId: selected.id, x, y });
         clearMode();
         break;
       case 'AMPHIBIOUS': {
         const cargo = Object.values(state.formations).find(
           (o) => o.owner === selected.owner && o.id !== selected.id && distance(o.x, o.y, selected.x, selected.y) <= 1 && o.type !== 'FRIGATE' && o.type !== 'NAVAL_TRANSPORT'
         );
-        if (cargo) actions.amphibious(selected.id, cargo.id, x, y);
+        if (cargo) net.sendAction({ type: 'AMPHIBIOUS', transportId: selected.id, cargoId: cargo.id, x, y });
         clearMode();
         break;
       }
@@ -119,25 +143,29 @@ export default function App() {
     }
   };
 
-  const objectivesCaptured = state.objectives.filter((o) => o.controlledBy === state.activePlayer).length;
-
-  const showHandoff = state.phase === 'TURN_HANDOFF';
+  const objectivesCaptured = state.objectives.filter((o) => o.controlledBy === you).length;
   const showGameOver = state.phase === 'GAME_OVER';
   const report = showReportId && state.lastBattleReport?.id === showReportId ? state.lastBattleReport : null;
+  const showDisconnectBanner = net.status === 'opponent_disconnected';
 
   return (
     <div className="app-root">
-      <TopBar state={state} />
+      <TopBar state={state} you={you} />
+      {showDisconnectBanner && (
+        <div className="reconnect-banner">
+          <span className="pulse-dot" /> Opponent disconnected &mdash; waiting for them to reconnect&hellip;
+        </div>
+      )}
       <div className="main-area">
         <div className="left-panel">
-          <FormationList state={state} viewer={state.activePlayer} selectedId={selectedId} onSelect={(f) => setSelectedId(f.id)} />
+          <FormationList state={state} viewer={you} selectedId={selectedId} onSelect={(f) => setSelectedId(f.id)} />
         </div>
         <div className="center-area">
           <OverlayToggles overlays={overlays} setOverlays={setOverlays} />
           <div className="canvas-wrap">
             <MapCanvas
               state={state}
-              viewer={state.activePlayer}
+              viewer={you}
               selected={selected}
               overlays={overlays}
               targetMode={targetMode}
@@ -155,10 +183,10 @@ export default function App() {
               formation={selected}
               targetMode={targetMode}
               setTargetMode={setTargetMode}
-              onFortify={() => actions.fortify(selected.id)}
-              onRecon={() => actions.recon(selected.id)}
-              onResupply={() => actions.resupply(selected.id)}
-              onAir={() => actions.air(selected.x, selected.y)}
+              onFortify={() => net.sendAction({ type: 'FORTIFY', formationId: selected.id })}
+              onRecon={() => net.sendAction({ type: 'RECON', formationId: selected.id })}
+              onResupply={() => net.sendAction({ type: 'RESUPPLY', formationId: selected.id })}
+              onAir={() => net.sendAction({ type: 'AIR', x: selected.x, y: selected.y })}
             />
           ) : (
             <div className="unit-panel empty">
@@ -170,21 +198,20 @@ export default function App() {
       </div>
       <div className="bottom-bar">
         <div className="bottom-left">
-          AP Remaining: <b>{state.players[state.activePlayer].ap}</b>
+          AP Remaining: <b>{state.players[you].ap}</b>
         </div>
         <div className="bottom-center">
           Objectives Held: {objectivesCaptured} / {state.objectives.length}
         </div>
         <div className="bottom-right">
-          <button className="end-turn-btn" onClick={() => actions.endTurn()}>
-            End Turn →
+          <button className="end-turn-btn" onClick={() => net.endTurn()} disabled={!myTurn}>
+            {myTurn ? 'End Turn →' : `${state.activePlayer}'s Turn…`}
           </button>
         </div>
       </div>
 
       {report && <BattleReportModal report={report} onClose={() => setShowReportId(null)} />}
-      {showHandoff && <TurnHandoffScreen state={state} onContinue={() => actions.beginPlayerTurn()} />}
-      {showGameOver && <EndGameScreen state={state} onRestart={() => actions.reset()} />}
+      {showGameOver && <EndGameScreen state={state} you={you} onRestart={net.leaveToLobby} />}
     </div>
   );
 }

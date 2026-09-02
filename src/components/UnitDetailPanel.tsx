@@ -5,11 +5,11 @@ import { AP_COSTS, Formation, GameState } from '../game/types';
 import { TargetMode } from '../App.types';
 
 const MORALE_COLOR: Record<string, string> = {
-  Elite: '#8fd694',
-  Steady: '#bcd48a',
-  Stressed: '#e0b13a',
-  Shaken: '#e08a3a',
-  Broken: '#e2604f',
+  Elite: 'var(--olive-bright)',
+  Steady: 'var(--olive)',
+  Stressed: 'var(--amber)',
+  Shaken: 'var(--amber-dim)',
+  Broken: 'var(--danger)',
 };
 
 function Stat({ label, value, color }: { label: string; value: number; color?: string }) {
@@ -17,7 +17,7 @@ function Stat({ label, value, color }: { label: string; value: number; color?: s
     <div className="stat-row">
       <span className="stat-label">{label}</span>
       <div className="stat-bar">
-        <div className="stat-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%`, background: color ?? '#8fd694' }} />
+        <div className="stat-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%`, background: color ?? 'var(--olive)' }} />
       </div>
       <span className="stat-val">{Math.round(value)}%</span>
     </div>
@@ -65,10 +65,10 @@ export const UnitDetailPanel: React.FC<{
       <div className="unit-flavor">{def.flavor}</div>
       <div className="unit-order">Last order: {f.lastOrder}</div>
 
-      <Stat label="Strength" value={f.strength} color="#8fd694" />
-      <Stat label="Readiness" value={f.readiness} color="#4fc3f7" />
-      <Stat label="Supply" value={f.supply} color={supplied ? '#8fd694' : '#e2604f'} />
-      {def.maxAmmo !== null && <Stat label="Ammo" value={f.ammo} color="#e0b13a" />}
+      <Stat label="Strength" value={f.strength} color="var(--olive)" />
+      <Stat label="Readiness" value={f.readiness} color="var(--blue)" />
+      <Stat label="Supply" value={f.supply} color={supplied ? 'var(--olive)' : 'var(--danger)'} />
+      {def.maxAmmo !== null && <Stat label="Ammo" value={f.ammo} color="var(--amber)" />}
       <div className="stat-row">
         <span className="stat-label">Morale</span>
         <span className="morale-badge" style={{ color: MORALE_COLOR[f.morale] }}>

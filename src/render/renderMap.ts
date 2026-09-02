@@ -118,7 +118,7 @@ function formationGlyph(type: Formation['type']) {
 export function render(rc: RenderContext) {
   const { ctx, width, height, camera, state } = rc;
   ctx.save();
-  ctx.fillStyle = '#0c1410';
+  ctx.fillStyle = '#12161a';
   ctx.fillRect(0, 0, width, height);
 
   const { x0, x1, y0, y1 } = visibleTileRange(camera, width, height);
@@ -159,9 +159,9 @@ export function render(rc: RenderContext) {
     rc.reachable.forEach((cost, key) => {
       const [x, y] = key.split(',').map(Number);
       const { sx, sy } = worldToScreen(camera, width, height, x, y);
-      ctx.fillStyle = 'rgba(224,177,58,0.28)';
+      ctx.fillStyle = 'rgba(207,154,68,0.28)';
       ctx.fillRect(sx - s / 2, sy - s / 2, s, s);
-      ctx.strokeStyle = 'rgba(224,177,58,0.55)';
+      ctx.strokeStyle = 'rgba(207,154,68,0.55)';
       ctx.lineWidth = 1;
       ctx.strokeRect(sx - s / 2 + 0.5, sy - s / 2 + 0.5, s - 1, s - 1);
     });
@@ -175,7 +175,7 @@ export function render(rc: RenderContext) {
       const color = o.controlledBy ? PLAYER_COLORS[o.controlledBy].main : UI.amber;
       ctx.beginPath();
       ctx.arc(sx, sy, Math.max(5, s * 0.32), 0, Math.PI * 2);
-      ctx.fillStyle = o.controlledBy ? PLAYER_COLORS[o.controlledBy].glow : 'rgba(224,177,58,0.35)';
+      ctx.fillStyle = o.controlledBy ? PLAYER_COLORS[o.controlledBy].glow : 'rgba(207,154,68,0.35)';
       ctx.fill();
       ctx.lineWidth = 2;
       ctx.strokeStyle = color;
@@ -211,11 +211,11 @@ export function render(rc: RenderContext) {
       if (c.x < x0 || c.x > x1 || c.y < y0 || c.y > y1) return;
       const { sx, sy } = worldToScreen(camera, width, height, c.x, c.y);
       const alpha = Math.max(0.25, c.confidence / 100);
-      ctx.fillStyle = `rgba(255,107,91,${alpha * 0.5})`;
+      ctx.fillStyle = `rgba(193,82,74,${alpha * 0.5})`;
       ctx.beginPath();
       ctx.arc(sx, sy, s * 0.4, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = `rgba(255,107,91,${alpha})`;
+      ctx.strokeStyle = `rgba(193,82,74,${alpha})`;
       ctx.setLineDash([3, 2]);
       ctx.lineWidth = 1.5;
       ctx.stroke();
@@ -472,7 +472,7 @@ function drawFormation(rc: RenderContext, f: Formation) {
 
   // Fortified marker
   if (f.fortified) {
-    ctx.strokeStyle = '#c9a24a';
+    ctx.strokeStyle = '#cf9a44';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(sx - r, sy + r * 0.15);
@@ -488,7 +488,7 @@ function drawFormation(rc: RenderContext, f: Formation) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(bx, by, bw, 3);
     const pct = Math.max(0, Math.min(1, f.strength / 100));
-    ctx.fillStyle = pct > 0.6 ? '#8fd694' : pct > 0.3 ? '#e0b13a' : '#e2604f';
+    ctx.fillStyle = pct > 0.6 ? '#93a35f' : pct > 0.3 ? '#cf9a44' : '#c1524a';
     ctx.fillRect(bx, by, bw * pct, 3);
   }
 }

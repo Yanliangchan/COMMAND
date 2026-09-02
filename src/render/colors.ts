@@ -13,17 +13,19 @@ export const TERRAIN_COLORS: Record<TerrainType, { base: string; light: string; 
 };
 
 export const PLAYER_COLORS: Record<'BLUEFOR' | 'REDFOR', { main: string; dark: string; glow: string }> = {
-  BLUEFOR: { main: '#4fc3f7', dark: '#0d3a52', glow: 'rgba(79,195,247,0.55)' },
-  REDFOR: { main: '#ff6b5b', dark: '#4a1a12', glow: 'rgba(255,107,91,0.55)' },
+  BLUEFOR: { main: '#6fa8c9', dark: '#0f2e3d', glow: 'rgba(111,168,201,0.55)' },
+  REDFOR: { main: '#c17a5f', dark: '#3d211a', glow: 'rgba(193,122,95,0.55)' },
 };
 
+// Ops-room UI chrome tokens — mirrors the CSS custom properties in
+// styles.css (kept as plain hex here since the canvas cannot read CSS vars).
 export const UI = {
-  panelBg: '#1b2019',
-  panelBg2: '#20261e',
-  panelBorder: '#3a4534',
-  amber: '#e0b13a',
-  green: '#8fd694',
-  textDim: '#9aa591',
-  textMain: '#e7ecdf',
-  danger: '#e2604f',
+  panelBg: '#1b2126',
+  panelBg2: '#212830',
+  panelBorder: '#37424c',
+  amber: '#cf9a44',
+  green: '#93a35f',
+  textDim: '#8b9a92',
+  textMain: '#dbe0da',
+  danger: '#c1524a',
 };
