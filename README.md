@@ -1,7 +1,7 @@
-# COMMAND — SAF-Inspired Turn-Based Strategy Prototype
+# COMMAND — Lead the force. Shape the battlefield.
 
-A first-playable prototype of a multiplayer turn-based military strategy game
-inspired by the Singapore Armed Forces (SAF). Built with **Vite + React +
+**COMMAND** is a multiplayer turn-based military strategy game inspired by the
+Singapore Armed Forces (SAF). Built with **Vite + React +
 TypeScript**, rendered on an **HTML5 2D canvas** (no WebGL/3D engine), with
 a small **Node + `ws` WebSocket server** as the authoritative multiplayer
 host.
@@ -58,6 +58,10 @@ src/
                            D8 flow routing -> rivers -> moisture/terrain ->
                            settlements -> A* road network -> objectives, with a
                            hard validation + retry loop (see "Map generation").
+    actions.ts            Action availability model — the single answer to
+                           "what can this formation do right now, and if not,
+                           why not", shared by the action bar, the keyboard
+                           handler, the roster badges and the end-turn warning.
     engine.ts             All game rules: movement, combat, fog-of-war refresh,
                            logistics, objectives, turn management.
     fog.ts                 filterStateForPlayer(state, viewer) — redacts a
@@ -76,9 +80,13 @@ src/
   render/                Canvas rendering — reads GameState, draws pixels.
     renderMap.ts            Terrain textures, units, overlays, camera math.
     colors.ts                Palette (terrain + faction + UI tokens).
-  components/            React UI: Lobby, TopBar, FormationList,
-                           UnitDetailPanel, MapCanvas (pan/zoom/click),
-                           BattleReportModal, EndGameScreen, OverlayToggles.
+  components/            React UI. Lobby (+ Tutorial / TutorialDiagram),
+                           TopBar and OverlayToggles (floating HUD strips),
+                           FormationList (roster with per-unit "orders left"
+                           badges), UnitDetailPanel (compact selected-unit
+                           card), ActionBar (order buttons with shortcuts),
+                           Legend, HelpPanel, MapCanvas (pan/zoom/click),
+                           BattleReportModal, EndGameScreen.
   App.tsx                Top-level orchestration: connects useMultiplayer(),
                            renders the Lobby until a game starts, then wires
                            selection/target-mode/canvas clicks to
@@ -516,31 +524,87 @@ A routine per-action broadcast is **7 KB** instead of ~440 KB.
   `server/index.ts`) rather than configurable — reasonable prototype
   defaults, not tuned against real usage data.
 
-## Deferred to the phase-2 UI/UX pass
+## Phase-2 UI/UX pass (presentation)
 
-Phase 1 (this pass) was scoped to gameplay, data and map generation. The
-following were deliberately **left alone** and are the follow-up pass's job —
-everything they need is already exposed in the state the client receives:
+Phase 2 was scoped to UI/UX and presentation only — no engine, multiplayer,
+bot or mapgen redesign. What it changed:
 
-- **Action bar, keyboard shortcuts, legend, tutorial/help system, branding
-  rename and overall layout.** `UnitDetailPanel` / `FormationList` / `TopBar`
-  were touched only enough to keep the app compiling and to surface the new
-  data; they are not redesigned.
-- **Movement-allowance UI.** Every `Formation` now carries `movesUsed` /
-  `movesMax` (and `shortName` / `echelon` / `arm` / `equipment`), and the
-  panel shows a plain "N / M used" line — the proper affordance (a pip row,
-  disabled-state styling, a "bounds left" badge on the map counter) is phase-2
-  work.
-- **Topographic map styling.** Every `Tile` now carries a continuous `height`
-  (0–1) alongside the quantised `elevation` band, and the renderer already
-  draws hillshade plus batched index/intermediate contour lines from it. A
-  fuller cartographic treatment (hypsometric tinting, labelled spot heights,
-  smoothed coastlines) is available from that data without further engine
-  changes.
-- **New terrain and objective kinds in the legend.** `BEACH` terrain and the
-  `Anchorage` objective kind are new and need legend entries.
-- **Settlement names.** Urban/industrial tiles carry a `settlement` id and the
-  generator names each settlement; the UI does not surface those names yet.
+**Identity.** The product is **COMMAND**, tagline *"Lead the force. Shape the
+battlefield."* Every prior operation/product name has been removed from the
+page title, lobby, HUD and end-game screen.
+
+**Action system.** `src/game/actions.ts` describes each order once — label,
+shortcut, AP cost, target mode, beginner blurb, and a per-formation
+`enabled` / `reason` verdict. Selecting a formation immediately shows every
+order it could take as a button with the shortcut on its face; orders it
+cannot take right now are visibly disabled and say why on hover ("No visible
+enemy within attack range (1 tiles)", "Out of supply range — move closer to a
+depot or a held port/airfield", "Not enough AP — needs 3, you have 2").
+
+| Key | Order | | Key | Action |
+|-----|-------|-|-----|--------|
+| `M` | Move | | `E` | End turn (warns if AP and orders remain) |
+| `A` | Attack | | `Tab` | Next formation with orders left |
+| `R` | Recon | | `Z` / `Space` | Centre the camera on the selected unit |
+| `F` | Fortify | | `Esc` | Cancel targeting / close panel / deselect |
+| `S` | Resupply | | `L` | Map legend |
+| `G` | Fire mission (artillery) | | `?` or `H` | Field manual (help) |
+| `C` | Close air support | | `↑ ↓ ← →` | Pan |
+| `B` | Build bridge (engineer) | | `+` / `−` | Zoom |
+| `O` | Clear obstacle (engineer) | | | |
+| `X` | Special op (commando) | | | |
+
+Shortcuts are suppressed whenever the keystroke targets an `INPUT`,
+`TEXTAREA`, `SELECT` or a `contenteditable` element, so typing a room code
+never fires an order.
+
+**Layout.** The battlefield is now the page: `MapCanvas` fills the viewport and
+every panel floats over it as a compact translucent card (HUD strip, tool
+chips, collapsible roster, selected-unit card, order bar, end-turn button).
+The old fixed 260 px left and right columns and the top/bottom bars are gone,
+which returns roughly 520 px of horizontal chrome to the map.
+
+**Camera.** Drag to pan, wheel to zoom about the cursor, eased camera motion on
+every recentre, and a fit-to-viewport zoom floor so zooming out can no longer
+shrink the sheet into a small square.
+
+**Cartography.** The terrain pass no longer fills one rectangle per tile. The
+visible window is rasterised into a small offscreen image (an adaptive 2–6
+pixels per tile, budgeted so cost is roughly constant across zoom levels) and
+blitted up with smoothing, so terrain colour, hypsometric tint, the wet fringe
+at the shore and the hillshade are all bilinearly interpolated and no tile
+boundary survives as a hard edge. Contours and the coastline are drawn with
+marching squares over a corner-height field — real curves that cut diagonally
+through tiles, with an index contour every fifth interval — instead of stepped
+tile-edge segments. Rivers and roads are drawn as cased lines, the per-tile
+grid only whispers in above 15 px/tile, a 10-tile graticule replaces it below
+that, settlement names are lettered onto the sheet from round 6 px/tile, and
+off-sheet space is drawn as open sea inside a framed map edge.
+
+**Legend (`L`).** Collapsible pop-up covering terrain (including **beach**) and
+markers (including **anchorage**, movement range, attack range, unknown
+contact, fortified). Every entry carries both a colour swatch and a symbol.
+
+**Tutorial.** Reached from the landing page. Seven illustrated sections — the
+basic loop, movement, attack, recon (stated plainly as *gathering information
+about enemy forces*), fortify, combined arms, and objectives/VP — each with an
+SVG battlefield diagram drawn in the game's own palette.
+
+**Help (`?`).** Short, jargon-light entries for Infantry, Armour, Commandos,
+Artillery, Engineers, Recon, Air support, Naval units, Terrain, Combat, AP,
+Movement actions, Objectives and fog of war, plus a shortcut reference.
+
+**Momentum.** The roster shows a movement pip per remaining movement action and
+a star for an unspent major action, counts how many formations are still
+"ready", dims spent ones, and `Tab` jumps to the next one. End Turn warns
+(never blocks) while AP and orders remain.
+
+**Combat readability.** The battle report is a corner card rather than a
+full-screen modal, so the engaged tiles stay visible and are flashed on the
+map. It leads with one plain sentence explaining *why* the result went that
+way, built from the decisive factors (each now tagged attacker/defender in the
+report), then the four factors that mattered, with the full list one click
+away.
 
 ## Explicitly out of scope / deferred (future work)
 
@@ -562,6 +626,29 @@ everything they need is already exposed in the state the client receives:
 - **DIS/cyber warfare mechanics.**
 
 ## Testing performed
+
+### Phase-2 UI/UX pass (identity, actions, layout, cartography)
+
+- `npm run build` and `npx tsc -p server/tsconfig.json --noEmit` — both clean.
+- Driven end-to-end with Playwright/chromium against the combined server
+  (`npm start`, 1600×950 viewport): landing page shows the COMMAND identity
+  and tagline; the tutorial opens and all seven sections render with their
+  diagrams; a vs-Bot game starts; selecting a formation immediately shows its
+  order buttons with shortcut labels and correct disabled states; `M` + tile
+  click moves (movement actions 0→1, AP 26→25); `A` arms attack targeting and
+  clicking a ringed enemy produces a battle report with the plain-language
+  explanation; `R` performs a recon sweep; `Esc` cancels a pending mode; `L`
+  toggles the legend (27 entries); `?` opens the field manual; `Tab` selects a
+  formation with orders remaining; End Turn warns while AP remains.
+- **Shortcut suppression:** typing `MARFES` into the room-code input leaves the
+  field reading `MARFE` (its 5-character cap) and fires no order, opens no
+  panel and starts no tutorial.
+- **Render frame time** (smoothed, same 1600×950 viewport), against the
+  phase-1 baseline of 16–23 ms worst case: **4.5 ms** at the fit-to-viewport
+  floor (≈11 px/tile), **8.3 ms** at 11, **9.0 ms** at 16, **8.0 ms** at 22 and
+  **8.4 ms** at 30 px/tile — roughly a 2–3× improvement, because the terrain
+  pass is now one budgeted raster plus a blit instead of thousands of per-tile
+  fills and strokes.
 
 ### Phase-1 refinement pass (naming, movement/AP, naval & logistics, mapgen)
 

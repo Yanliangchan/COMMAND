@@ -1,35 +1,70 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMultiplayer } from './net/client';
 import { TopBar } from './components/TopBar';
 import { FormationList } from './components/FormationList';
 import { UnitDetailPanel } from './components/UnitDetailPanel';
 import { MapCanvas } from './components/MapCanvas';
 import { OverlayToggles } from './components/OverlayToggles';
+import { ActionBar } from './components/ActionBar';
 import { BattleReportModal } from './components/BattleReportModal';
 import { EndGameScreen } from './components/EndGameScreen';
+import { Legend } from './components/Legend';
+import { HelpPanel } from './components/HelpPanel';
 import { Lobby } from './components/Lobby';
 import { Camera, Overlays } from './render/renderMap';
 import { TargetMode } from './App.types';
+import { ActionAvailability, actionAvailability, ACTION_BY_SHORTCUT, formationsWithActions } from './game/actions';
 import { computeReachable, formationAt } from './game/engine';
-import { Formation } from './game/types';
+import { AP_COSTS, Formation } from './game/types';
+
+const TARGET_HINTS: Record<string, string> = {
+  MOVE: 'Click a highlighted tile to move there.',
+  ATTACK: 'Click a red-ringed enemy inside your attack range.',
+  ARTILLERY: 'Click a spotted enemy inside the red range diamond to fire on it.',
+  AIR_TARGET: 'Click any spotted enemy formation to call the strike in.',
+  ENGINEER_BRIDGE: 'Click an adjacent river tile to bridge it.',
+  ENGINEER_CLEAR: 'Click an adjacent tile to clear its obstacles and dug-in defences.',
+  SPECIAL_OP: 'Click a tile within commando reach to raid or probe it.',
+};
+
+/** True when the keystroke belongs to a text field and must not act as a shortcut. */
+function isTypingTarget(e: KeyboardEvent): boolean {
+  const el = e.target as HTMLElement | null;
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
 
 export default function App() {
   const net = useMultiplayer();
   const { state, you } = net;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [targetMode, setTargetMode] = useState<TargetMode>(null);
-  const [camera, setCamera] = useState<Camera>({ x: 20, y: 30, scale: 11 });
+  const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, scale: 11 });
   const [overlays, setOverlays] = useState<Overlays>({ terrain: true, movement: true, intel: true, supply: false, objectives: true });
   const [showReportId, setShowReportId] = useState<string | null>(null);
+  const [legendOpen, setLegendOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [rosterCollapsed, setRosterCollapsed] = useState(false);
+  const [endTurnWarn, setEndTurnWarn] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const shownRef = useRef<string | null>(null);
   const lastRoundRef = useRef<number | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
 
   const selected = state && selectedId ? state.formations[selectedId] ?? null : null;
+
+  const flash = useCallback((msg: string) => {
+    setToast(msg);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
+  }, []);
 
   useEffect(() => {
     // Dev/QA hook only — lets automated smoke tests inspect connection + game
     // state without clicking through pixel-exact canvas coordinates.
-    (window as any).__COMMAND_DEBUG__ = { net, state, you, setSelectedId, setCamera, computeReachable };
+    (window as any).__COMMAND_DEBUG__ = { net, state, you, setSelectedId, setCamera, computeReachable, selectedId, targetMode };
   });
 
   useEffect(() => {
@@ -41,8 +76,6 @@ export default function App() {
 
   useEffect(() => {
     if (!state || !you) return;
-    // Recenter the camera on the viewer's own forces the first time their
-    // game state arrives, and whenever a new round starts.
     if (lastRoundRef.current === state.round) return;
     lastRoundRef.current = state.round;
     const mine = Object.values(state.formations).filter((f) => f.owner === you);
@@ -54,9 +87,169 @@ export default function App() {
   }, [state, you]);
 
   useEffect(() => {
-    setSelectedId(null);
     setTargetMode(null);
+    setEndTurnWarn(false);
   }, [state?.activePlayer]);
+
+  const myTurn = !!state && !!you && state.activePlayer === you;
+
+  const actions: ActionAvailability[] = useMemo(
+    () => (state && you && selected ? actionAvailability(state, selected, you) : []),
+    [state, you, selected]
+  );
+
+  const readyFormations = useMemo(() => (state && you ? formationsWithActions(state, you) : []), [state, you]);
+
+  const centreOn = useCallback((f: { x: number; y: number }) => {
+    setCamera((c) => ({ ...c, x: f.x, y: f.y }));
+  }, []);
+
+  const selectFormation = useCallback(
+    (f: Formation, centre = false) => {
+      setSelectedId(f.id);
+      setTargetMode(null);
+      if (centre) centreOn(f);
+    },
+    [centreOn]
+  );
+
+  const runAction = useCallback(
+    (a: ActionAvailability) => {
+      if (!selected || !state) return;
+      if (!a.enabled) {
+        flash(a.reason);
+        return;
+      }
+      if (a.mode) {
+        setTargetMode((m) => (m === a.mode ? null : a.mode));
+        return;
+      }
+      switch (a.id) {
+        case 'RECON':
+          net.sendAction({ type: 'RECON', formationId: selected.id });
+          break;
+        case 'FORTIFY':
+          net.sendAction({ type: 'FORTIFY', formationId: selected.id });
+          break;
+        case 'RESUPPLY':
+          net.sendAction({ type: 'RESUPPLY', formationId: selected.id });
+          break;
+        default:
+          break;
+      }
+      setTargetMode(null);
+    },
+    [selected, state, net, flash]
+  );
+
+  const nextReady = useCallback(() => {
+    if (!readyFormations.length) {
+      flash('No formation has orders left — press E to end the turn.');
+      return;
+    }
+    const idx = readyFormations.findIndex((f) => f.id === selectedId);
+    const next = readyFormations[(idx + 1) % readyFormations.length];
+    selectFormation(next, true);
+  }, [readyFormations, selectedId, selectFormation, flash]);
+
+  const doEndTurn = useCallback(() => {
+    if (!state || !you) return;
+    const ap = state.players[you].ap;
+    const meaningful = ap >= AP_COSTS.MOVE && readyFormations.length > 0;
+    if (meaningful && !endTurnWarn) {
+      setEndTurnWarn(true);
+      return;
+    }
+    setEndTurnWarn(false);
+    net.endTurn();
+  }, [state, you, readyFormations, endTurnWarn, net]);
+
+  // ---- Keyboard ------------------------------------------------------------
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Never steal keys from a text field (the room-code input in particular).
+      if (isTypingTarget(e)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key;
+
+      if (k === 'Escape') {
+        if (targetMode) setTargetMode(null);
+        else if (legendOpen) setLegendOpen(false);
+        else if (helpOpen) setHelpOpen(false);
+        else if (endTurnWarn) setEndTurnWarn(false);
+        else setSelectedId(null);
+        e.preventDefault();
+        return;
+      }
+      if (k === '?' || k === '/') {
+        setHelpOpen((v) => !v);
+        e.preventDefault();
+        return;
+      }
+      const up = k.toUpperCase();
+      if (up === 'L') {
+        setLegendOpen((v) => !v);
+        e.preventDefault();
+        return;
+      }
+      if (up === 'H') {
+        setHelpOpen((v) => !v);
+        e.preventDefault();
+        return;
+      }
+      if (k === 'Tab') {
+        nextReady();
+        e.preventDefault();
+        return;
+      }
+      if (up === 'Z' || k === ' ') {
+        if (selected) centreOn(selected);
+        e.preventDefault();
+        return;
+      }
+      if (up === 'E') {
+        if (myTurn) doEndTurn();
+        e.preventDefault();
+        return;
+      }
+      if (k === '+' || k === '=') {
+        setCamera((c) => ({ ...c, scale: Math.min(34, c.scale * 1.25) }));
+        e.preventDefault();
+        return;
+      }
+      if (k === '-' || k === '_') {
+        setCamera((c) => ({ ...c, scale: Math.max(3.5, c.scale / 1.25) }));
+        e.preventDefault();
+        return;
+      }
+      if (k.startsWith('Arrow')) {
+        const step = 6;
+        setCamera((c) => ({
+          ...c,
+          x: c.x + (k === 'ArrowRight' ? step : k === 'ArrowLeft' ? -step : 0),
+          y: c.y + (k === 'ArrowDown' ? step : k === 'ArrowUp' ? -step : 0),
+        }));
+        e.preventDefault();
+        return;
+      }
+      const spec = ACTION_BY_SHORTCUT[up];
+      if (spec) {
+        e.preventDefault();
+        if (!selected) {
+          flash('Select a formation first — click one on the map or in the roster.');
+          return;
+        }
+        const a = actions.find((x) => x.id === spec.id);
+        if (!a || !a.applicable) {
+          flash(`${selected.shortName} cannot perform ${spec.label}.`);
+          return;
+        }
+        runAction(a);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [targetMode, legendOpen, helpOpen, endTurnWarn, selected, actions, runAction, nextReady, centreOn, doEndTurn, myTurn, flash]);
 
   if (!state || !you) {
     return (
@@ -73,29 +266,25 @@ export default function App() {
     );
   }
 
-  const myTurn = state.activePlayer === you;
-
   const clearMode = () => setTargetMode(null);
 
   const handleFormationClick = (f: Formation) => {
-    if (targetMode === 'ATTACK' && selected) {
-      if (f.owner !== selected.owner) {
-        net.sendAction({ type: 'ATTACK', attackerId: selected.id, targetId: f.id });
-        clearMode();
-        return;
-      }
+    if (targetMode === 'ATTACK' && selected && f.owner !== selected.owner) {
+      net.sendAction({ type: 'ATTACK', attackerId: selected.id, targetId: f.id });
+      clearMode();
+      return;
     }
-    if (targetMode === 'AIR_TARGET') {
-      if (f.owner !== you) {
-        net.sendAction({ type: 'AIR', x: f.x, y: f.y });
-        clearMode();
-        return;
-      }
+    if (targetMode === 'AIR_TARGET' && f.owner !== you) {
+      net.sendAction({ type: 'AIR', x: f.x, y: f.y });
+      clearMode();
+      return;
     }
-    if (f.owner === you) {
-      setSelectedId(f.id);
-      if (!targetMode) clearMode();
+    if (targetMode === 'ARTILLERY' && selected && f.owner !== selected.owner) {
+      net.sendAction({ type: 'ARTILLERY', formationId: selected.id, x: f.x, y: f.y });
+      clearMode();
+      return;
     }
+    if (f.owner === you) selectFormation(f);
   };
 
   const handleTileClick = (x: number, y: number) => {
@@ -136,75 +325,114 @@ export default function App() {
     }
   };
 
-  const objectivesCaptured = state.objectives.filter((o) => o.controlledBy === you).length;
-  const showGameOver = state.phase === 'GAME_OVER';
+  const objectivesHeld = state.objectives.filter((o) => o.controlledBy === you).length;
   const report = showReportId && state.lastBattleReport?.id === showReportId ? state.lastBattleReport : null;
-  const showDisconnectBanner = net.status === 'opponent_disconnected';
+  const flashTiles = report
+    ? [
+        { x: report.attackerX, y: report.attackerY },
+        { x: report.defenderX, y: report.defenderY },
+      ]
+    : undefined;
 
   return (
     <div className="app-root">
-      <TopBar state={state} you={you} />
-      {showDisconnectBanner && (
+      <MapCanvas
+        state={state}
+        viewer={you}
+        selected={selected}
+        overlays={overlays}
+        targetMode={targetMode}
+        onTileClick={handleTileClick}
+        onFormationClick={handleFormationClick}
+        camera={camera}
+        setCamera={setCamera}
+        flashTiles={flashTiles}
+      />
+
+      <TopBar state={state} you={you} objectivesHeld={objectivesHeld} objectivesTotal={state.objectives.length} />
+      <OverlayToggles
+        overlays={overlays}
+        setOverlays={setOverlays}
+        legendOpen={legendOpen}
+        helpOpen={helpOpen}
+        onLegend={() => setLegendOpen((v) => !v)}
+        onHelp={() => setHelpOpen((v) => !v)}
+      />
+
+      {net.status === 'opponent_disconnected' && (
         <div className="reconnect-banner">
           <span className="pulse-dot" /> Opponent disconnected &mdash; waiting for them to reconnect&hellip;
         </div>
       )}
-      <div className="main-area">
-        <div className="left-panel">
-          <FormationList state={state} viewer={you} selectedId={selectedId} onSelect={(f) => setSelectedId(f.id)} />
+
+      <FormationList
+        state={state}
+        viewer={you}
+        selectedId={selectedId}
+        collapsed={rosterCollapsed}
+        onToggle={() => setRosterCollapsed((v) => !v)}
+        onSelect={(f) => selectFormation(f, true)}
+      />
+
+      {selected && (
+        <UnitDetailPanel state={state} formation={selected} onCentre={() => centreOn(selected)} onClose={() => setSelectedId(null)} />
+      )}
+
+      {selected ? (
+        <ActionBar
+          formation={selected}
+          actions={actions}
+          targetMode={targetMode}
+          onAction={runAction}
+          onCancel={clearMode}
+          hint={targetMode ? TARGET_HINTS[targetMode] ?? null : null}
+        />
+      ) : (
+        <div className="action-bar empty-bar">
+          <span>
+            Select a formation — click one on the map or in the roster, or press <kbd>Tab</kbd> to jump to the next one with
+            orders left.
+          </span>
         </div>
-        <div className="center-area">
-          <OverlayToggles overlays={overlays} setOverlays={setOverlays} />
-          <div className="canvas-wrap">
-            <MapCanvas
-              state={state}
-              viewer={you}
-              selected={selected}
-              overlays={overlays}
-              targetMode={targetMode}
-              onTileClick={handleTileClick}
-              onFormationClick={handleFormationClick}
-              camera={camera}
-              setCamera={setCamera}
-            />
-          </div>
-        </div>
-        <div className="right-panel">
-          {selected ? (
-            <UnitDetailPanel
-              state={state}
-              formation={selected}
-              targetMode={targetMode}
-              setTargetMode={setTargetMode}
-              onFortify={() => net.sendAction({ type: 'FORTIFY', formationId: selected.id })}
-              onRecon={() => net.sendAction({ type: 'RECON', formationId: selected.id })}
-              onResupply={() => net.sendAction({ type: 'RESUPPLY', formationId: selected.id })}
-              onAir={() => net.sendAction({ type: 'AIR', x: selected.x, y: selected.y })}
-            />
-          ) : (
-            <div className="unit-panel empty">
-              <div className="panel-title">NO UNIT SELECTED</div>
-              <p className="hint-text">Select a formation from the list or click one on the battlefield.</p>
+      )}
+
+      <div className="hud-bottom-right">
+        {endTurnWarn && (
+          <div className="end-turn-warn" data-testid="end-turn-warn">
+            <b>You still have {state.players[you].ap} AP</b> and {readyFormations.length} formation
+            {readyFormations.length === 1 ? '' : 's'} with orders available.
+            <div className="warn-btns">
+              <button className="btn-ghost small" onClick={() => setEndTurnWarn(false)}>
+                Keep playing
+              </button>
+              <button className="btn-primary small" onClick={doEndTurn}>
+                End turn anyway
+              </button>
             </div>
+          </div>
+        )}
+        <button className="end-turn-btn" onClick={doEndTurn} disabled={!myTurn} data-testid="end-turn">
+          {myTurn ? (
+            <>
+              End Turn <kbd>E</kbd>
+            </>
+          ) : (
+            `${state.activePlayer} moving…`
           )}
-        </div>
-      </div>
-      <div className="bottom-bar">
-        <div className="bottom-left">
-          AP Remaining: <b>{state.players[you].ap}</b>
-        </div>
-        <div className="bottom-center">
-          Objectives Held: {objectivesCaptured} / {state.objectives.length}
-        </div>
-        <div className="bottom-right">
-          <button className="end-turn-btn" onClick={() => net.endTurn()} disabled={!myTurn}>
-            {myTurn ? 'End Turn →' : `${state.activePlayer}'s Turn…`}
-          </button>
-        </div>
+        </button>
       </div>
 
-      {report && <BattleReportModal report={report} onClose={() => setShowReportId(null)} />}
-      {showGameOver && <EndGameScreen state={state} you={you} onRestart={net.leaveToLobby} />}
+      {toast && <div className="toast">{toast}</div>}
+      {legendOpen && <Legend onClose={() => setLegendOpen(false)} />}
+      {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}
+      {report && (
+        <BattleReportModal
+          report={report}
+          onClose={() => setShowReportId(null)}
+          onFocus={() => centreOn({ x: report.defenderX, y: report.defenderY })}
+        />
+      )}
+      {state.phase === 'GAME_OVER' && <EndGameScreen state={state} you={you} onRestart={net.leaveToLobby} />}
     </div>
   );
 }

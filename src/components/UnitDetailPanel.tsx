@@ -1,8 +1,7 @@
 import React from 'react';
 import { FORMATION_DEFS } from '../game/data';
-import { isInSupplyRange } from '../game/engine';
-import { AP_COSTS, Formation, GameState } from '../game/types';
-import { TargetMode } from '../App.types';
+import { isInSupplyRange, movesRemaining } from '../game/engine';
+import { Formation, GameState } from '../game/types';
 
 const MORALE_COLOR: Record<string, string> = {
   Elite: 'var(--olive-bright)',
@@ -12,115 +11,91 @@ const MORALE_COLOR: Record<string, string> = {
   Broken: 'var(--danger)',
 };
 
-function Stat({ label, value, color }: { label: string; value: number; color?: string }) {
+function Bar({ label, value, color }: { label: string; value: number; color?: string }) {
   return (
     <div className="stat-row">
       <span className="stat-label">{label}</span>
       <div className="stat-bar">
         <div className="stat-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%`, background: color ?? 'var(--olive)' }} />
       </div>
-      <span className="stat-val">{Math.round(value)}%</span>
+      <span className="stat-val">{Math.round(value)}</span>
     </div>
   );
 }
 
+/**
+ * Compact selected-unit card. It floats over the sheet and is deliberately
+ * short: identity, condition, what it has left to give this round.
+ */
 export const UnitDetailPanel: React.FC<{
   state: GameState;
   formation: Formation;
-  targetMode: TargetMode;
-  setTargetMode: (m: TargetMode) => void;
-  onFortify: () => void;
-  onRecon: () => void;
-  onResupply: () => void;
-  onAir: () => void;
-}> = ({ state, formation: f, targetMode, setTargetMode, onFortify, onRecon, onResupply, onAir }) => {
+  onCentre: () => void;
+  onClose: () => void;
+}> = ({ state, formation: f, onCentre, onClose }) => {
   const def = FORMATION_DEFS[f.type];
-  const ap = state.players[state.activePlayer].ap;
-  const isMine = f.owner === state.activePlayer;
-  const canAct = !f.hasActedThisTurn && isMine;
-  const movesLeft = Math.max(0, f.movesMax - f.movesUsed);
-  const canMove = isMine && movesLeft > 0;
   const supplied = isInSupplyRange(state, f);
-
-  const btn = (label: string, cost: number, mode: TargetMode | null, onClick?: () => void, disabledExtra?: boolean, useMoveGate = false) => {
-    const gate = useMoveGate ? canMove : canAct;
-    const disabled = !gate || ap < cost || disabledExtra;
-    return (
-      <button
-        key={label}
-        className={`action-btn ${targetMode === mode ? 'active' : ''}`}
-        disabled={disabled}
-        onClick={() => {
-          if (onClick) onClick();
-          else if (mode) setTargetMode(mode);
-        }}
-        title={disabled ? 'Not enough AP or unit has already acted' : ''}
-      >
-        {label} <span className="ap-tag">{cost} AP</span>
-      </button>
-    );
-  };
+  const movesLeft = movesRemaining(f);
 
   return (
-    <div className="unit-panel">
-      <div className="panel-title">
-        {f.shortName} <span className="unit-owner">{f.owner}</span>
-      </div>
-      <div className="unit-order">{f.name}</div>
-      <div className="unit-order">
-        {def.label} · {f.echelon} · {f.arm}
-      </div>
-      <div className="unit-flavor">{f.equipment}</div>
-      <div className="unit-order">
-        Movement actions: {f.movesUsed} / {f.movesMax} used
-      </div>
-      <div className="unit-order">Last order: {f.lastOrder}</div>
-
-      <Stat label="Strength" value={f.strength} color="var(--olive)" />
-      <Stat label="Readiness" value={f.readiness} color="var(--blue)" />
-      <Stat label="Supply" value={f.supply} color={supplied ? 'var(--olive)' : 'var(--danger)'} />
-      {def.maxAmmo !== null && <Stat label="Ammo" value={f.ammo} color="var(--amber)" />}
-      <div className="stat-row">
-        <span className="stat-label">Morale</span>
-        <span className="morale-badge" style={{ color: MORALE_COLOR[f.morale] }}>
-          {f.morale}
-        </span>
-      </div>
-      {f.fortified && <div className="fortified-tag">FORTIFIED</div>}
-      {!supplied && <div className="supply-warn">OUT OF SUPPLY RANGE</div>}
-
-      <div className="panel-title" style={{ marginTop: 10 }}>
-        ACTIONS
-      </div>
-      <div className="action-grid">
-        {btn('Move', AP_COSTS.MOVE, 'MOVE', undefined, false, true)}
-        {btn('Attack', AP_COSTS.ATTACK, 'ATTACK')}
-        {f.type !== 'ENGINEER' && btn('Recon', AP_COSTS.RECON, null, onRecon)}
-        {btn('Fortify', AP_COSTS.FORTIFY, null, onFortify)}
-        {btn('Resupply', AP_COSTS.RESUPPLY, null, onResupply, !supplied)}
-        {f.type === 'ARTILLERY' && btn('Fire Mission', AP_COSTS.ARTILLERY, 'ARTILLERY', undefined, f.ammo < 10)}
-        {f.type === 'ENGINEER' && btn('Build Bridge', AP_COSTS.ENGINEER_BRIDGE, 'ENGINEER_BRIDGE')}
-        {f.type === 'ENGINEER' && btn('Clear Obstacle', AP_COSTS.ENGINEER_CLEAR, 'ENGINEER_CLEAR')}
-        {f.type === 'COMMANDO' && btn('Special Op', AP_COSTS.SPECIAL_OP, 'SPECIAL_OP')}
-        {btn('Air Strike (call-in)', AP_COSTS.AIR, 'AIR_TARGET', undefined, state.players[state.activePlayer].airSorties < 1)}
-      </div>
-      {targetMode && (
-        <div className="target-hint">
-          {targetMode === 'MOVE' && 'Click a highlighted tile to move.'}
-          {targetMode === 'ATTACK' &&
-            (def.attackRange > 1
-              ? `Click a red-ringed enemy within ${def.attackRange} tiles to engage.`
-              : 'Click a red-ringed adjacent enemy formation to assault.')}
-          {targetMode === 'ARTILLERY' && `Click a target tile within range (${def.attackRange}) for a fire mission.`}
-          {targetMode === 'AIR_TARGET' && 'Click a tile with a visible enemy formation to call an air strike.'}
-          {targetMode === 'ENGINEER_BRIDGE' && 'Click an adjacent river tile to build a bridge.'}
-          {targetMode === 'ENGINEER_CLEAR' && 'Click an adjacent tile to clear obstacles/fortification.'}
-          {targetMode === 'SPECIAL_OP' && 'Click a tile within recon radius for a raid or deep recon.'}
-          <button className="cancel-btn" onClick={() => setTargetMode(null)}>
-            Cancel
+    <div className="unit-card">
+      <div className="unit-card-head">
+        <div>
+          <div className="unit-card-short">{f.shortName}</div>
+          <div className="unit-card-name">{f.name}</div>
+        </div>
+        <div className="unit-card-head-btns">
+          <button className="icon-btn" title="Centre the camera on this formation (Z)" onClick={onCentre}>
+            ⌖
+          </button>
+          <button className="icon-btn" title="Clear selection (Esc)" onClick={onClose}>
+            ✕
           </button>
         </div>
-      )}
+      </div>
+
+      <div className="unit-card-meta">
+        {def.label} · {f.echelon} · {f.arm}
+      </div>
+      <div className="unit-card-equip">{f.equipment}</div>
+
+      <div className="unit-card-chips">
+        <span className={`mini-chip ${movesLeft > 0 ? 'chip-live' : 'chip-spent'}`} title="Movement actions used this round">
+          {f.movesUsed} / {f.movesMax} movement actions
+        </span>
+        <span className={`mini-chip ${f.hasActedThisTurn ? 'chip-spent' : 'chip-live'}`} title="Major action (attack, recon, fortify, …)">
+          {f.hasActedThisTurn ? 'major action used' : 'major action ready'}
+        </span>
+        {f.fortified && <span className="mini-chip chip-amber">fortified</span>}
+        {!supplied && <span className="mini-chip chip-danger">out of supply</span>}
+      </div>
+
+      <Bar label="Strength" value={f.strength} color="var(--olive)" />
+      <Bar label="Readiness" value={f.readiness} color="var(--blue)" />
+      <Bar label="Supply" value={f.supply} color={supplied ? 'var(--olive)' : 'var(--danger)'} />
+      {def.maxAmmo !== null && <Bar label="Ammo" value={f.ammo} color="var(--amber)" />}
+
+      <div className="unit-card-rows">
+        <div>
+          <span className="k">Morale</span>
+          <span className="v" style={{ color: MORALE_COLOR[f.morale] }}>
+            {f.morale}
+          </span>
+        </div>
+        <div>
+          <span className="k">Attack range</span>
+          <span className="v">{def.attackRange} tiles</span>
+        </div>
+        <div>
+          <span className="k">Sight / recon</span>
+          <span className="v">
+            {def.sightRadius} / {def.reconRadius}
+          </span>
+        </div>
+      </div>
+      <div className="unit-card-order">
+        <span className="k">Current orders</span> {f.lastOrder}
+      </div>
     </div>
   );
 };

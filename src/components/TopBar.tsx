@@ -1,31 +1,55 @@
 import React from 'react';
-import { AP_CAP, MAX_ROUNDS, GameState, PlayerId } from '../game/types';
+import { AP_CAP, MAX_ROUNDS, GameState, PlayerId, VP_WIN_THRESHOLD } from '../game/types';
 
-export const TopBar: React.FC<{ state: GameState; you: PlayerId }> = ({ state, you }) => {
+export const TopBar: React.FC<{ state: GameState; you: PlayerId; objectivesHeld: number; objectivesTotal: number }> = ({
+  state,
+  you,
+  objectivesHeld,
+  objectivesTotal,
+}) => {
   const mine = state.players[you];
   const myTurn = state.activePlayer === you;
   return (
-    <div className="topbar">
-      <div className="topbar-left">
-        <span className="op-name">OPERATION IRON HORIZON</span>
-        <span className="divider">|</span>
-        <span>
-          Round {state.round} / {MAX_ROUNDS}
+    <div className="hud-top">
+      <div className="hud-group">
+        <span className="wordmark">COMMAND</span>
+        <span className="hud-sep" />
+        <span className="hud-stat">
+          <i>ROUND</i>
+          <b>
+            {state.round}
+            <small>/{MAX_ROUNDS}</small>
+          </b>
         </span>
+        <span className={`turn-chip ${myTurn ? 'turn-active' : ''}`}>{myTurn ? 'YOUR TURN' : `${state.activePlayer} MOVING`}</span>
+        <span className={`player-chip ${you.toLowerCase()}`}>{you}</span>
       </div>
-      <div className="topbar-center">
-        <span className={`player-chip ${you.toLowerCase()}`}>YOU: {you}</span>
-        <span className={`turn-chip ${myTurn ? 'turn-active' : ''}`}>{myTurn ? 'YOUR TURN' : `${state.activePlayer} TURN`}</span>
-      </div>
-      <div className="topbar-right">
-        <span className="ap-counter">
-          AP: <b>{mine.ap}</b> / {AP_CAP}
+      <div className="hud-group">
+        <span className="hud-stat">
+          <i>AP</i>
+          <b className="ap-value">
+            {mine.ap}
+            <small>/{AP_CAP}</small>
+          </b>
         </span>
-        <span className="divider">|</span>
-        <span>Sorties: {mine.airSorties}</span>
-        <span className="divider">|</span>
-        <span>
-          VP — BLUE {state.players.BLUEFOR.vp} : RED {state.players.REDFOR.vp}
+        <span className="hud-stat">
+          <i>SORTIES</i>
+          <b>{mine.airSorties}</b>
+        </span>
+        <span className="hud-stat">
+          <i>OBJECTIVES</i>
+          <b>
+            {objectivesHeld}
+            <small>/{objectivesTotal}</small>
+          </b>
+        </span>
+        <span className="hud-stat vp">
+          <i>VP · to {VP_WIN_THRESHOLD}</i>
+          <b>
+            <span className="vp-blue">{state.players.BLUEFOR.vp}</span>
+            <small> : </small>
+            <span className="vp-red">{state.players.REDFOR.vp}</span>
+          </b>
         </span>
       </div>
     </div>

@@ -202,6 +202,9 @@ export interface BattleFactor {
   label: string;
   positive: boolean;
   magnitude: number;
+  /** Which side the factor applied to. Set when the two lists are merged into
+   *  the report, so the UI can explain *why* a result went the way it did. */
+  side?: 'attacker' | 'defender';
 }
 
 export type LossLevel = 'None' | 'Light' | 'Moderate' | 'Heavy' | 'Destroyed';
@@ -222,6 +225,12 @@ export interface BattleReport {
   attackerStrengthDelta: number;
   defenderStrengthDelta: number;
   captured: boolean;
+  /** Tiles the engagement was fought over — the UI flashes them so the player
+   *  can see the action the report describes. */
+  attackerX: number;
+  attackerY: number;
+  defenderX: number;
+  defenderY: number;
 }
 
 // ---------------------------------------------------------------------------

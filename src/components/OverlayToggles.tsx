@@ -1,20 +1,34 @@
 import React from 'react';
 import { Overlays } from '../render/renderMap';
 
-export const OverlayToggles: React.FC<{ overlays: Overlays; setOverlays: React.Dispatch<React.SetStateAction<Overlays>> }> = ({ overlays, setOverlays }) => {
+/** Compact overlay switches, floating over the sheet's top-right corner. */
+export const OverlayToggles: React.FC<{
+  overlays: Overlays;
+  setOverlays: React.Dispatch<React.SetStateAction<Overlays>>;
+  onLegend: () => void;
+  onHelp: () => void;
+  legendOpen: boolean;
+  helpOpen: boolean;
+}> = ({ overlays, setOverlays, onLegend, onHelp, legendOpen, helpOpen }) => {
   const toggle = (key: keyof Overlays) => setOverlays((o) => ({ ...o, [key]: !o[key] }));
-  const item = (key: keyof Overlays, label: string) => (
-    <button className={`overlay-toggle ${overlays[key] ? 'on' : ''}`} onClick={() => toggle(key)}>
+  const item = (key: keyof Overlays, label: string, title: string) => (
+    <button className={`chip-toggle ${overlays[key] ? 'on' : ''}`} onClick={() => toggle(key)} title={title}>
       {label}
     </button>
   );
   return (
-    <div className="overlay-bar">
-      {item('terrain', 'Terrain')}
-      {item('movement', 'Movement')}
-      {item('intel', 'Intel')}
-      {item('supply', 'Supply')}
-      {item('objectives', 'Objectives')}
+    <div className="hud-tools">
+      {item('movement', 'Move', 'Show the movement range of the selected formation')}
+      {item('intel', 'Intel', 'Show suspected enemy contacts')}
+      {item('supply', 'Supply', 'Shade tiles inside your supply range')}
+      {item('objectives', 'Objectives', 'Show objective markers')}
+      <span className="hud-sep" />
+      <button className={`chip-toggle ${legendOpen ? 'on' : ''}`} onClick={onLegend} title="Map legend (L)" data-testid="legend-btn">
+        L · Legend
+      </button>
+      <button className={`chip-toggle ${helpOpen ? 'on' : ''}`} onClick={onHelp} title="Field manual (?)" data-testid="help-btn">
+        ? Help
+      </button>
     </div>
   );
 };

@@ -543,7 +543,11 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   const rollMult = 1 + roll / 100;
   const finalAttacker = attackerPower * rollMult;
 
-  const factors = [...attackerFactors, ...defenderFactors, { label: `Combat roll ${roll >= 0 ? '+' : ''}${roll}%`, positive: roll >= 0, magnitude: Math.abs(roll) }];
+  const factors: BattleFactor[] = [
+    ...attackerFactors.map((f) => ({ ...f, side: 'attacker' as const })),
+    ...defenderFactors.map((f) => ({ ...f, side: 'defender' as const })),
+    { label: `Combat roll ${roll >= 0 ? '+' : ''}${roll}%`, positive: roll >= 0, magnitude: Math.abs(roll), side: 'attacker' as const },
+  ];
 
   const ratio = finalAttacker / (defenderPower + finalAttacker);
   // ratio near 1 = attacker dominates, near 0 = defender dominates.
@@ -621,6 +625,10 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
     attackerStrengthDelta: attackerDelta,
     defenderStrengthDelta: defenderDelta,
     captured,
+    attackerX: attackerTile.x,
+    attackerY: attackerTile.y,
+    defenderX: defenderTile.x,
+    defenderY: defenderTile.y,
   };
   state.lastBattleReport = report;
   log(state, `${report.attackerName} attacked ${report.defenderName}: ${outcome}.`);
