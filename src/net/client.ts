@@ -44,13 +44,13 @@ export type ConnStatus =
   | 'opponent_left' // grace period lapsed or opponent explicitly left; room is gone
   | 'error';
 
-/** A saved match replay fetched standalone via a shareable code (phase 11 §6) — see net/protocol.ts ReplayViewState. */
+/** A saved match replay fetched standalone via a shareable code (phase 11 §6) — see net/protocol.ts ReplayViewState.
+ * One fully-revealed view (terrain included) — the match is over, so there is nothing left to redact per side. */
 export interface FetchedReplay {
   code: string;
   mapName: string;
   winner: PlayerId | 'DRAW' | null;
-  sabre: ReplayViewState;
-  vanguard: ReplayViewState;
+  full: ReplayViewState;
 }
 
 interface SessionInfo {
@@ -173,7 +173,7 @@ export function useMultiplayer() {
           setState((prev) => (prev ? { ...msg.state, tiles: prev.tiles } : msg.state));
           break;
         case 'replay_data':
-          setFetchedReplay({ code: msg.code, mapName: msg.mapName, winner: msg.winner, sabre: msg.sabre, vanguard: msg.vanguard });
+          setFetchedReplay({ code: msg.code, mapName: msg.mapName, winner: msg.winner, full: msg.full });
           setReplayError(null);
           break;
         case 'opponent_disconnected':

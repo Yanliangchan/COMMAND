@@ -993,7 +993,16 @@ export default function App() {
           onFocus={() => centreOn({ x: report.defenderX, y: report.defenderY })}
         />
       )}
-      {state.phase === 'GAME_OVER' && <EndGameScreen state={state} you={you} onRestart={net.leaveToLobby} />}
+      {state.phase === 'GAME_OVER' && (
+        <EndGameScreen
+          state={state}
+          you={you}
+          onRestart={net.leaveToLobby}
+          fetchedReplay={net.fetchedReplay}
+          replayError={net.replayError}
+          onFetchReplay={net.getReplay}
+        />
+      )}
       {briefingOpen && (
         <Briefing
           state={state}

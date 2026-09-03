@@ -15,12 +15,17 @@ import { GameState, PlayerId } from '../game/types';
 export type WireGameState = Omit<GameState, 'tiles'> & { tiles?: GameState['tiles'] };
 
 /**
- * REPLAY LINKS (phase 11 §6). The replay viewer (components/Replay.tsx)
- * never reads `.tiles` at all — it draws plain dots on a blank grid — so a
- * shared replay link never carries the ~400 KB tile grid, either from a live
- * match or from the server's saved replay store.
+ * REPLAY LINKS (phase 11 §6). The replay viewer (components/Replay.tsx) now
+ * renders the real battlefield terrain, so `.tiles` (~400 KB) travels too —
+ * sent once per replay fetch, not per round, the same cost a live match's
+ * own `start`/`join`/`reconnect` messages already pay.
+ *
+ * A saved replay is a single, fully-revealed view of the whole match (built
+ * server-side via `filterStateForSpectator`, same as a live spectator sees):
+ * once the operation is over there is nothing left on either side to keep
+ * secret from a review of it, so there is no per-side perspective to pick.
  */
-export type ReplayViewState = Omit<GameState, 'tiles'>;
+export type ReplayViewState = GameState;
 
 export type BotDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
 
@@ -96,5 +101,5 @@ export type ServerMsg =
    * live player sees; this message is the standalone answer to `get_replay`
    * for anyone loading `?replay=CODE` cold, with no room/session of their own.
    */
-  | { t: 'replay_data'; code: string; mapName: string; winner: PlayerId | 'DRAW' | null; sabre: ReplayViewState; vanguard: ReplayViewState }
+  | { t: 'replay_data'; code: string; mapName: string; winner: PlayerId | 'DRAW' | null; full: ReplayViewState }
   | { t: 'error'; message: string };

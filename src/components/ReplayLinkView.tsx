@@ -1,19 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { FACTION_NAMES } from '../game/data';
 import { FetchedReplay } from '../net/client';
-import { PlayerId } from '../game/types';
 import { Replay } from './Replay';
 
 /**
  * STANDALONE REPLAY LINK (phase 11 §6). Reached via a `?replay=CODE` query
  * param — see App.tsx's own on-load check, a plain query param rather than a
  * router dependency. Fetches the saved replay over a fresh socket connection
- * (net/client.ts's `getReplay`) and, once it arrives, hands it straight to
- * the SAME Replay.tsx scrubber a live match's "Review Replay" uses — anyone
- * with the link sees exactly what a player reviewing their own finished
- * match would, including the same fog-of-war caveat phase 9 documented
- * (final-rung redaction, not a per-round reconstruction of detection): pick
- * a side below and you see that side's redacted view of the whole match.
+ * (net/client.ts's `getReplay`) and hands it straight to the SAME Replay.tsx
+ * scrubber a live match's "Review Replay" uses. There is no per-side
+ * perspective to pick: the saved replay is one fully-revealed view of the
+ * whole match — both task forces, real terrain — since the operation is
+ * over and there is nothing left on either side worth hiding from a review
+ * of it (see server/index.ts's `saveReplay`, built with `filterStateForSpectator`).
  */
 export const ReplayLinkView: React.FC<{
   code: string;
@@ -22,15 +21,12 @@ export const ReplayLinkView: React.FC<{
   onFetch: (code: string) => void;
   onExit: () => void;
 }> = ({ code, fetched, error, onFetch, onExit }) => {
-  const [perspective, setPerspective] = useState<PlayerId>('SABRE');
-
   useEffect(() => {
     onFetch(code);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
 
   if (fetched && fetched.code === code) {
-    const view = perspective === 'SABRE' ? fetched.sabre : fetched.vanguard;
     return (
       <div className="replay-link-root" data-testid="replay-link-view">
         <div className="replay-link-bar">
@@ -40,23 +36,11 @@ export const ReplayLinkView: React.FC<{
               {fetched.winner === 'DRAW' || !fetched.winner ? 'Draw' : `${FACTION_NAMES[fetched.winner]} won`} — shared replay
             </span>
           </div>
-          <div className="replay-link-perspective" role="group" aria-label="Viewing perspective">
-            {(['SABRE', 'VANGUARD'] as PlayerId[]).map((p) => (
-              <button
-                key={p}
-                className={`sandbox-side-btn ${perspective === p ? 'active' : ''}`}
-                onClick={() => setPerspective(p)}
-                data-testid={`replay-link-perspective-${p}`}
-              >
-                {FACTION_NAMES[p]}&rsquo;s view
-              </button>
-            ))}
-          </div>
           <button className="btn-ghost small" onClick={onExit} data-testid="replay-link-exit">
             Exit
           </button>
         </div>
-        <Replay state={view} you={perspective} onClose={onExit} />
+        <Replay state={fetched.full} onClose={onExit} />
       </div>
     );
   }

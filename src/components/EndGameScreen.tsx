@@ -1,11 +1,29 @@
 import React, { useState } from 'react';
 import { GameState, PlayerId, otherPlayer } from '../game/types';
 import { FACTION_NAMES, FACTION_SHORT } from '../game/data';
+import { FetchedReplay } from '../net/client';
 import { Replay } from './Replay';
 
-export const EndGameScreen: React.FC<{ state: GameState; you: PlayerId; onRestart: () => void }> = ({ state, you, onRestart }) => {
+export const EndGameScreen: React.FC<{
+  state: GameState;
+  you: PlayerId;
+  onRestart: () => void;
+  fetchedReplay: FetchedReplay | null;
+  replayError: string | null;
+  onFetchReplay: (code: string) => void;
+}> = ({ state, you, onRestart, fetchedReplay, replayError, onFetchReplay }) => {
   const [replayOpen, setReplayOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  // "Review Replay" shows the SAME fully-revealed view (terrain, both task
+  // forces) a shared link shows, not this client's own fogged final state —
+  // fetched over the wire from the server's saved-replay store the instant
+  // the button is pressed, since the match is already over and there is
+  // nothing left on either side worth keeping secret from a review of it.
+  const openReplay = () => {
+    setReplayOpen(true);
+    if (state.replayCode && (!fetchedReplay || fetchedReplay.code !== state.replayCode)) onFetchReplay(state.replayCode);
+  };
+  const replayReady = fetchedReplay && fetchedReplay.code === state.replayCode;
   const won = state.winner === you;
   const replayLink = state.replayCode ? `${window.location.origin}${window.location.pathname}?replay=${state.replayCode}` : null;
   const copyReplayLink = async () => {
@@ -39,7 +57,7 @@ export const EndGameScreen: React.FC<{ state: GameState; you: PlayerId; onRestar
         <div className="handoff-note">
           You finished holding {held} of {state.objectives.length} objectives after {state.round} rounds.
         </div>
-        <button className="btn-ghost small" data-testid="open-replay" onClick={() => setReplayOpen(true)}>
+        <button className="btn-ghost small" data-testid="open-replay" onClick={openReplay}>
           Review Replay
         </button>
         {replayLink && (
@@ -54,7 +72,25 @@ export const EndGameScreen: React.FC<{ state: GameState; you: PlayerId; onRestar
           Return to Lobby
         </button>
       </div>
-      {replayOpen && <Replay state={state} you={you} onClose={() => setReplayOpen(false)} />}
+      {replayOpen && replayReady && <Replay state={fetchedReplay.full} onClose={() => setReplayOpen(false)} />}
+      {replayOpen && !replayReady && (
+        <div className="modal-backdrop">
+          <div className="modal replay-modal replay-loading" data-testid="replay-loading">
+            {replayError ? (
+              <>
+                <div className="landing-error">{replayError}</div>
+                <button className="btn-ghost small" onClick={() => setReplayOpen(false)}>
+                  Close
+                </button>
+              </>
+            ) : (
+              <div className="status-line">
+                <span className="pulse-dot" /> Loading replay&hellip;
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

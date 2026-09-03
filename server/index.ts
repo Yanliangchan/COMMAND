@@ -141,8 +141,7 @@ interface SavedReplay {
   code: string;
   mapName: string;
   winner: PlayerId | 'DRAW' | null;
-  sabre: ReplayViewState;
-  vanguard: ReplayViewState;
+  full: ReplayViewState;
   savedAt: number;
 }
 const savedReplays = new Map<string, SavedReplay>();
@@ -156,13 +155,9 @@ function genReplayCode(): string {
   return code;
 }
 
-function stripTiles(state: GameState): ReplayViewState {
-  const { tiles, ...rest } = state;
-  void tiles;
-  return rest;
-}
-
-/** Called once, when a room's GameState first reaches GAME_OVER. */
+/** Called once, when a room's GameState first reaches GAME_OVER. A saved
+ * replay is a single, fully-revealed view (the match is over — nothing left
+ * to redact), including real terrain, rather than one redacted view per side. */
 function saveReplay(room: Room) {
   if (room.state.phase !== 'GAME_OVER' || room.state.replayCode) return;
   let code = genReplayCode();
@@ -171,8 +166,7 @@ function saveReplay(room: Room) {
     code,
     mapName: room.state.mapName,
     winner: room.state.winner,
-    sabre: stripTiles(filterStateForPlayer(room.state, 'SABRE')),
-    vanguard: stripTiles(filterStateForPlayer(room.state, 'VANGUARD')),
+    full: filterStateForSpectator(room.state),
     savedAt: Date.now(),
   });
   room.state.replayCode = code;
@@ -598,7 +592,7 @@ wss.on('connection', (ws) => {
           send(ws, { t: 'error', message: 'No replay found for that code — it may have expired or never existed.' });
           return;
         }
-        send(ws, { t: 'replay_data', code: saved.code, mapName: saved.mapName, winner: saved.winner, sabre: saved.sabre, vanguard: saved.vanguard });
+        send(ws, { t: 'replay_data', code: saved.code, mapName: saved.mapName, winner: saved.winner, full: saved.full });
         break;
       }
       case 'reconnect': {

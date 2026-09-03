@@ -1,18 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { PLAYER_COLORS } from '../render/colors';
-import { GRID_SIZE, PlayerId, gridRef } from '../game/types';
+import { PLAYER_COLORS, TERRAIN_COLORS } from '../render/colors';
+import { GRID_SIZE, gridRef } from '../game/types';
 import { ReplayViewState } from '../net/protocol';
 
 /**
  * MATCH REPLAY (phase 9) — a simple scrubber over the compact per-round
  * position snapshots the engine now records (`state.replay`), plus the
  * operations log filtered to that round. Deliberately NOT a reconstruction
- * of the full MapCanvas renderer (terrain, fog overlays, icons): the goal
- * here is "let players review what happened", not a frame-perfect replay —
- * see README "Match replay". Positions are drawn as plain dots on a light
- * grid; a formation's owner sets its colour the same way the live map does.
+ * of the full MapCanvas renderer (relief shading, contours, fog overlays,
+ * unit icons) — see README "Match replay" — but the real terrain grid
+ * (`state.tiles`) IS drawn, flat-shaded per tile with a light elevation
+ * tint, so the ground the battle was fought over is actually visible. One
+ * fully-revealed view of the whole match, both task forces at once — the
+ * operation is over, so there is no "your side vs their side" to toggle
+ * between, only one board with everything on it.
  */
-export const Replay: React.FC<{ state: ReplayViewState; you: PlayerId; onClose: () => void }> = ({ state, you, onClose }) => {
+export const Replay: React.FC<{ state: ReplayViewState; onClose: () => void }> = ({ state, onClose }) => {
   const rounds = state.replay;
   const [idx, setIdx] = useState(Math.max(0, rounds.length - 1));
   const [playing, setPlaying] = useState(false);
@@ -64,9 +67,29 @@ export const Replay: React.FC<{ state: ReplayViewState; you: PlayerId; onClose: 
     const w = canvas.width;
     const h = canvas.height;
     const cell = w / GRID_SIZE;
-    ctx.fillStyle = '#1a2119';
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+
+    // Real terrain: a flat fill per tile, blended toward the terrain's own
+    // "dark" shade as elevation rises (0..5 bands) for a cheap sense of
+    // relief without a full contour/hillshade pass — this is a scrubber
+    // canvas, not the live battlefield renderer.
+    if (state.tiles && state.tiles.length) {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        const row = state.tiles[y];
+        if (!row) continue;
+        for (let x = 0; x < GRID_SIZE; x++) {
+          const tile = row[x];
+          if (!tile) continue;
+          const palette = TERRAIN_COLORS[tile.terrain];
+          ctx.fillStyle = tile.elevation >= 4 ? palette.dark : tile.elevation >= 2 ? palette.base : palette.light;
+          ctx.fillRect(Math.floor(x * cell), Math.floor(y * cell), Math.ceil(cell), Math.ceil(cell));
+        }
+      }
+    } else {
+      // Fallback for any replay saved before terrain was included on the wire.
+      ctx.fillStyle = '#1a2119';
+      ctx.fillRect(0, 0, w, h);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     for (let i = 0; i <= GRID_SIZE; i += 8) {
       ctx.beginPath();
       ctx.moveTo(i * cell, 0);
@@ -78,24 +101,26 @@ export const Replay: React.FC<{ state: ReplayViewState; you: PlayerId; onClose: 
     // Objectives, current control only (the replay does not track historical
     // control changes — a deliberate simplification, see README).
     state.objectives.forEach((o) => {
-      ctx.fillStyle = 'rgba(207,154,68,0.5)';
+      ctx.fillStyle = 'rgba(207,154,68,0.75)';
       ctx.beginPath();
       ctx.arc((o.x + 0.5) * cell, (o.y + 0.5) * cell, Math.max(2, cell * 0.4), 0, Math.PI * 2);
       ctx.fill();
     });
+    // Both task forces, together, on the one board — the operation is over,
+    // so there is nothing left to hide from a review of it. Owner colour
+    // still distinguishes the two sides; every counter gets the same dark
+    // outline for legibility against whatever terrain it sits on.
     round.entries.forEach((e) => {
       const color = PLAYER_COLORS[e.owner]?.light ?? '#ccc';
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc((e.x + 0.5) * cell, (e.y + 0.5) * cell, Math.max(2, cell * 0.55), 0, Math.PI * 2);
       ctx.fill();
-      if (e.owner !== you) {
-        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
     });
-  }, [round, state.objectives, you]);
+  }, [round, state.objectives, state.tiles]);
 
   return (
     <div className="modal-backdrop">
