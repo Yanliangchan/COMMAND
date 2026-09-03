@@ -95,6 +95,11 @@ export const BattleReportModal: React.FC<{ report: BattleReport; onClose: () => 
 
       <p className="battle-why">{explain(report)}</p>
       {report.captured && <div className="battle-captured">Position captured and occupied.</div>}
+      {report.breakthroughBonus && (
+        <div className="battle-captured" data-testid="battle-breakthrough" style={{ color: 'var(--amber-bright)' }}>
+          Breakthrough — clean, low-cost win. Bonus AP granted this turn.
+        </div>
+      )}
       {report.suppressionApplied > 0 && (
         <div className="battle-captured" data-testid="battle-suppression" style={{ color: '#b8a0d8' }}>
           {report.defenderName} suppressed +{report.suppressionApplied} — attack power and movement reduced next round unless it decays.

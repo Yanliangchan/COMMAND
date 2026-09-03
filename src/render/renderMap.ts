@@ -1691,6 +1691,24 @@ function drawFormation(rc: RenderContext, f: Formation) {
     ctx.beginPath();
     ctx.arc(sx, sy, r * 1.25, Math.PI * 0.15, Math.PI * 0.85);
     ctx.stroke();
+    // Prepared-defence tier pips (phase 9): one small filled chevron per tier
+    // climbed beyond Hasty, sitting just below the fortified arc. fortifyTier
+    // is withheld (-1) for an enemy below CONFIRMED, same as fortified's
+    // other intelligence fields — clamp so a redacted value draws nothing.
+    const tier = Math.max(0, Math.min(2, f.fortifyTier ?? 0));
+    if (tier > 0 && s >= 7) {
+      for (let i = 0; i < tier; i++) {
+        const px = sx - r * 0.28 + i * r * 0.32;
+        const py = sy + r * 1.32;
+        ctx.fillStyle = '#cf9a44';
+        ctx.beginPath();
+        ctx.moveTo(px, py - r * 0.13);
+        ctx.lineTo(px + r * 0.14, py + r * 0.1);
+        ctx.lineTo(px - r * 0.14, py + r * 0.1);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
   }
 
   // On alert (phase 7): a pulsing red-amber ring — visible for your own

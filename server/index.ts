@@ -303,6 +303,12 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
     case 'REORGANIZE':
       engine.reorganizeAction(state, action.formationId);
       break;
+    case 'VERTICAL_INSERT':
+      engine.verticalInsertAction(state, action.formationId, action.x, action.y);
+      break;
+    case 'UAV_RECON':
+      engine.uavReconAction(state, action.x, action.y);
+      break;
     case 'END_TURN':
       engine.endTurn(state);
       // Skip the (now meaningless, single-tab-only) TURN_HANDOFF phase —

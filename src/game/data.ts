@@ -307,6 +307,18 @@ const SABRE_OOB: FormationProfile[] = [
     equipment: 'Ground sensor and EW teams cued by Heron 1 and Hermes 450 UAV feeds.',
   },
   {
+    // 12 C4I Bn is a second, publicly documented SAF C4I battalion (distinct
+    // from 10 C4I Bn already fielded above) — referenced in connection with
+    // HQ 4 SAB. Verified against public sources; see README "Real-World
+    // Reference vs Fictional Game Mechanics".
+    type: 'RECON',
+    name: '12th Command, Control, Communications, Computers and Intelligence Battalion',
+    shortName: '12 C4I Bn',
+    echelon: 'Battalion',
+    arm: 'C4I / Signals & ISR',
+    equipment: 'Ground sensor and EW teams cued by Heron 1 and Hermes 450 UAV feeds.',
+  },
+  {
     type: 'FRIGATE',
     name: '185 Squadron, Republic of Singapore Navy',
     shortName: '185 SQN',
@@ -397,6 +409,18 @@ const VANGUARD_OOB: FormationProfile[] = [
     type: 'RECON',
     name: '11th Command, Control, Communications, Computers and Intelligence Battalion',
     shortName: '11 C4I Bn',
+    echelon: 'Battalion',
+    arm: 'C4I / Signals & ISR',
+    equipment: 'Ground sensor and EW teams cued by Heron 1 and Hermes 450 UAV feeds.',
+  },
+  {
+    // 16 C4I Bn is a second, publicly documented SAF C4I battalion (distinct
+    // from 11 C4I Bn already fielded above) — named in MINDEF's Exercise
+    // Wallaby 2024 fact sheet as a supporting unit. Verified against public
+    // sources; see README "Real-World Reference vs Fictional Game Mechanics".
+    type: 'RECON',
+    name: '16th Command, Control, Communications, Computers and Intelligence Battalion',
+    shortName: '16 C4I Bn',
     echelon: 'Battalion',
     arm: 'C4I / Signals & ISR',
     equipment: 'Ground sensor and EW teams cued by Heron 1 and Hermes 450 UAV feeds.',

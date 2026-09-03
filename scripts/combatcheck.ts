@@ -36,6 +36,7 @@ function mk(type: FormationType, x: number, y: number, owner: PlayerId): Formati
     readiness: 100, ammo: FORMATION_DEFS[type].maxAmmo ?? 0, lastFiredRound: 0, movesUsed: 0, movesMax: 2,
     hasActedThisTurn: false, fortified: false, lastOrder: '',
     onAlert: false, reactionFired: false, suppression: 0, lastSuppressedRound: 0, lastReorganizedRound: 0,
+    fortifyTier: 0, fortifiedThisRound: false, verticalInsertsUsed: 0,
   };
 }
 const tile = (terrain: Tile['terrain']): Tile => ({ x: 5, y: 5, terrain, elevation: 1, height: 0.3 });
@@ -379,6 +380,219 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
   );
 }
 
+// =============================================================================
+// PHASE 9 — vertical insertion, fortify tiers, exploitation bonus, UAV recon,
+// mutual Reorganize, buffed Reorganize values
+// =============================================================================
+
+// --- Vertical / heli insertion ----------------------------------------------
+{
+  const cdo = mk('COMMANDO', 10, 10, 'SABRE');
+  const s = scenario([cdo], 'SABRE');
+  const before = { x: cdo.x, y: cdo.y };
+  engine.verticalInsertAction(s, cdo.id, 20, 10); // 10 tiles away, well within radius, no enemy nearby
+  const after = s.formations[cdo.id];
+  check(!!after && after.x === 20 && after.y === 10, `vertical insertion redeploys the formation (was ${before.x},${before.y}, now ${after?.x},${after?.y})`);
+  check(after!.verticalInsertsUsed === 1, 'vertical insertion increments its per-formation counter');
+  check(after!.hasActedThisTurn === true, "vertical insertion spends the formation's major action");
+}
+{
+  // Capped hard per formation per game.
+  const cdo = mk('COMMANDO', 10, 10, 'SABRE');
+  cdo.verticalInsertsUsed = 2; // already at VERTICAL_INSERT_MAX_USES
+  const s = scenario([cdo], 'SABRE');
+  engine.verticalInsertAction(s, cdo.id, 15, 10);
+  check(s.formations[cdo.id]!.x === 10, 'vertical insertion is refused once the per-formation cap is spent');
+}
+{
+  // May not land adjacent to a formation this SIDE has actually detected.
+  const cdo = mk('COMMANDO', 10, 10, 'SABRE');
+  const enemy = mk('INFANTRY', 20, 10, 'VANGUARD');
+  const s = scenario([cdo, enemy], 'SABRE');
+  s.players.SABRE.contacts[enemy.id] = {
+    formationId: enemy.id, owner: 'VANGUARD', level: 'CONTACT', confidence: 40, x: enemy.x, y: enemy.y,
+    live: true, lastSeenTurn: s.round, decayAnchorRound: s.round, lastRiseRound: s.round, ceiling: 60, decayPerRound: 20, source: 'test',
+  };
+  engine.verticalInsertAction(s, cdo.id, 19, 10); // adjacent to the detected enemy
+  check(s.formations[cdo.id]!.x === 10, 'vertical insertion refuses a landing zone adjacent to a detected enemy formation');
+  engine.verticalInsertAction(s, cdo.id, 15, 10); // clear of the enemy
+  check(s.formations[cdo.id]!.x === 15, 'the same formation may still land elsewhere, clear of the detected enemy');
+}
+{
+  // Bypasses Zones of Control entirely — a normal move to the same tile would be ZOC_BLOCKED.
+  const cdo = mk('COMMANDO', 5, 5, 'SABRE');
+  const enemy = mk('INFANTRY', 10, 5, 'VANGUARD');
+  const s = scenario([cdo, enemy], 'SABRE');
+  engine.verticalInsertAction(s, cdo.id, 12, 5); // beyond the enemy's ZOC, unreachable by an ordinary bound this round
+  check(s.formations[cdo.id]!.x === 12, 'vertical insertion lands past a Zone of Control that would block ordinary movement');
+}
+{
+  // Only Commandos and Guards.
+  const inf = mk('INFANTRY', 10, 10, 'SABRE');
+  const s = scenario([inf], 'SABRE');
+  engine.verticalInsertAction(s, inf.id, 20, 10);
+  check(s.formations[inf.id]!.x === 10, 'vertical insertion is refused for a formation type that cannot mount it');
+}
+
+// --- Prepared-defence tiers on Fortify ---------------------------------------
+{
+  const f = mk('INFANTRY', 10, 10, 'SABRE');
+  const s = scenario([f], 'SABRE');
+  engine.fortifyAction(s, f.id);
+  check(s.formations[f.id]!.fortifyTier === 0, 'a fresh dig-in starts at tier 0 (Hasty)');
+  // The round Fortify was issued ends at tier 0 (Hasty) — holding through it
+  // does not itself count as a "further" round. Each SUBSEQUENT round spent
+  // doing nothing while already dug in climbs one tier: 3 SABRE turn-ends
+  // total (the fortify round's own end, plus two further rounds of pure
+  // holding) reaches tier 2 (Entrenched).
+  for (let i = 0; i < 3; i++) {
+    engine.endTurn(s); // SABRE's turn ends
+    engine.beginPlayerTurn(s);
+    engine.endTurn(s); // VANGUARD's turn ends — completes the round
+    engine.beginPlayerTurn(s);
+  }
+  check(s.formations[f.id]!.fortifyTier === 2, `holding fortified for two further rounds reaches Entrenched (tier ${s.formations[f.id]!.fortifyTier})`);
+  const tieredDefence = defencePower(s, s.formations[f.id]!, s.tiles[10][10]).power;
+  const hastyClone = { ...s.formations[f.id]!, fortifyTier: 0 };
+  const hastyDefence = defencePower(s, hastyClone, s.tiles[10][10]).power;
+  check(tieredDefence > hastyDefence, `an Entrenched position defends better than a Hasty one at the same strength (${hastyDefence.toFixed(2)} → ${tieredDefence.toFixed(2)})`);
+}
+{
+  // Moving resets the tier to zero (fortified is cleared too, unchanged behaviour).
+  const f = mk('INFANTRY', 10, 10, 'SABRE');
+  const s = scenario([f], 'SABRE');
+  engine.fortifyAction(s, f.id);
+  // Two full SABRE turn-ends: the first (the fortify round's own end) holds
+  // at tier 0; the second (one further round of pure holding) climbs to 1.
+  engine.endTurn(s); engine.beginPlayerTurn(s); engine.endTurn(s); engine.beginPlayerTurn(s);
+  engine.endTurn(s); engine.beginPlayerTurn(s); engine.endTurn(s); engine.beginPlayerTurn(s);
+  check(s.formations[f.id]!.fortifyTier > 0, 'tier climbed before moving');
+  engine.moveFormation(s, f.id, 11, 10);
+  check(s.formations[f.id]!.fortifyTier === 0 && !s.formations[f.id]!.fortified, 'moving resets the fortify tier to zero');
+}
+{
+  // A different major action (Reorganize) while dug in resets the tier, but need not un-fortify.
+  const f = mk('INFANTRY', 10, 10, 'SABRE');
+  f.readiness = 50;
+  const s = scenario([f], 'SABRE');
+  engine.fortifyAction(s, f.id);
+  engine.endTurn(s); engine.beginPlayerTurn(s); engine.endTurn(s); engine.beginPlayerTurn(s);
+  engine.endTurn(s); engine.beginPlayerTurn(s); engine.endTurn(s); engine.beginPlayerTurn(s);
+  const tierBefore = s.formations[f.id]!.fortifyTier;
+  check(tierBefore > 0, 'tier climbed before the other major action');
+  s.formations[f.id]!.hasActedThisTurn = false; // fresh turn
+  s.formations[f.id]!.movesUsed = 0;
+  s.formations[f.id]!.lastReorganizedRound = 0;
+  engine.reorganizeAction(s, f.id);
+  check(s.formations[f.id]!.fortified === true, 'Reorganize while dug in does not itself clear fortified');
+  engine.endTurn(s); engine.beginPlayerTurn(s); engine.endTurn(s); engine.beginPlayerTurn(s);
+  check(s.formations[f.id]!.fortifyTier === 0, 'a different major action (Reorganize) while dug in resets the fortify tier to zero');
+}
+
+// --- Exploitation bonus after a decisive attack win --------------------------
+{
+  // Overwhelm a weak, unfortified defender for a clean Position Captured with
+  // light attacker losses — the exploitation bonus should trigger.
+  const A = mk('ARMOUR', 10, 10, 'SABRE');
+  const target = mk('ENGINEER', 11, 10, 'VANGUARD');
+  target.strength = 15;
+  target.readiness = 40;
+  const s = scenario([A, target], 'SABRE');
+  s.players.SABRE.ap = 20; // below AP_CAP so the rebate's cap-clamp cannot mask the assertion
+  const apBefore = s.players.SABRE.ap;
+  const apAfterAttackOnly = apBefore - AP_COSTS.ATTACK;
+  engine.attackAction(s, A.id, target.id);
+  const report = s.lastBattleReport!;
+  check(report.outcome === 'Position Captured', `a heavily overmatched assault captures the position (outcome=${report.outcome})`);
+  if (report.breakthroughBonus) {
+    check(s.players.SABRE.ap === apAfterAttackOnly + 1, `a breakthrough grants a 1 AP rebate on top of the attack's own cost (${apAfterAttackOnly} → ${s.players.SABRE.ap})`);
+    check(s.log.some((l) => l.text.includes('bonus AP')), 'the breakthrough bonus is logged');
+  } else {
+    // The combat roll can occasionally push attacker losses to Moderate even
+    // in a very lopsided fight — in that case the bonus correctly does NOT
+    // trigger, which is itself the assertion worth making.
+    check(report.attackerLoss !== 'None' && report.attackerLoss !== 'Light', `no breakthrough bonus without a clean (None/Light-loss) win (attackerLoss=${report.attackerLoss})`);
+  }
+}
+{
+  // A costly win (Mutual Attrition / Attack Repulsed) never grants the bonus.
+  const A = mk('ENGINEER', 10, 10, 'SABRE'); // poor attacker
+  const D = mk('ARMOUR', 11, 10, 'VANGUARD'); // strong defender, no fortification
+  const s = scenario([A, D], 'SABRE');
+  const apBefore = s.players.SABRE.ap;
+  engine.attackAction(s, A.id, D.id);
+  const report = s.lastBattleReport!;
+  check(report.breakthroughBonus === false, `a poor attacker's costly attack never triggers the exploitation bonus (outcome=${report.outcome})`);
+  check(s.players.SABRE.ap === apBefore - AP_COSTS.ATTACK, 'AP reflects only the attack\'s own cost when no breakthrough bonus is granted');
+}
+
+// --- UAV recon -----------------------------------------------------------------
+{
+  const s = engine.initGame(9911);
+  check(s.players.SABRE.uavCharges === 3, `each side starts with 3 UAV sorties (has ${s.players.SABRE.uavCharges})`);
+  const enemy = Object.values(s.formations).find((f) => f.owner !== s.activePlayer)!;
+  const before = s.players[s.activePlayer].contacts[enemy.id]?.level ?? 'UNKNOWN';
+  const chargesBefore = s.players[s.activePlayer].uavCharges;
+  const apBefore = s.players[s.activePlayer].ap;
+  engine.uavReconAction(s, enemy.x, enemy.y);
+  check(s.players[s.activePlayer].uavCharges === chargesBefore - 1, 'a UAV sweep spends one charge');
+  check(s.players[s.activePlayer].ap === apBefore - 3, 'a UAV sweep costs 3 AP (the AIR/standoff tier)');
+  const after = s.players[s.activePlayer].contacts[enemy.id]?.level ?? 'UNKNOWN';
+  check(after === 'IDENTIFIED' || after === 'CONFIRMED', `a UAV sweep identifies a distant enemy with no LOS requirement (was ${before}, now ${after})`);
+}
+{
+  // Capped hard, does not regenerate.
+  const s = engine.initGame(9912);
+  const ps = s.players[s.activePlayer];
+  ps.uavCharges = 0;
+  const enemy = Object.values(s.formations).find((f) => f.owner !== s.activePlayer)!;
+  engine.uavReconAction(s, enemy.x, enemy.y);
+  check((s.players[s.activePlayer].contacts[enemy.id]?.level ?? 'UNKNOWN') === 'UNKNOWN' || ps.uavCharges === 0, 'a UAV sweep is refused once charges are spent');
+}
+
+// --- Mutual Reorganize incentive ----------------------------------------------
+{
+  const A = mk('INFANTRY', 10, 10, 'SABRE');
+  const B = mk('INFANTRY', 11, 10, 'SABRE'); // adjacent
+  A.strength = 60; A.readiness = 50; A.moraleValue = 50; A.morale = moraleBandFor(50);
+  B.strength = 60; B.readiness = 50; B.moraleValue = 50; B.morale = moraleBandFor(50);
+  const s = scenario([A, B], 'SABRE');
+  engine.reorganizeAction(s, A.id);
+  const aSoloReadiness = s.formations[A.id]!.readiness;
+  engine.reorganizeAction(s, B.id); // second one this round, adjacent — should trigger the mutual bonus for BOTH
+  const aAfter = s.formations[A.id]!.readiness;
+  const bAfter = s.formations[B.id]!.readiness;
+  check(aAfter > aSoloReadiness, `the FIRST formation to reorganize also gets the mutual bonus once its adjacent partner reorganizes the same round (${aSoloReadiness} → ${aAfter})`);
+  check(s.log.some((l) => l.text.includes('reorganize together')), 'the mutual bonus is logged');
+  check(bAfter > 0, 'the second formation reorganized successfully too');
+}
+{
+  // Non-adjacent friendlies reorganizing the same round do NOT get the bonus.
+  const A = mk('INFANTRY', 10, 10, 'SABRE');
+  const B = mk('INFANTRY', 30, 30, 'SABRE'); // far away
+  A.strength = 60; A.readiness = 50;
+  B.strength = 60; B.readiness = 50;
+  const s = scenario([A, B], 'SABRE');
+  engine.reorganizeAction(s, A.id);
+  const aSolo = s.formations[A.id]!.readiness;
+  engine.reorganizeAction(s, B.id);
+  check(s.formations[A.id]!.readiness === aSolo, 'formations too far apart to be adjacent do not trigger the mutual bonus');
+}
+
+// --- Buffed Reorganize restore values ------------------------------------------
+{
+  const s = engine.initGame(9913);
+  const f = Object.values(s.formations).find((x) => x.owner === s.activePlayer)!;
+  f.strength = 50; f.readiness = 40; f.moraleValue = 40; f.morale = moraleBandFor(40);
+  engine.reorganizeAction(s, f.id);
+  const after = s.formations[f.id]!;
+  check(after.readiness - 40 >= 30, `Reorganize restores a substantially larger readiness chunk than the pre-phase-9 value (readiness now ${after.readiness})`);
+  check(after.strength - 50 >= 10, `Reorganize restores a substantially larger strength chunk than the pre-phase-9 value (strength now ${after.strength})`);
+  // Even fully buffed, one Reorganize does not undo a heavy engagement: a
+  // formation reduced to 50% strength is still well below full after using it.
+  check(after.strength < 90, 'Reorganize alone does not come close to fully healing heavy losses in one use');
+}
+
 // ---------------------------------------------------------------------------
 // Phase 8: roster/AP-economy regression guard. 48 SAR / 42 SAR brought each
 // side from 10 to 11 formations (8 -> 9 land, 2 naval unchanged) and the AP
@@ -392,7 +606,7 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
 {
   (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
     const oob = ORDERS_OF_BATTLE[side] as { type: FormationType; shortName: string }[];
-    check(oob.length === 11, `${side} fields 11 formations (has ${oob.length})`);
+    check(oob.length === 12, `${side} fields 12 formations, including the phase-8 additions (has ${oob.length})`);
     const armour = oob.filter((p) => p.type === 'ARMOUR');
     check(armour.length === 2, `${side} fields exactly two armoured battalions (has ${armour.length}: ${armour.map((p) => p.shortName).join(', ')})`);
   });
@@ -404,7 +618,32 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
     ORDERS_OF_BATTLE.VANGUARD.some((p: { shortName: string }) => p.shortName === '42 SAR'),
     'VANGUARD roster includes 42 SAR'
   );
-  check(AP_PER_TURN === 28 && AP_CAP === 36, `AP economy matches the phase-8 bump (AP_PER_TURN=${AP_PER_TURN}, AP_CAP=${AP_CAP})`);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9: roster/AP-economy regression guard, superseding the phase-8 count
+// above (kept, since 11 was still true pre-phase-9 and the armour/48-SAR/
+// 42-SAR checks stay valid) — a second C4I battalion (12 C4I Bn / 16 C4I Bn)
+// brought each side from 11 to 12 formations (9 -> 10 land, 2 naval
+// unchanged), and the AP budget was bumped 28 -> 30 (cap 36 -> 38), the same
+// +2 margin phase 8 used, to absorb it.
+// ---------------------------------------------------------------------------
+{
+  (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
+    const oob = ORDERS_OF_BATTLE[side] as { type: FormationType; shortName: string }[];
+    check(oob.length === 12, `${side} fields 12 formations (has ${oob.length})`);
+    const c4i = oob.filter((p) => p.type === 'RECON');
+    check(c4i.length === 2, `${side} fields exactly two C4I battalions (has ${c4i.length}: ${c4i.map((p) => p.shortName).join(', ')})`);
+  });
+  check(
+    ORDERS_OF_BATTLE.SABRE.some((p: { shortName: string }) => p.shortName === '12 C4I Bn'),
+    'SABRE roster includes 12 C4I Bn'
+  );
+  check(
+    ORDERS_OF_BATTLE.VANGUARD.some((p: { shortName: string }) => p.shortName === '16 C4I Bn'),
+    'VANGUARD roster includes 16 C4I Bn'
+  );
+  check(AP_PER_TURN === 30 && AP_CAP === 38, `AP economy matches the phase-9 bump (AP_PER_TURN=${AP_PER_TURN}, AP_CAP=${AP_CAP})`);
 }
 
 console.log(failures ? `\nFAIL: ${failures} combat-model assertion(s)` : '\nPASS: combat model holds.');

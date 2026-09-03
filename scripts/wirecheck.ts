@@ -56,6 +56,10 @@ const TRUE_AT: Record<keyof Formation, DetectionLevel> = {
   suppression: 'CONFIRMED',
   lastSuppressedRound: 'CONFIRMED',
   lastReorganizedRound: 'CONFIRMED',
+  // Phase 9 additions — same tier as the rest of the battlefield-condition fields.
+  fortifyTier: 'CONFIRMED',
+  fortifiedThisRound: 'CONFIRMED',
+  verticalInsertsUsed: 'CONFIRMED',
 };
 
 const failures: string[] = [];
@@ -205,6 +209,8 @@ function apply(state: GameState, a: any) {
     case 'ENGINEER_BRIDGE': engine.engineerBridgeAction(state, a.formationId, a.x, a.y); break;
     case 'ENGINEER_CLEAR': engine.engineerClearAction(state, a.formationId, a.x, a.y); break;
     case 'REORGANIZE': engine.reorganizeAction(state, a.formationId); break;
+    case 'VERTICAL_INSERT': engine.verticalInsertAction(state, a.formationId, a.x, a.y); break;
+    case 'UAV_RECON': engine.uavReconAction(state, a.x, a.y); break;
   }
 }
 
@@ -241,6 +247,36 @@ function auditKillFeed(state: GameState, viewer: PlayerId) {
   }
 }
 
+/**
+ * Match-replay redaction (phase 9): best-effort, gated by the viewer's FINAL
+ * contact rung for each formation id (see fog.ts `redactReplay`). Never a
+ * true formation object at IDENTIFIED-or-below, never omitted for the
+ * viewer's own formations.
+ */
+function auditReplay(state: GameState, viewer: PlayerId) {
+  const wire = filterStateForPlayer(state, viewer);
+  const contacts = state.players[viewer].contacts;
+  ok(wire.replay.length === state.replay.length, `replay for ${viewer} dropped whole rounds (${wire.replay.length} of ${state.replay.length})`);
+  wire.replay.forEach((round, i) => {
+    const truth = state.replay[i];
+    for (const truthEntry of truth.entries) {
+      const sent = round.entries.find((e) => e.id === truthEntry.id);
+      if (truthEntry.owner === viewer) {
+        ok(!!sent && sent.strength === truthEntry.strength, `replay round ${round.round} dropped/redacted the viewer's own formation ${truthEntry.id}`);
+        continue;
+      }
+      const level = contacts[truthEntry.id]?.level;
+      if (level !== 'IDENTIFIED' && level !== 'CONFIRMED') {
+        ok(!sent, `replay round ${round.round} leaked enemy formation ${truthEntry.id} never IDENTIFIED by ${viewer} (final rung ${level ?? 'UNKNOWN'})`);
+      } else if (level === 'IDENTIFIED') {
+        ok(!!sent && sent.strength === REDACTED_NUMBER, `replay round ${round.round} leaked strength for an IDENTIFIED-only enemy formation ${truthEntry.id}`);
+      } else {
+        ok(!!sent && sent.strength === truthEntry.strength, `replay round ${round.round} under-revealed a CONFIRMED enemy formation ${truthEntry.id}`);
+      }
+    }
+  });
+}
+
 const GAMES = Number(process.argv[2] ?? 6);
 const ROUNDS = Number(process.argv[3] ?? 10);
 for (let g = 0; g < GAMES; g++) {
@@ -264,6 +300,8 @@ for (let g = 0; g < GAMES; g++) {
     auditKillFeed(state, 'SABRE');
     auditKillFeed(state, 'VANGUARD');
   }
+  auditReplay(state, 'SABRE');
+  auditReplay(state, 'VANGUARD');
 }
 
 console.log(`wirecheck: ${checks} assertions over ${GAMES} games`);

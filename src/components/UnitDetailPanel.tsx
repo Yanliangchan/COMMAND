@@ -3,7 +3,17 @@ import { FORMATION_DEFS } from '../game/data';
 import { canReorganize, maxAmmo, movesRemaining, usesAmmo } from '../game/engine';
 import { movementProfile, supportedFormation } from '../game/movement';
 import { currentDetectionRange, detectionModifiers } from '../game/detection';
-import { COHESION_RADIUS, DETECTION, Formation, GameState, REORGANIZE_COOLDOWN_ROUNDS, gridRef } from '../game/types';
+import {
+  COHESION_RADIUS,
+  DETECTION,
+  FORTIFY_TIER_NAMES,
+  Formation,
+  GameState,
+  REORGANIZE_COOLDOWN_ROUNDS,
+  SPECIAL_OP_TYPES,
+  VERTICAL_INSERT_MAX_USES,
+  gridRef,
+} from '../game/types';
 
 const MORALE_COLOR: Record<string, string> = {
   Elite: 'var(--olive-bright)',
@@ -76,7 +86,16 @@ export const UnitDetailPanel: React.FC<{
         <span className={`mini-chip ${f.hasActedThisTurn ? 'chip-spent' : 'chip-live'}`} title="Major action (attack, recon, fortify, …)">
           {f.hasActedThisTurn ? 'major action used' : 'major action ready'}
         </span>
-        {f.fortified && <span className="mini-chip chip-amber">fortified</span>}
+        {f.fortified && (
+          <span className="mini-chip chip-amber" data-testid="fortify-tier-chip" title="Prepared-defence tier — climbs one step each further round spent holding, doing nothing else.">
+            {FORTIFY_TIER_NAMES[Math.max(0, Math.min(FORTIFY_TIER_NAMES.length - 1, f.fortifyTier ?? 0))]}
+          </span>
+        )}
+        {SPECIAL_OP_TYPES.includes(f.type) && (
+          <span className="mini-chip" title="Vertical insertions used this operation." data-testid="vertical-insert-chip">
+            ✈ {f.verticalInsertsUsed ?? 0} / {VERTICAL_INSERT_MAX_USES} insertions
+          </span>
+        )}
         {f.onAlert && (
           <span className="mini-chip chip-alert" title="No reaction shot fired yet this alert period — reacts once to an enemy that moves into range and line of sight." data-testid="alert-chip">
             ⚠ on alert

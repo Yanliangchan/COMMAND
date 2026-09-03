@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ACTION_SPECS } from '../game/actions';
 
 interface Topic {
@@ -33,7 +33,7 @@ const UNITS: Topic[] = [
   },
   {
     title: 'Recon',
-    body: 'The C4I / ISR battalion (10 C4I Bn for Sabre, 11 C4I Bn for Vanguard) is your sensor. It spots passively out to about 9 tiles where a rifle battalion manages 5 and a gun battalion 3, it identifies what it sees far faster, and it holds on to a contact for many rounds after everyone else has lost it. Its Recon order sweeps 14 tiles. It fights badly; its value is what it shows you.',
+    body: 'The C4I / ISR battalion (10 C4I Bn and 12 C4I Bn for Sabre; 11 C4I Bn and 16 C4I Bn for Vanguard — each side fields two) is your sensor. It spots passively out to about 9 tiles where a rifle battalion manages 5 and a gun battalion 3, it identifies what it sees far faster, and it holds on to a contact for many rounds after everyone else has lost it. Its Recon order sweeps 14 tiles. It fights badly; its value is what it shows you.',
   },
   {
     title: 'Air support',
@@ -48,7 +48,7 @@ const UNITS: Topic[] = [
 const CONCEPTS: Topic[] = [
   {
     title: 'The exercise',
-    body: 'COMMAND is a fictional large-scale SAF force-on-force exercise. Two task forces drawn from the same armed forces fight each other over a fictional training area: TASK FORCE SABRE (1 SIR, 2 SIR, 5 SIR, 1 CDO BN, 40 SAR, 48 SAR, 21 SA, 35 SCE, 10 C4I Bn, 185 SQN, 188 SQN) and TASK FORCE VANGUARD (3 SIR, 8 SIR, 9 SIR, 1 GDS, 41 SAR, 42 SAR, 20 SA, 30 SCE, 11 C4I Bn, 191 SQN, 189 SQN). Both fight with the same weight of force: three rifle battalions, one elite manoeuvre battalion, two armoured battalions, guns, engineers, a C4I battalion and two RSN squadrons each — eleven formations a side. The formation names and their real-world character are drawn from public sources; which battalion is on which side, and every number in the game, are fictional.',
+    body: 'COMMAND is a fictional large-scale SAF force-on-force exercise. Two task forces drawn from the same armed forces fight each other over a fictional training area: TASK FORCE SABRE (1 SIR, 2 SIR, 5 SIR, 1 CDO BN, 40 SAR, 48 SAR, 21 SA, 35 SCE, 10 C4I Bn, 12 C4I Bn, 185 SQN, 188 SQN) and TASK FORCE VANGUARD (3 SIR, 8 SIR, 9 SIR, 1 GDS, 41 SAR, 42 SAR, 20 SA, 30 SCE, 11 C4I Bn, 16 C4I Bn, 191 SQN, 189 SQN). Both fight with the same weight of force: three rifle battalions, one elite manoeuvre battalion, two armoured battalions, guns, engineers, two C4I battalions and two RSN squadrons each — twelve formations a side. The formation names and their real-world character are drawn from public sources; which battalion is on which side, and every number in the game, are fictional.',
   },
   {
     title: 'Initiative',
@@ -88,7 +88,27 @@ const CONCEPTS: Topic[] = [
   },
   {
     title: 'Reorganize',
-    body: 'Press S with any formation selected to stand it down for the round: readiness and morale recover a real amount immediately, and a little strength comes back too (replacements, at the same %-of-strength abstraction the rest of the game uses). It is deliberately not a return of the old supply system — no depot, no radius, nothing to manage — but it is gated so it cannot flatten out what combat did: it costs the formation’s major action AND requires it to have made NO movement action this round ("stand down to reorganize"), and it cannot be used again for three rounds. A formation on cooldown says so on its unit card.',
+    body: 'Press S with any formation selected to stand it down for the round: readiness +38, morale +20 and strength +12 (buffed this pass — meaningfully more than before, but still well short of a full heal). It is deliberately not a return of the old supply system — no depot, no radius, nothing to manage — but it is gated so it cannot flatten out what combat did: it costs the formation’s major action AND requires it to have made NO movement action this round ("stand down to reorganize"), and it cannot be used again for three rounds. A formation on cooldown says so on its unit card. Two ADJACENT friendly formations that both Reorganize the same round get an extra mutual bonus (+10 readiness, +6 morale each) on top.',
+  },
+  {
+    title: 'Prepared-defence tiers',
+    body: 'Fortify now accumulates. A fresh dig-in is Hasty (the same +30% defence bonus Fortify always gave). Hold it — no move, no other major action, nothing at all — for a further round and it becomes Prepared (+45%); hold it one more round and it reaches Entrenched (+60%), also resisting suppression better. Moving, attacking, or spending the major action on anything else (even Reorganize) throws it back to Hasty. The dug-in arc on the map and the unit card show the current tier, and the pre-attack preview and battle report both name it.',
+  },
+  {
+    title: 'Exploitation bonus',
+    body: 'A clean, low-cost decisive win — Position Captured with None or Light losses to the attacker — earns an immediate 1 AP rebate that same turn, so a genuine breakthrough leaves you with more to do with that formation right away. The battle report calls it out as "Breakthrough — bonus AP granted".',
+  },
+  {
+    title: 'Vertical insertion',
+    body: 'Commandos and Guards only (I, 4 AP). Redeploy up to 14 tiles in one leap, bypassing normal movement, road bonuses and Zones of Control entirely — the point of a vertical envelopment. The landing zone must be clear ground you can occupy and NOT adjacent to any enemy formation your side has actually detected. Capped at 2 uses per formation for the whole operation, so it is a rare tool for the decisive moment, not an extended move.',
+  },
+  {
+    title: 'UAV recon',
+    body: 'A player-level asset, not a formation order — 3 sorties for the whole game, shown as a small counter next to VP in the top bar. Spending one (U, 3 AP) reveals a 7-tile radius anywhere you designate for that round, upgrading detection directly with no formation, sight or line-of-sight requirement of its own. Rare and strategic: save it for ground you are about to commit forces to blind.',
+  },
+  {
+    title: 'Match replay',
+    body: 'Once the operation ends, "Review Replay" on the end-game screen opens a scrubber over what happened, round by round: positions, objective markers and that round’s log entries. Prev/next/play, or the arrow keys. It is a review tool, not a frame-perfect re-simulation.',
   },
   {
     title: 'Destruction',
@@ -142,6 +162,22 @@ const CONCEPTS: Topic[] = [
 
 export const HelpPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [tab, setTab] = useState<'units' | 'concepts' | 'keys'>('units');
+
+  // Self-contained Escape-to-close: the Field Manual is reachable from the
+  // landing page (before the in-game App-level shortcut handler exists) as
+  // well as from an active game, so it cannot rely on the caller for this.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+
   return (
     <div className="floating-panel help-panel" data-testid="help-panel">
       <div className="floating-head">
@@ -181,6 +217,9 @@ export const HelpPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             </div>
             <div>
               <kbd>⇧click</kbd> Add / remove from group
+            </div>
+            <div>
+              <kbd>U</kbd> UAV recon sweep (player-level, capped charges)
             </div>
             <div>
               <kbd>E</kbd> End turn

@@ -50,6 +50,7 @@ import {
   Objective,
   PlayerId,
   REORGANIZE_COOLDOWN_ROUNDS,
+  UAV_SWEEP_RADIUS,
 } from '../src/game/types';
 import { GameAction } from '../src/net/protocol';
 
@@ -256,6 +257,32 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
   if (mine.length === 0) return null;
 
   const candidates: Candidate[] = [];
+
+  // --- UAV RECON (phase 9): a rare, player-level asset — MEDIUM/HARD only,
+  // spent deliberately on ground the bot is about to commit to rather than
+  // burned reflexively or hoarded to zero effect. It sweeps the highest-value
+  // uncontrolled objective the bot does NOT already hold solid (IDENTIFIED+)
+  // intelligence on within the sweep radius — i.e. exactly the "unclear
+  // territory it is about to assault" case the spec asks for.
+  if (difficulty !== 'EASY' && state.players[bot].uavCharges > 0 && affordable(state, 'UAV_RECON')) {
+    const contactsList = Object.values(rawView.players[bot].contacts);
+    const blindObjective = state.objectives
+      .filter((o) => o.controlledBy !== bot)
+      .filter(
+        (o) =>
+          !contactsList.some(
+            (c) => dist(c.x, c.y, o.x, o.y) <= UAV_SWEEP_RADIUS && (c.level === 'IDENTIFIED' || c.level === 'CONFIRMED')
+          )
+      )
+      .filter((o) => Object.values(state.formations).some((f) => f.owner === bot && dist(f.x, f.y, o.x, o.y) <= UAV_SWEEP_RADIUS * 2))
+      .sort((a, b) => b.vpPerTurn - a.vpPerTurn)[0];
+    if (blindObjective) {
+      candidates.push({
+        action: { type: 'UAV_RECON', x: blindObjective.x, y: blindObjective.y },
+        score: 1.4 + blindObjective.vpPerTurn * 0.3,
+      });
+    }
+  }
 
   for (const f of mine) {
     const def = FORMATION_DEFS[f.type];

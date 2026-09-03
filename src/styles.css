@@ -97,6 +97,12 @@ canvas { display: block; touch-action: none; }
 .player-chip.vanguard { background: rgba(193, 122, 95, 0.16); color: var(--red); border: 1px solid var(--red); }
 .turn-chip { padding: 2px 10px; border-radius: 3px; font-weight: 700; letter-spacing: 0.08em; font-size: 11px; background: var(--panel-3); color: var(--text-dim); border: 1px solid var(--border); }
 .turn-chip.turn-active { background: rgba(207, 154, 68, 0.2); color: var(--amber-bright); border-color: var(--amber); }
+.uav-btn { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 3px; background: var(--panel-3); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
+.uav-btn i { font-style: normal; font-size: 10px; letter-spacing: 0.12em; color: var(--text-faint); }
+.uav-btn b { font-size: 14px; color: var(--text); }
+.uav-btn:hover:not(:disabled) { border-color: var(--amber-dim); color: var(--text); }
+.uav-btn.armed { background: rgba(207, 154, 68, 0.2); border-color: var(--amber); color: var(--amber-bright); }
+.uav-btn:disabled { opacity: 0.4; cursor: default; }
 
 .hud-tools {
   position: absolute;
@@ -624,6 +630,14 @@ canvas { display: block; touch-action: none; }
   letter-spacing: 0.03em;
 }
 .close-btn:hover { background: var(--amber-bright); }
+.close-btn + .btn-ghost { margin-top: 0; }
+
+/* ---------- Replay ---------- */
+.replay-modal { max-width: min(920px, 94vw); width: 94vw; text-align: left; padding: 0; display: flex; flex-direction: column; }
+.replay-body { display: flex; gap: 14px; padding: 14px 20px; min-height: 420px; }
+.replay-canvas { width: 480px; height: 480px; max-width: 55vw; border: 1px solid var(--border); border-radius: 4px; flex-shrink: 0; }
+.replay-log { flex: 1; overflow-y: auto; max-height: 480px; font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 6px; }
+.replay-log-line { border-bottom: 1px solid var(--border); padding-bottom: 5px; }
 
 /* ---------- Tutorial ---------- */
 .tutorial-backdrop { z-index: 60; }

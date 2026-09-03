@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Marker, TutorialDiagram } from './TutorialDiagram';
 
 interface Section {
@@ -441,6 +441,39 @@ const SECTIONS: Section[] = [
 export const Tutorial: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [active, setActive] = useState(0);
   const section = SECTIONS[active];
+
+  // Self-contained keyboard handling: Escape closes the tutorial and
+  // Left/Right step between sections. This modal is reachable from the
+  // landing page, before any game exists, so it cannot rely on the in-game
+  // App-level shortcut handler (which only runs once a game is joined) —
+  // and stopping propagation here means that IF it is ever opened over a
+  // live game in the future, its own keys can never leak through to arm a
+  // game action underneath it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key === 'ArrowRight' && active < SECTIONS.length - 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        setActive((a) => Math.min(SECTIONS.length - 1, a + 1));
+        return;
+      }
+      if (e.key === 'ArrowLeft' && active > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        setActive((a) => Math.max(0, a - 1));
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [active, onClose]);
+
   return (
     <div className="modal-backdrop tutorial-backdrop">
       <div className="tutorial" data-testid="tutorial">

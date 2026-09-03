@@ -378,6 +378,30 @@ export interface Formation {
   /** Round this formation last used Reorganize (0 = never) — cooldown gate. */
   lastReorganizedRound: number;
   /**
+   * PREPARED-DEFENCE TIERS (phase 9). 0 = Hasty (the base fortified bonus,
+   * unchanged from before this phase), 1 = Prepared, 2 = Entrenched — see
+   * FORTIFY_TIER_NAMES / FORTIFY_TIER_DEFENCE_MULT. Only meaningful while
+   * `fortified` is true; climbs one tier per further consecutive round spent
+   * doing nothing at all while already dug in, and is thrown back to 0 the
+   * moment the formation moves (which also clears `fortified`, see
+   * moveFormation), attacks, or spends its major action on anything else.
+   */
+  fortifyTier: number;
+  /**
+   * True for the round in which THIS formation issued Fortify (fresh dig-in
+   * or a deliberate re-dig). Distinguishes "just fortified" (tier holds,
+   * does not climb yet) from "held fortified doing nothing" (tier climbs) —
+   * both leave `hasActedThisTurn` true, which alone cannot tell them apart.
+   * Reset to false at the start of the formation's own next turn.
+   */
+  fortifiedThisRound: boolean;
+  /**
+   * VERTICAL INSERTION (phase 9). How many times this formation has used the
+   * Vertical Insertion order this GAME (not per round) — capped at
+   * VERTICAL_INSERT_MAX_USES. Commandos and Guards only.
+   */
+  verticalInsertsUsed: number;
+  /**
    * Set by fog.ts on ENEMY formations only: the rung of the detection ladder
    * this viewer has reached. Undefined on your own formations. When it is
    * 'IDENTIFIED' the numeric fields above are REDACTED placeholders (-1) and
@@ -585,6 +609,10 @@ export interface BattleReport {
   defenderStrengthDelta: number;
   /** Suppression applied to the defender by this engagement (phase 7), 0 if none. */
   suppressionApplied: number;
+  /** Defender's fortify tier AT THE TIME of this engagement (phase 9), -1 when not fortified. */
+  defenderFortifyTier: number;
+  /** True when this was a clean, low-cost decisive win — see EXPLOITATION_AP_REBATE. */
+  breakthroughBonus: boolean;
   captured: boolean;
   /** Tiles the engagement was fought over — the UI flashes them so the player
    *  can see the action the report describes. */
@@ -608,7 +636,9 @@ export type ActionKind =
   | 'ENGINEER_BRIDGE'
   | 'ENGINEER_CLEAR'
   | 'SPECIAL_OP'
-  | 'REORGANIZE';
+  | 'REORGANIZE'
+  | 'VERTICAL_INSERT'
+  | 'UAV_RECON';
 
 export const AP_COSTS: Record<ActionKind, number> = {
   MOVE: 1,
@@ -623,6 +653,14 @@ export const AP_COSTS: Record<ActionKind, number> = {
   // Phase 7. Restores more than Fortify (dig in) and costs the same as a
   // committed Attack — it is a deliberate stand-down, not a free heal.
   REORGANIZE: 2,
+  // Phase 9. A genuine leap over the whole board and over Zones of Control —
+  // costed noticeably above SPECIAL_OP (3) so it reads as a rare, weighty
+  // commitment rather than a fancier move order.
+  VERTICAL_INSERT: 4,
+  // Phase 9. Same tier as AIR (3) — a rare, player-level strategic asset in
+  // the same weight class as calling in an air sortie, not a routine order
+  // like RECON (1).
+  UAV_RECON: 3,
 };
 
 // ---------------------------------------------------------------------------
@@ -635,12 +673,78 @@ export const AP_COSTS: Record<ActionKind, number> = {
 
 /** Rounds that must pass after using Reorganize before the same formation can use it again. */
 export const REORGANIZE_COOLDOWN_ROUNDS = 3;
-/** Readiness restored immediately. */
-export const REORGANIZE_READINESS = 25;
+/**
+ * Restore values (phase 9 buff). Raised from the phase-7 baseline (25/12/6)
+ * on direct user request for meaningfully higher numbers — see README
+ * "Reorganize" for the before/after simulation that confirms the cooldown
+ * (3 rounds) and the no-movement gate, not these numbers, remain the actual
+ * constraint on how often a formation can shrug off combat losses.
+ */
+export const REORGANIZE_READINESS = 38;
 /** Morale points restored (via the normal shock/diminishing-returns path). */
-export const REORGANIZE_MORALE = 12;
-/** Strength restored — small, representing replacements, not a full heal. */
-export const REORGANIZE_STRENGTH = 6;
+export const REORGANIZE_MORALE = 20;
+/** Strength restored — representing replacements, still well short of a full heal. */
+export const REORGANIZE_STRENGTH = 12;
+
+/**
+ * MUTUAL REORGANIZE (phase 9). When two ADJACENT friendly formations both
+ * use Reorganize in the same round — in either order — each gets this extra
+ * flat bump on top of its own solo restore values above. A flat bonus (over
+ * e.g. halving the AP cost of the second one issued) because it composes
+ * cleanly regardless of ordering and needs no AP refund bookkeeping — see
+ * engine.ts `reorganizeAction`.
+ */
+export const MUTUAL_REORGANIZE_READINESS_BONUS = 10;
+export const MUTUAL_REORGANIZE_MORALE_BONUS = 6;
+
+// ---------------------------------------------------------------------------
+// PREPARED-DEFENCE TIERS on Fortify (phase 9)
+// ---------------------------------------------------------------------------
+
+export const FORTIFY_TIER_NAMES = ['Hasty', 'Prepared', 'Entrenched'] as const;
+export const FORTIFY_TIER_MAX = FORTIFY_TIER_NAMES.length - 1; // 2 = Entrenched
+/** Defence multiplier by tier — tier 0 (Hasty) is the unchanged pre-phase-9 value. */
+export const FORTIFY_TIER_DEFENCE_MULT: readonly number[] = [1.3, 1.45, 1.6];
+/** Extra suppression-decay multiplier by tier — an entrenched position recovers composure faster. */
+export const FORTIFY_TIER_SUPPRESSION_DECAY_MULT: readonly number[] = [1.0, 1.15, 1.3];
+
+// ---------------------------------------------------------------------------
+// EXPLOITATION BONUS (phase 9) — a clean, low-cost decisive win frees up a
+// little more of the attacker's turn. Chosen as a 1 AP rebate rather than a
+// bonus movement action because it is a one-line change against the shared
+// AP pool, with no per-formation movesMax exception for the UI, the bot, or
+// computeReachable to special-case.
+// ---------------------------------------------------------------------------
+export const EXPLOITATION_AP_REBATE = 1;
+
+// ---------------------------------------------------------------------------
+// VERTICAL / HELI INSERTION (phase 9) — Commandos and Guards only.
+// ---------------------------------------------------------------------------
+
+/** Manhattan-tile leap radius — deliberately wide: a genuine envelopment, not an extended move. */
+export const VERTICAL_INSERT_RADIUS = 14;
+/** Uses per formation, for the whole game (not per round). */
+export const VERTICAL_INSERT_MAX_USES = 2;
+
+// ---------------------------------------------------------------------------
+// UAV RECON (phase 9) — a capped, player-level consumable, not a formation
+// order. Flavoured as Heron 1 / Hermes 450 sorties (see data.ts).
+// ---------------------------------------------------------------------------
+
+/** Sorties per side, for the whole game. Does not regenerate. */
+export const UAV_CHARGES_PER_GAME = 3;
+/** Radius revealed by one sweep. */
+export const UAV_SWEEP_RADIUS = 7;
+/**
+ * Confidence a sweep sets (floor, never lowers an existing higher value).
+ * Comfortably above IDENTIFIED (55) so the arm is always revealed, but below
+ * CONFIRMED (85) so a UAV pass alone does not hand the player a fully solved
+ * board — it identifies reliably, the way the spec asks, without making
+ * ground recon or Recon sweeps redundant.
+ */
+export const UAV_SWEEP_CONFIDENCE = 78;
+/** How fast a UAV-sourced contact decays once the sweep round has passed. */
+export const UAV_DECAY_PER_ROUND = 20;
 
 // ---------------------------------------------------------------------------
 // OVERWATCH / REACTION FIRE (phase 7)
@@ -687,9 +791,19 @@ export function suppressionMultiplier(suppression: number): number {
  * under the new appetite rather than erasing the scarcity the AP pool is
  * for. Re-verified against the side-balance sim (see README) rather than
  * assumed.
+ *
+ * Phase 9: a twelfth formation (a second C4I battalion, 12 C4I Bn /
+ * 16 C4I Bn) is a light, cheap-to-run formation compared to the armour
+ * battalion phase 8 added — mostly Move + Recon, rarely Attack — but it
+ * still has its own AP appetite (at least a movement action and, when it has
+ * something to resolve, a Recon sweep). Bumped 28 -> 30 (cap 36 -> 38), the
+ * SAME +2 margin phase 8 used, on the same reasoning: keep the budget
+ * slightly under the new roster's appetite rather than erase the scarcity
+ * the AP pool exists for. Re-verified against the paired side-balance sim
+ * (see README "Side balance") using phase 8's own before/after methodology.
  */
-export const AP_PER_TURN = 28;
-export const AP_CAP = 36;
+export const AP_PER_TURN = 30;
+export const AP_CAP = 38;
 export const AIR_SORTIES_PER_TURN = 2;
 /**
  * Victory-point threshold. Raised 200 -> 280 in phase 5: objectives on the
@@ -707,6 +821,8 @@ export interface PlayerState {
   vp: number;
   airSorties: number;
   contacts: Record<string, Contact>;
+  /** UAV recon sorties remaining this GAME (phase 9) — see UAV_CHARGES_PER_GAME. */
+  uavCharges: number;
 }
 
 /**
@@ -720,6 +836,8 @@ export interface PlayerState {
 export interface LogEntry {
   text: string;
   audience: PlayerId | 'ALL';
+  /** Round this entry was logged in — lets the replay view (phase 9) filter the log per round. */
+  round: number;
 }
 
 /**
@@ -744,6 +862,26 @@ export interface KillEvent {
   round: number;
 }
 
+/**
+ * MATCH REPLAY (phase 9) — a compact positions-only snapshot taken at the
+ * start of every round, on top of the existing `log` / `killFeed` the replay
+ * UI already had (see components/Replay.tsx). Deliberately NOT a full
+ * GameState snapshot per round — just enough to redraw where everything was.
+ */
+export interface ReplaySnapshotEntry {
+  id: string;
+  owner: PlayerId;
+  type: FormationType;
+  shortName: string;
+  x: number;
+  y: number;
+  strength: number;
+}
+export interface ReplayRound {
+  round: number;
+  entries: ReplaySnapshotEntry[];
+}
+
 export interface GameState {
   round: number;
   activePlayer: PlayerId;
@@ -764,4 +902,6 @@ export interface GameState {
   lastBattleReport: BattleReport | null;
   /** Recent destructions, newest first, capped short — see KillEvent. */
   killFeed: KillEvent[];
+  /** Positions snapshot at the start of every round, for the post-game replay view. */
+  replay: ReplayRound[];
 }

@@ -20,6 +20,7 @@ import { generateBattlefield } from './mapgen';
 import {
   computeReachable as computeReachableTiles,
   cohesionAdvisory,
+  crossable,
   planGroupMove,
   planMove,
 } from './movement';
@@ -39,7 +40,13 @@ import {
   AP_COSTS,
   AP_PER_TURN,
   AIR_SORTIES_PER_TURN,
+  EXPLOITATION_AP_REBATE,
+  FORTIFY_TIER_MAX,
+  FORTIFY_TIER_SUPPRESSION_DECAY_MULT,
+  GRID_SIZE,
   MAX_ROUNDS,
+  MUTUAL_REORGANIZE_MORALE_BONUS,
+  MUTUAL_REORGANIZE_READINESS_BONUS,
   REACTION_FIRE_POWER_MULT,
   REORGANIZE_COOLDOWN_ROUNDS,
   REORGANIZE_MORALE,
@@ -48,6 +55,12 @@ import {
   SUPPRESSION_DECAY_BASE,
   SUPPRESSION_DECAY_COVER_MULT,
   SUPPRESSION_DECAY_OPEN_MULT,
+  UAV_CHARGES_PER_GAME,
+  UAV_DECAY_PER_ROUND,
+  UAV_SWEEP_CONFIDENCE,
+  UAV_SWEEP_RADIUS,
+  VERTICAL_INSERT_MAX_USES,
+  VERTICAL_INSERT_RADIUS,
   VP_WIN_THRESHOLD,
   ActionKind,
   BattleFactor,
@@ -57,10 +70,12 @@ import {
   GameState,
   KillEvent,
   PlayerId,
+  ReplayRound,
   SPECIAL_OP_RANGE,
   SPECIAL_OP_RANGE_BY_TYPE,
   SPECIAL_OP_TYPES,
   Tile,
+  detectionLevelFor,
   otherPlayer,
 } from './types';
 
@@ -117,6 +132,9 @@ function makeFormation(owner: PlayerId, profileIndex: number, x: number, y: numb
     suppression: 0,
     lastSuppressedRound: 0,
     lastReorganizedRound: 0,
+    fortifyTier: 0,
+    fortifiedThisRound: false,
+    verticalInsertsUsed: 0,
   };
 }
 
@@ -156,18 +174,34 @@ export function initGame(seed = 1337): GameState {
     formations,
     objectives: map.objectives,
     players: {
-      SABRE: { id: 'SABRE', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {} },
-      VANGUARD: { id: 'VANGUARD', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {} },
+      SABRE: { id: 'SABRE', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {}, uavCharges: UAV_CHARGES_PER_GAME },
+      VANGUARD: { id: 'VANGUARD', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {}, uavCharges: UAV_CHARGES_PER_GAME },
     },
-    log: [{ text: `${EXERCISE_NAME} begins. ${FACTION_NAMES[first]} has the initiative.`, audience: 'ALL' as const }],
+    log: [{ text: `${EXERCISE_NAME} begins. ${FACTION_NAMES[first]} has the initiative.`, audience: 'ALL' as const, round: 1 }],
     phase: 'PLAYING',
     winner: null,
     lastBattleReport: null,
     killFeed: [],
+    replay: [],
   };
 
   refreshAllSpotting(state);
+  snapshotRound(state);
   return state;
+}
+
+/** Positions-only snapshot of every formation, for the replay view (phase 9). */
+function snapshotRound(state: GameState) {
+  const entries: ReplayRound['entries'] = Object.values(state.formations).map((f) => ({
+    id: f.id,
+    owner: f.owner,
+    type: f.type,
+    shortName: f.shortName,
+    x: f.x,
+    y: f.y,
+    strength: f.strength,
+  }));
+  state.replay.push({ round: state.round, entries });
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +255,7 @@ function spendAP(state: GameState, kind: ActionKind) {
  * log can never narrate an enemy move the player has not detected.
  */
 function log(state: GameState, msg: string, audience: PlayerId | 'ALL' = state.activePlayer) {
-  state.log.unshift({ text: msg, audience });
+  state.log.unshift({ text: msg, audience, round: state.round });
   if (state.log.length > 60) state.log.pop();
 }
 
@@ -313,6 +347,7 @@ export function moveFormation(state: GameState, formationId: string, x: number, 
   const advisory = cohesionAdvisory(state, f, x, y);
   state.players[state.activePlayer].ap -= plan.apCost;
   f.fortified = false;
+  f.fortifyTier = 0;
   f.movesUsed += plan.actionsRequired;
 
   // Walk the path tile by tile (not just jump to the destination) so overwatch
@@ -359,6 +394,7 @@ export function moveGroup(state: GameState, formationIds: string[], x: number, y
     f.x = m.x;
     f.y = m.y;
     f.fortified = false;
+    f.fortifyTier = 0;
     f.movesUsed += 1;
     // Overwatch (phase 7): a grouped move checks only the final tile per
     // member (the pacing model does not track an intermediate path per
@@ -594,9 +630,46 @@ export function fortifyAction(state: GameState, formationId: string): GameState 
   spendAP(state, 'FORTIFY');
   f.fortified = true;
   f.hasActedThisTurn = true;
-  f.lastOrder = 'Dug in (fortified)';
+  // Prepared-defence tiers (phase 9): a fresh dig-in always starts at Hasty
+  // (tier 0) — re-fortifying does NOT bank whatever tier it had climbed to
+  // before it stopped being fortified. `fortifiedThisRound` tells the
+  // end-of-round tick this was the round it (re)dug in, so the tier does not
+  // climb again until a further round is spent simply holding.
+  f.fortifyTier = 0;
+  f.fortifiedThisRound = true;
+  f.lastOrder = 'Dug in (fortified — Hasty)';
   log(state, `${f.name} dug in and fortified its position.`);
   return state;
+}
+
+/**
+ * Prepared-defence tier tick (phase 9) — end-of-round, mirrors tickMorale /
+ * tickCondition. Must run BEFORE the hasActedThisTurn/movesUsed/
+ * fortifiedThisRound reset below, since it reads this round's activity.
+ */
+function tickFortifyTiers(state: GameState, owner: PlayerId) {
+  Object.values(state.formations).forEach((f) => {
+    if (f.owner !== owner) return;
+    if (!f.fortified) {
+      f.fortifyTier = 0;
+      return;
+    }
+    if (f.fortifiedThisRound) return; // just (re)dug in this round — holds at its current tier
+    if (f.hasActedThisTurn) {
+      // A different major action while dug in (Reorganize, a fire mission,
+      // Recon, an engineer order, …) — attacking already clears `fortified`
+      // itself in attackAction, so this branch is everything else. The
+      // accumulated tier is thrown away; the position resets to Hasty.
+      if (f.fortifyTier > 0) log(state, `${f.shortName} broke its prepared-defence tier — back to Hasty.`, f.owner);
+      f.fortifyTier = 0;
+      return;
+    }
+    // Took no action at all this round while already dug in — held the line.
+    const before = f.fortifyTier;
+    f.fortifyTier = Math.min(FORTIFY_TIER_MAX, f.fortifyTier + 1);
+    if (f.fortifyTier > before)
+      log(state, `${f.shortName} improved its position to ${['Hasty', 'Prepared', 'Entrenched'][f.fortifyTier]}.`, f.owner);
+  });
 }
 
 /**
@@ -634,6 +707,27 @@ export function reorganizeAction(state: GameState, formationId: string): GameSta
     state,
     `${f.name} stood down to reorganize — readiness ${Math.round(beforeReadiness)}% → ${Math.round(f.readiness)}%, strength ${Math.round(beforeStrength)}% → ${Math.round(f.strength)}%.`
   );
+
+  // MUTUAL REORGANIZE (phase 9): any ADJACENT friendly formation that also
+  // reorganized THIS round gets an extra bump too — whichever of the pair
+  // went second, checking here catches both orderings, since by the time the
+  // second one reorganizes the first one's lastReorganizedRound already
+  // reads this round.
+  const partners = Object.values(state.formations).filter(
+    (o) => o.owner === f.owner && o.id !== f.id && distance(o.x, o.y, f.x, f.y) <= 1 && o.lastReorganizedRound === state.round
+  );
+  if (partners.length > 0) {
+    f.readiness = Math.min(100, f.readiness + MUTUAL_REORGANIZE_READINESS_BONUS);
+    applyMoraleShock(state, f, MUTUAL_REORGANIZE_MORALE_BONUS, 'reorganized alongside a nearby formation');
+    partners.forEach((p) => {
+      p.readiness = Math.min(100, p.readiness + MUTUAL_REORGANIZE_READINESS_BONUS);
+      applyMoraleShock(state, p, MUTUAL_REORGANIZE_MORALE_BONUS, `reorganized alongside ${f.shortName}`);
+    });
+    log(
+      state,
+      `${f.shortName} and ${partners.map((p) => p.shortName).join(', ')} reorganize together — readiness restored more fully.`
+    );
+  }
   return state;
 }
 
@@ -871,7 +965,19 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
 
   attacker.hasActedThisTurn = true;
   attacker.fortified = false;
+  attacker.fortifyTier = 0;
   attacker.lastOrder = closeAssault ? `Assaulted ${target.shortName}` : `Engaged ${target.shortName} at range`;
+
+  // EXPLOITATION BONUS (phase 9): a clean, low-cost decisive win — Position
+  // Captured with None/Light losses to the attacker — earns a small
+  // immediate AP rebate that same turn. Naturally cannot double-trigger: an
+  // attack spends the formation's major action, so it can only attack once
+  // per turn, and this runs at most once per resolved attack.
+  const breakthroughBonus = captured && (attackerLoss === 'None' || attackerLoss === 'Light');
+  if (breakthroughBonus) {
+    state.players[attacker.owner].ap = Math.min(AP_CAP, state.players[attacker.owner].ap + EXPLOITATION_AP_REBATE);
+    log(state, `${attacker.shortName} broke through cleanly — bonus AP granted (+${EXPLOITATION_AP_REBATE}).`, attacker.owner);
+  }
 
   const report: BattleReport = {
     id: nextId('battle'),
@@ -890,6 +996,8 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
     attackerStrengthDelta: attackerDelta,
     defenderStrengthDelta: defenderDelta,
     suppressionApplied,
+    defenderFortifyTier: target.fortified ? target.fortifyTier ?? 0 : -1,
+    breakthroughBonus,
     captured,
     closeAssault,
     attackerX: attackerTile.x,
@@ -1014,6 +1122,127 @@ export function specialOpAction(state: GameState, formationId: string, x: number
 }
 
 // ---------------------------------------------------------------------------
+// Vertical / heli insertion (phase 9) — Commandos and Guards only.
+//
+// A genuine leap: any tile within VERTICAL_INSERT_RADIUS that is NOT
+// adjacent to any formation this SIDE has actually detected (its own
+// players[owner].contacts table — fog-of-war-correct, never the true enemy
+// positions) and is otherwise a legal deployment tile. Bypasses normal
+// movement range, road bonuses, and Zones of Control entirely — that is the
+// whole point of a vertical envelopment. Capped hard per formation per game.
+// ---------------------------------------------------------------------------
+
+function inMapBounds(x: number, y: number): boolean {
+  return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE;
+}
+
+/** Is (x, y) a legal vertical-insertion landing tile for `f` right now? */
+export function verticalInsertLandingLegal(state: GameState, f: Formation, x: number, y: number): { ok: boolean; reason: string } {
+  if (!inMapBounds(x, y)) return { ok: false, reason: 'Off the map sheet.' };
+  const tile = tileAt(state, x, y);
+  if (!tile) return { ok: false, reason: 'Off the map sheet.' };
+  if (!crossable(state, f, tile)) return { ok: false, reason: 'Not a landing zone this formation can occupy — impassable terrain.' };
+  if (formationAt(state, x, y)) return { ok: false, reason: 'Landing zone is already occupied.' };
+  const d = distance(f.x, f.y, x, y);
+  if (d > VERTICAL_INSERT_RADIUS) return { ok: false, reason: `Beyond the ${VERTICAL_INSERT_RADIUS}-tile insertion radius.` };
+  // Fog-of-war correct: this side's OWN contact table, not the true enemy
+  // positions — an enemy this side has never detected cannot be avoided by
+  // name, so it does not block a landing zone near it.
+  const contacts = state.players[f.owner].contacts;
+  for (const c of Object.values(contacts)) {
+    if (distance(c.x, c.y, x, y) <= 1) return { ok: false, reason: 'Landing zone is adjacent to a detected enemy formation.' };
+  }
+  return { ok: true, reason: '' };
+}
+
+/** True if ANY legal landing tile exists for `f` right now — for the disabled-reason UI. */
+export function hasVerticalInsertLandingZone(state: GameState, f: Formation): boolean {
+  const r = VERTICAL_INSERT_RADIUS;
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) {
+      if (Math.abs(dx) + Math.abs(dy) > r) continue;
+      const x = f.x + dx;
+      const y = f.y + dy;
+      if (x === f.x && y === f.y) continue;
+      if (verticalInsertLandingLegal(state, f, x, y).ok) return true;
+    }
+  }
+  return false;
+}
+
+export function verticalInsertAction(state: GameState, formationId: string, x: number, y: number): GameState {
+  const f = state.formations[formationId];
+  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn) return state;
+  if (!SPECIAL_OP_TYPES.includes(f.type)) return state; // Commandos and Guards only
+  if ((f.verticalInsertsUsed ?? 0) >= VERTICAL_INSERT_MAX_USES) return state;
+  if (!canAfford(state, 'VERTICAL_INSERT')) return state;
+  const legal = verticalInsertLandingLegal(state, f, x, y);
+  if (!legal.ok) return state;
+
+  spendAP(state, 'VERTICAL_INSERT');
+  f.x = x;
+  f.y = y;
+  f.fortified = false;
+  f.fortifyTier = 0;
+  f.hasActedThisTurn = true;
+  f.verticalInsertsUsed = (f.verticalInsertsUsed ?? 0) + 1;
+  const remaining = VERTICAL_INSERT_MAX_USES - f.verticalInsertsUsed;
+  f.lastOrder = `Vertical insertion to grid ${gridRef(x, y)} (${remaining} insertion${remaining === 1 ? '' : 's'} left)`;
+  log(state, `${f.name} conducted a vertical insertion to grid ${gridRef(x, y)} — ${remaining} left this operation.`, 'ALL');
+  refreshAllSpotting(state);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
+// UAV recon (phase 9) — a capped, player-level consumable, not a formation
+// order. Reveals a radius anywhere on the map for the round, upgrading
+// detection directly regardless of any formation's own sight or LOS.
+// ---------------------------------------------------------------------------
+
+export function uavReconAction(state: GameState, x: number, y: number): GameState {
+  const ps = state.players[state.activePlayer];
+  if (!inMapBounds(x, y)) return state;
+  if (ps.uavCharges <= 0) return state;
+  if (!canAfford(state, 'UAV_RECON')) return state;
+  spendAP(state, 'UAV_RECON');
+  ps.uavCharges -= 1;
+
+  const enemy = otherPlayer(state.activePlayer);
+  let found = 0;
+  for (const e of Object.values(state.formations)) {
+    if (e.owner !== enemy) continue;
+    if (distance(x, y, e.x, e.y) > UAV_SWEEP_RADIUS) continue;
+    const existing = ps.contacts[e.id];
+    const confidence = Math.max(existing?.confidence ?? 0, UAV_SWEEP_CONFIDENCE);
+    const level = detectionLevelFor(confidence);
+    ps.contacts[e.id] = {
+      formationId: e.id,
+      owner: e.owner,
+      level,
+      confidence,
+      x: e.x,
+      y: e.y,
+      live: true,
+      lastSeenTurn: state.round,
+      decayAnchorRound: state.round,
+      lastRiseRound: state.round,
+      ceiling: Math.max(existing?.ceiling ?? 0, UAV_SWEEP_CONFIDENCE),
+      decayPerRound: Math.min(existing?.decayPerRound ?? 99, UAV_DECAY_PER_ROUND),
+      type: level === 'CONTACT' ? undefined : e.type,
+      spottedBy: 'UAV sweep',
+      source: 'Heron 1 / Hermes 450 UAV sweep',
+    };
+    found++;
+  }
+  log(
+    state,
+    `UAV sweep over grid ${gridRef(x, y)} (radius ${UAV_SWEEP_RADIUS}) — ${found} contact${found === 1 ? '' : 's'}. ${ps.uavCharges} sortie${ps.uavCharges === 1 ? '' : 's'} remaining.`
+  );
+  refreshAllSpotting(state);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
 // Objectives, condition tick, turn management
 // ---------------------------------------------------------------------------
 
@@ -1095,6 +1324,13 @@ function suppressionDecayFor(f: Formation, tile: Tile): number {
   let d = SUPPRESSION_DECAY_BASE;
   if (isCloseTerrain(tile) || f.fortified) d *= SUPPRESSION_DECAY_COVER_MULT;
   else if (tile.terrain === 'OPEN' || tile.terrain === 'BEACH') d *= SUPPRESSION_DECAY_OPEN_MULT;
+  // Prepared-defence tiers (phase 9): a more established position resists
+  // suppression better — recovers composure faster still, on top of the
+  // flat fortified/cover bonus above.
+  if (f.fortified) {
+    const tier = Math.max(0, Math.min(FORTIFY_TIER_SUPPRESSION_DECAY_MULT.length - 1, f.fortifyTier ?? 0));
+    d *= FORTIFY_TIER_SUPPRESSION_DECAY_MULT[tier];
+  }
   return d;
 }
 
@@ -1146,6 +1382,7 @@ export function endTurn(state: GameState): GameState {
   tickObjectives(state, otherPlayer(finishing));
   tickCondition(state, finishing);
   tickMorale(state, finishing);
+  tickFortifyTiers(state, finishing);
   const roundComplete = finishing === otherPlayer(state.initiative);
   if (roundComplete) state.round += 1;
   // Overwatch (phase 7): a formation that did NOT spend its major action this
@@ -1163,6 +1400,7 @@ export function endTurn(state: GameState): GameState {
     if (f.owner !== finishing) return;
     f.hasActedThisTurn = false;
     f.movesUsed = 0;
+    f.fortifiedThisRound = false;
   });
   const nextPlayer = otherPlayer(finishing);
   const carry = Math.min(AP_CAP, state.players[nextPlayer].ap + AP_PER_TURN);
@@ -1171,6 +1409,8 @@ export function endTurn(state: GameState): GameState {
   state.activePlayer = nextPlayer;
   refreshAllSpotting(state);
   checkVictory(state, roundComplete);
+  // Replay (phase 9): a fresh positions snapshot at the start of every round.
+  if (roundComplete) snapshotRound(state);
   if (state.phase !== 'GAME_OVER') state.phase = 'TURN_HANDOFF';
   log(state, `Turn passed to ${FACTION_NAMES[nextPlayer]}. Round ${state.round}.`, 'ALL');
   return state;

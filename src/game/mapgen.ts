@@ -1199,16 +1199,17 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     }
     return out;
   };
-  // Phase 8: 11 formations a side (9 land + 2 naval) after 48 SAR/42 SAR were
-  // added, up from 10 (8 land + 2 naval). Ask for a few more candidate tiles
-  // than land formations need so the 2-tile minimum spacing check above still
-  // has room to reject crowded rings, and require enough that every land
-  // formation gets its own unique tile rather than doubling up on the last one.
+  // Phase 9: 12 formations a side (10 land + 2 naval) after a second C4I
+  // battalion (12 C4I Bn / 16 C4I Bn) was added, up from 11 (9 land + 2
+  // naval) in phase 8. Ask for a few more candidate tiles than land
+  // formations need so the 2-tile minimum spacing check above still has room
+  // to reject crowded rings, and require enough that every land formation
+  // gets its own unique tile rather than doubling up on the last one.
   const startZones: Record<PlayerId, { x: number; y: number }[]> = {
-    SABRE: pickStartZone(depots[0].x, depots[0].y, 14),
-    VANGUARD: pickStartZone(depots[1].x, depots[1].y, 14),
+    SABRE: pickStartZone(depots[0].x, depots[0].y, 16),
+    VANGUARD: pickStartZone(depots[1].x, depots[1].y, 16),
   };
-  if (startZones.SABRE.length < 9 || startZones.VANGUARD.length < 9) {
+  if (startZones.SABRE.length < 10 || startZones.VANGUARD.length < 10) {
     return { ok: false, reason: 'insufficient deployment ground' };
   }
 

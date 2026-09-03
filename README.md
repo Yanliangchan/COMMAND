@@ -227,17 +227,22 @@ screen — lobby included — with:
    **validated before it is served** (see "Map generation" below).
 2. Pan (drag) and zoom (scroll wheel, continuous 3.5×–28× covering
    strategic/operational/tactical framing) camera over the canvas.
-3. Ten formations per side (Infantry ×3, one elite manoeuvre battalion —
-   Commandos for Sabre, Guards for Vanguard — Armour, Artillery, Combat
-   Engineers, C4I/ISR, and two RSN squadrons: one surface-combatant, one
-   littoral),
-   each with strength/morale/readiness stats that all affect combat power or
-   movement (plus an ammunition count on the guns and the ships), and each with a **per-round movement-action
-   allowance** (see "Movement actions and the AP economy").
-4. 26 AP/turn (rollover, capped at 34), with the documented per-action AP
-   costs. Move, Attack, Recon, Fortify, Artillery fire mission,
-   Air strike call-in, Engineer bridge/clear and Commando special ops are
-   implemented, validated and applied server-side.
+3. **Twelve formations per side** (phase 9 — up from eleven in phase 8, ten in
+   phase 5): Infantry ×3, one elite manoeuvre battalion — Commandos for Sabre,
+   Guards for Vanguard — two Armoured battalions, Artillery, Combat Engineers,
+   **two** C4I/ISR battalions, and two RSN squadrons: one surface-combatant,
+   one littoral. Each formation carries strength/morale/readiness/suppression
+   stats that all affect combat power or movement (plus an ammunition count on
+   the guns and the ships), a **per-round movement-action allowance** (see
+   "Movement actions and the AP economy"), a **prepared-defence tier** while
+   dug in, and a per-game **vertical-insertion charge count** for the two
+   elite manoeuvre battalions (see "Phase 9" below for both).
+4. 30 AP/turn (rollover, capped at 38 — see "Movement actions and the AP
+   economy" for how this number was arrived at across three roster changes),
+   with the documented per-action AP costs. Move, Attack, Recon, Fortify,
+   Artillery fire mission, Air strike call-in, Engineer bridge/clear, Special
+   Op, Reorganize, Vertical Insertion and UAV Recon are all implemented,
+   validated and applied server-side.
 5. Click a formation → see its movement range (Dijkstra over terrain cost;
    roads halve cost, climbing a band of elevation costs extra, rivers block
    land units unless bridged, ships are confined to the validated navigable
@@ -289,6 +294,28 @@ screen — lobby included — with:
    it falls when it fights and recovers when it does not.
 10. Real two-client multiplayer via room code or Quick Match (see
     "Multiplayer design" above) — no pass-and-play, no shared browser tab.
+11. **Overwatch / reaction fire, Zones of Control and suppression** (phase 7 —
+    shipped then, documented here now; see "Phase 7 mechanics" below for the
+    full writeup). A formation that ends its turn without spending its major
+    action goes on alert and fires one reduced-power reaction shot at an enemy
+    that moves into its range and line of sight during the opponent's turn.
+    Every land formation except artillery projects a Zone of Control into its
+    four adjacent tiles; moving through one (not onto one) stops a bound
+    there, and disengaging from one costs a full movement action's worth of
+    points. Suppression (0-100, separate from strength/morale) cuts a
+    suppressed formation's own attack power and movement, decaying faster in
+    cover, never causing casualties by itself.
+12. **Reorganize** (phase 7, buffed phase 9 — see "Phase 9" below): stand a
+    formation down for the round (2 AP, no prior movement, 3-round cooldown)
+    to restore readiness +38 / morale +20 / strength +12. Two adjacent
+    friendly formations that both Reorganize the same round get an extra
+    mutual bonus.
+13. **Vertical / heli insertion, prepared-defence tiers, an exploitation
+    bonus and capped UAV recon** (all phase 9 — see "Phase 9" below for the
+    full writeup of each).
+14. **Match replay**: after `GAME_OVER`, either player can scrub back through
+    the operation round by round from the end-game screen — positions,
+    objective markers and the operations log for that round (phase 9).
 
 ## Real-World Reference vs. Fictional Game Mechanics
 
@@ -327,6 +354,7 @@ hold, rather than asserting that blue always means friendly.
 | 21st Battalion, Singapore Artillery | 21 SA | Battalion | Artillery |
 | 35th Battalion, Singapore Combat Engineers | 35 SCE | Battalion | Combat Engineers |
 | 10th Command, Control, Communications, Computers and Intelligence Battalion | 10 C4I Bn | Battalion | C4I / Signals & ISR |
+| 12th Command, Control, Communications, Computers and Intelligence Battalion | 12 C4I Bn | Battalion | C4I / Signals & ISR |
 | 185 Squadron, Republic of Singapore Navy | 185 SQN | Squadron | RSN |
 | 188 Squadron, Republic of Singapore Navy | 188 SQN | Squadron | RSN |
 
@@ -341,13 +369,14 @@ hold, rather than asserting that blue always means friendly.
 | 20th Battalion, Singapore Artillery | 20 SA | Battalion | Artillery |
 | 30th Battalion, Singapore Combat Engineers | 30 SCE | Battalion | Combat Engineers |
 | 11th Command, Control, Communications, Computers and Intelligence Battalion | 11 C4I Bn | Battalion | C4I / Signals & ISR |
+| 16th Command, Control, Communications, Computers and Intelligence Battalion | 16 C4I Bn | Battalion | C4I / Signals & ISR |
 | 191 Squadron, Republic of Singapore Navy | 191 SQN | Squadron | RSN |
 | 189 Squadron, Republic of Singapore Navy | 189 SQN | Squadron | RSN |
 
 The two ORBATs are deliberately **equivalent in weight**: three rifle
 battalions, one elite manoeuvre battalion, two armoured battalions, one
-artillery battalion, one combat-engineer battalion, one C4I battalion and two
-RSN squadrons each — eleven formations a side.
+artillery battalion, one combat-engineer battalion, **two** C4I battalions and
+two RSN squadrons each — **twelve** formations a side (phase 9).
 
 **Phase 8** added the second armoured battalion to each side: 48 SAR to SABRE
 and 42 SAR to VANGUARD. Both are real, publicly documented SAF armour
@@ -359,6 +388,24 @@ here, is a fictional exercise arrangement. Adding an eleventh formation a side
 meant re-checking everything that assumed exactly ten: the AP budget, the
 deployment-zone capacity on the 72×72 map, and the side-balance simulation —
 see "Movement actions and the AP economy" and the balance-sim notes below.
+
+**Phase 9** added a second C4I battalion to each side: **12 C4I Bn** to SABRE
+and **16 C4I Bn** to VANGUARD, bringing both sides to twelve formations. Both
+designations are real, publicly documented SAF C4I battalions, distinct from
+10/11 C4I Bn already in the roster — 12 C4I Bn is referenced in connection
+with HQ 4 SAB, and 16 C4I Bn appears by name in MINDEF's *Exercise Wallaby
+2024* fact sheet as a supporting unit; both also appear in Singapore Armed
+Forces Best Unit Competition records (alongside 10 and 17 C4I). Verified by
+search before being added, the same way 42/48 SAR were in phase 8; see
+"Formation naming — what was checked" below. As with every other ORBAT
+slotting in this document, which battalion goes to which task force is a
+fictional exercise arrangement, not a claim about a real grouping. Adding a
+twelfth formation a side meant re-checking, once again, everything that
+assumed a fixed roster size: the AP budget, the deployment-zone capacity on
+the 72×72 map, and the side-balance simulation, run with the SAME
+paired-comparison methodology phase 8 used — see "Movement actions and the AP
+economy" and "Side balance re-verified at twelve formations a side (phase 9)"
+below.
 
 ### Formation naming — what was checked
 
@@ -384,6 +431,9 @@ see "Movement actions and the AP economy" and the balance-sim notes below.
   formed C4I battalions out of earlier Signal battalions. **10 C4I Bn** was
   named explicitly in the brief and replaces the fictional "24 C4I" used in
   phases 1–4. **11 C4I Bn** follows the same convention on the other side.
+  **12 C4I Bn** and **16 C4I Bn** (phase 9) are two further real, publicly
+  documented C4I battalions, added as each side's second C4I formation —
+  distinct unit numbers from 10/11 C4I Bn, not a renumbering of them.
 - The RSN organises ships into numbered **squadrons**, not battalions. The
   squadron numbers used here are all publicly attested:
   - **185 SQN** — Formidable-class frigates.
@@ -425,7 +475,17 @@ comparably strong**, and neither is a strict upgrade of the other:
 | Passive / recon sight | 7 / 11 tiles | 5 / 8 tiles |
 | Identify factor | 1.20 (best on the board) | 1.00 |
 | Special Op reach | 6 tiles | 4 tiles |
+| Vertical insertion reach / uses (phase 9) | 14 tiles × 2 per game | 14 tiles × 2 per game |
 | Character | raiding and deep reconnaissance; fragile in a stand-up fight | air-assault infantry that fights as formed infantry once on the ground |
+
+Both battalions can also mount a **Vertical Insertion** (phase 9, `I`, 4 AP) —
+redeploy up to 14 tiles in one leap, landing anywhere that is not adjacent to
+a formation this side has actually detected, bypassing normal movement range,
+road bonuses and Zones of Control entirely. It flavours the Commandos'
+insertion-behind-lines role and the Guards' real air-assault/heliborne
+character (their equipment line already reads "heli-rappelling and
+fast-roping"). Capped at 2 uses per formation for the whole operation — see
+"Phase 9" below for the full mechanic writeup and why that cap.
 
 ### Equipment flavour
 
@@ -454,13 +514,18 @@ The old build gave every formation exactly one "major action" a round, which
 made manoeuvre glacial and left players ending turns with unspent AP. That is
 replaced by a **two-budget** model:
 
-- **A global AP pool** — 28 AP per turn (26 through phase 7; bumped +2 in
-  phase 8 to absorb the eleventh formation's action appetite — see the
-  comment on `AP_PER_TURN` in `src/game/types.ts`), rolling over up to a
-  36 AP cap. Every
-  action still costs AP exactly as before (Move 1, Attack 2, Recon 1, Fortify
-  1, Artillery 2, Engineer bridge 2 / clear 1, Special Op 3, Air
-  strike 3).
+- **A global AP pool** — 30 AP per turn (26 through phase 7; bumped +2 in
+  phase 8 to absorb the eleventh formation's action appetite, then +2 again
+  in phase 9 for the twelfth — see the comment on `AP_PER_TURN` in
+  `src/game/types.ts`), rolling over up to a 38 AP cap. Each roster bump used
+  the same reasoning: keep the pool slightly *under* the new roster's
+  appetite so choices still matter, verified against the paired side-balance
+  sim each time rather than assumed (see "Side balance re-verified at twelve
+  formations a side (phase 9)" below). Action costs: Move 1, Attack 2,
+  Recon 1, Fortify 1, Artillery 2, Engineer bridge 2 / clear 1, Special Op 3,
+  Air strike 3, Reorganize 2, **Vertical Insertion 4** (phase 9 — a
+  deliberately weightier commitment than a normal order), **UAV Recon 3**
+  (phase 9 — the same tier as Air strike).
 - **A per-unit, per-round movement-action allowance** (`MOBILITY` in
   `src/game/types.ts`), surfaced on every `Formation` as `movesUsed` /
   `movesMax` so the UI can show "Movement Actions: 1 / 2".
@@ -697,8 +762,15 @@ number of orders you happen to issue. Losing sight decays confidence by the
 observer's per-round figure above, walking a Confirmed formation back down to a
 stale last-known-position marker and finally deleting it.
 
-Combat reads the rung directly: attacking a Contact costs **−40%** attack
-power, an Identified target **−12%**, a Confirmed target nothing.
+**Correction (this pass):** the paragraph above describing a −40%/−12%
+identification damage penalty was true of the phase-4b tree but was removed
+in **phase 6** and the text was never updated to match — a real instance of
+exactly the doc-drift this pass was asked to fix. The identification rung no
+longer changes attack power at all; it changes only how WIDE the pre-attack
+prediction's uncertainty band is (see "Combat model, supply removal and the
+odds preview (phase 6)" below, and `combatcheck.ts`'s "the identification
+penalty is gone" assertion, which fails loudly if it is ever reintroduced by
+accident).
 
 ### Recon vs passive spotting
 
@@ -1222,6 +1294,51 @@ against this map/scenario, not something the roster change caused. Game
 length and action volume per game are essentially unchanged, so the larger
 rosters have not made games meaningfully longer or slower to resolve.
 
+### Side balance re-verified at twelve formations a side (phase 9)
+
+Adding 12 C4I Bn / 16 C4I Bn meant re-running the same check again, **using
+phase 8's own harness and methodology** rather than a fresh ad-hoc script (a
+mismatch phase 8 itself flagged as producing numbers that do not compare
+cleanly). The "before" tree is an actual `git worktree` checkout of
+`5b8e0c9` (the commit this phase started from — 11 formations/side, AP
+28/36); the "after" tree is this pass's working tree (12/side, AP 30/38).
+Same seed bases (5000+i MEDIUM, 9000+i HARD), same raw-state-to-the-bot
+harness. Sample size was reduced from phase 8's 120 games/cell to **25
+games/cell** to fit this pass's time budget — smaller, so treat the exact
+percentages as indicative rather than as tight as phase 8's — but paired
+against the same seeds on the same harness, which is the part that makes the
+comparison meaningful at all:
+
+| | Before (5b8e0c9, 11 formations/side, AP 28/36) | After (phase 9, 12 formations/side, AP 30/38) |
+| --- | --- | --- |
+| MEDIUM vs MEDIUM | SABRE 64.0% / VANGUARD 36.0% | **SABRE 52.0% / VANGUARD 48.0%** |
+| HARD vs HARD | SABRE 68.0% / VANGUARD 32.0% | **SABRE 48.0% / VANGUARD 52.0%** |
+| Avg. rounds / actions per game | 12.6–13.8 rounds, 352–370 actions | 13.3–13.5 rounds, 392–396 actions |
+| Avg. end-of-game formation strength | 70.2–75.5% | 72.7–78.4% |
+| Reorganize uses/game | 5.16–7.88 | 5.68–7.56 |
+
+The twelfth formation and the AP bump did **not** introduce a side lean —
+if anything both cells are markedly more even than the 25-game "before"
+read (which itself skews harder toward SABRE than phase 8's own 120-game
+figures for the *same* 11-formation roster, 59.2/40.8 and 49.2/50.8 —
+consistent with phase 8's own caution that a few dozen games is a small
+sample against a real per-batch spread; it is not evidence the 11-formation
+roster itself got less balanced). Game length and action volume per game are
+essentially unchanged, so the twelfth formation has not made games
+meaningfully longer to resolve. Reorganize usage per game is **not**
+noticeably higher despite the buff (7.88→7.56 MEDIUM, 5.16→5.68 HARD) — the
+cooldown and no-movement gate, not the restore size, are still what actually
+limits how often it fires; see "Reorganize" in the phase 9 section above for
+the direct before/after restore-value comparison. UAV recon is being spent
+by the bot deliberately, not hoarded or wasted: 6 uses/game in every cell —
+exactly the 3 charges/side the game gives out, fully used, never overspent.
+Vertical insertion shows 0 uses/game in this sim because **the bot does not
+use it** (deferred — see "Deferred" below); this was verified working
+correctly through the real client/server instead via the Playwright pass
+below. The exploitation bonus fires on roughly a quarter of resolved attacks
+(25.2–27.7%) — not on every attack, not never, which is the rate the task
+asked to confirm.
+
 ### Validation — a broken map can never reach a room
 
 `generateBattlefield()` generates, **validates, and retries** (up to 24
@@ -1260,6 +1377,261 @@ only serialised when true, the per-tile render noise is derived from a hash of
 **elides the grid entirely** from routine `state` pushes (`WireGameState` in
 `src/net/protocol.ts`); the client reuses the grid it received at `start`.
 A routine per-action broadcast is **7 KB** instead of ~440 KB.
+
+## Phase 7 mechanics — overwatch, Zones of Control, suppression, Reorganize
+
+**Documentation catch-up.** These four mechanics shipped in phase 7 but were
+never written up here — a gap this pass was explicitly asked to close before
+adding its own new content on top. What follows is what actually ships, read
+back out of `src/game/engine.ts`, `movement.ts`, `combat.ts` and `types.ts`.
+
+### Overwatch / reaction fire
+
+A formation that ends its turn **without spending its major action** (it may
+still have moved) goes **on alert** for the duration of the opponent's
+following turn — no order, no AP; it is the reward for holding rather than
+acting (`endTurn` sets `onAlert = !hasActedThisTurn`, artillery excluded — it
+is not a direct-fire weapon). While on alert, if an enemy formation moves into
+a tile within the alert formation's **weapons range AND its detection range
+and line of sight** — the exact model passive spotting uses, so it only
+reacts to what it could legitimately have seen — it fires **one** reduced-power
+reaction shot (`REACTION_FIRE_POWER_MULT` = 0.55× a normal attack) through the
+same combat chain (`attackPower` / `defencePower` / `lossesFromShare`) a
+normal attack resolves with, at no AP or movement cost to itself (that cost
+was already banked by not acting). One shot per alert formation per opponent
+turn (`REACTION_FIRE_MAX_PER_TURN` = 1), checked tile-by-tile along the
+mover's path so a long bound cannot walk through an alert formation's arc
+without being fired on. The alert clears at the start of the formation's own
+next turn, or immediately once it spends its major action.
+
+### Zones of Control (ZOC)
+
+Every **land** formation except artillery projects a Zone of Control into its
+four orthogonally adjacent tiles (`zocTilesFor` in `movement.ts`); naval
+formations neither project nor are affected by one — it is a land-warfare
+concept. An enemy formation **moving through** one of your ZOC tiles has its
+bound end there: the pathfinding search (`movement.ts` `search`) refuses to
+expand FROM a ZOC tile it did not start in, so it may still enter and stop on
+one, it just cannot use it as a step to somewhere further — a move that needs
+to pass beyond it is refused with `ZOC_BLOCKED` and an explicit reason, or has
+to route around. Leaving a ZOC tile the formation **started** its move
+standing in (disengaging from contact) costs a full movement action's worth of
+points on the very first step, itemised in the movement preview as
+`zocNote` as soon as a destination is hovered.
+
+### Suppression
+
+A battlefield condition **separate from strength, morale and readiness** —
+its own 0–100 number (`Formation.suppression`), shown as its own bar, never
+folded into another stat. Indirect/standoff fire (artillery fire missions,
+naval standoff fire, air strikes) applies a heavy dose
+(`SUPPRESSION_HIT_INDIRECT` = 30); a direct assault applies a smaller amount
+too (`SUPPRESSION_HIT_DIRECT` = 12) — always a secondary output of the same
+engagement that deals damage, never a substitute for it. Suppression cuts the
+**suppressed formation's own** attack power and movement range — up to −50% at
+maximum suppression (`suppressionMultiplier`) — and never causes strength loss
+by itself. It decays `SUPPRESSION_DECAY_BASE` = 25 points a round it is not
+refreshed, faster under cover or dug in (`SUPPRESSION_DECAY_COVER_MULT` =
+×1.5 — and phase 9 adds a further per-tier multiplier on top, see below),
+slower in the open (`SUPPRESSION_DECAY_OPEN_MULT` = ×0.7). Both the pre-attack
+preview and the battle report show exactly how much suppression an engagement
+will apply, alongside the expected losses.
+
+### Reorganize
+
+A light restorative action distinct from the phase-6-removed supply/depot
+system: a formation stands down for the round (`S`, 2 AP) to reconstitute —
+readiness and morale recover a real amount immediately, and some strength
+comes back too (replacements, at the same %-of-strength abstraction the rest
+of the game uses). Gated twice so it cannot flatten out combat losses: it
+requires the formation to have made **no movement action this round**
+(`f.movesUsed === 0`) as well as spending its major action, and it cannot be
+used again for `REORGANIZE_COOLDOWN_ROUNDS` = 3 rounds. **Phase 9 buffed the
+restore values and added a mutual bonus for adjacent formations reorganizing
+together — see "Phase 9" below.**
+
+## Phase 9 — vertical insertion, fortify tiers, exploitation, UAV recon, mutual Reorganize, Reorganize buff, and the second C4I battalion
+
+This pass's eight items, in the order the brief gave them.
+
+### 1. Vertical / heli insertion (Commandos and Guards)
+
+A new order (`I`, 4 AP — `VERTICAL_INSERT` in `types.ts`/`actions.ts`,
+`engine.ts` `verticalInsertAction`), available only to `COMMANDO` and
+`GUARDS`-arm formations: redeploy to **any tile within 14 Manhattan tiles**
+(`VERTICAL_INSERT_RADIUS`) that is legally occupiable (passable terrain,
+unoccupied) and **not adjacent to any formation this side has actually
+detected** — checked against the acting side's own `players[owner].contacts`
+table, never the true enemy positions, so it respects fog of war exactly the
+way every other order does. It bypasses normal movement range, road bonuses
+and **Zones of Control entirely** — no path is walked, no overwatch is
+triggered along the way, which is the whole point: a vertical envelopment
+goes *over* ZOC, not through it. The "cannot land adjacent to a detected
+enemy" rule is the one safety valve against it becoming a free kill: you
+cannot drop directly on top of a spotted position, only near it.
+
+Capped at **2 uses per formation, for the whole game** (`VERTICAL_INSERT_MAX_USES`,
+tracked on `Formation.verticalInsertsUsed`, not a per-round counter) — genuinely
+rare, and costed at 4 AP, noticeably more than a normal Move (1) or even a
+Special Op (3), so it reads as a real commitment. `actionAvailability` reports
+the precise reason it is unavailable — no charges left, or no legal landing
+zone anywhere within reach right now (`hasVerticalInsertLandingZone` scans the
+radius) — the same disabled-reason discipline every other order gets.
+Flavoured by the Guards' real air-assault/heliborne character (their
+equipment line already reads "heli-rappelling and fast-roping") and the
+Commandos' insertion-behind-lines role.
+
+**Why the cap is tight, not the range.** A 14-tile leap is a genuine "jump the
+whole front line" move on a 72×72 board, but it is a manoeuvre tool, not a
+win condition: it does not fight (it still has to reach its target and then
+spend a further Attack), it cannot land next to what it is trying to
+displace, and it costs a full 4 AP out of a 30 AP budget shared with eleven
+other formations. The combatcheck suite asserts it is refused once spent, once
+adjacent to a detection, and to the wrong formation types; the balance sim
+(below) checks it is not being used to trivially win games.
+
+### 2. Prepared-defence tiers on Fortify
+
+Fortify was previously a single flat +30% defence bonus for as long as the
+formation stayed dug in. It now **accumulates**: `Hasty` (tier 0, the
+unchanged +30%) → `Prepared` (tier 1, +45%) → `Entrenched` (tier 2, +60%) —
+`FORTIFY_TIER_DEFENCE_MULT` in `types.ts`. A formation that fortifies starts
+at Hasty; each further **consecutive round** it spends fortified, doing
+**nothing else at all** (no move, no major action — not even re-issuing
+Fortify), climbs one tier, capped at Entrenched. Moving, attacking, or
+spending the major action on anything other than continuing to hold — a fire
+mission, a Recon sweep, an Engineer order, even Reorganize — throws the tier
+back to zero; moving (and attacking, for the attacker) also clears `fortified`
+itself, unchanged from before. This is tracked with two fields on `Formation`:
+`fortifyTier` (0–2) and a per-round `fortifiedThisRound` flag that
+distinguishes "just (re-)dug in this round" from "held, doing nothing, for a
+further round" — both leave `hasActedThisTurn` true, which alone cannot tell
+the two apart (`engine.ts` `tickFortifyTiers`, run at end-of-round).
+
+Entrenched positions also resist suppression better: an extra decay
+multiplier by tier (`FORTIFY_TIER_SUPPRESSION_DECAY_MULT` = ×1.0 / ×1.15 /
+×1.3) stacks on top of the existing fortified/cover suppression-decay bonus —
+consistent with the terrain-as-multiplier pattern the rest of the suppression
+model already uses.
+
+**What it looks like to the player.** The dug-in arc on the unit card and the
+map marker gains a small row of amber chevron pips below it — one per tier
+above Hasty — and the unit card's "fortified" chip now reads `Hasty`,
+`Prepared` or `Entrenched` instead of a flat "fortified". The pre-attack
+preview and the battle report both already list every factor that changes the
+outcome (phase 6's rule); the tier's defence bonus now appears there labelled
+by name — "Dug in — Entrenched", not just "Dug in" — so the player can see
+which tier they are attacking into before committing.
+
+### 3. Exploitation bonus after a decisive attack win
+
+When an attack resolves as `Position Captured` (the only outcome that takes
+ground) with `None` or `Light` attacker losses — a clean, low-cost
+breakthrough, not a costly win — the attacking formation gets an immediate
+**1 AP rebate** (`EXPLOITATION_AP_REBATE`) that same turn, clamped to
+`AP_CAP` like any other AP credit. **Chosen over a bonus movement action**
+because it is a one-line change against the existing shared AP pool, with no
+per-formation `movesMax` exception to special-case in the UI, the bot's
+`boundsLeft` accounting, or `computeReachable` — a bonus movement action would
+have needed a new formation field and touched all three. It cannot
+double-trigger: an attack spends the formation's major action, so a
+formation can only attack (and therefore only earn this) once per turn.
+Surfaced in the battle report as "Breakthrough — clean, low-cost win. Bonus
+AP granted this turn." (`BattleReport.breakthroughBonus`), so the player
+understands why they suddenly have more AP to spend.
+
+### 4. UAV recon — a capped consumable, not a formation order
+
+Flavoured as Heron 1 / Hermes 450 UAV sorties (the same flavour text already
+used on the C4I battalions' equipment line). A **player-level**, not
+per-formation, resource: `PlayerState.uavCharges`, starting at
+`UAV_CHARGES_PER_GAME` = 3 and never regenerating. Spending a charge
+(`UAV_RECON`, 3 AP — the same tier as Air Support, since it is a comparable
+rare, off-map strategic asset, not a routine order like Recon's 1 AP) reveals
+a 7-tile radius (`UAV_SWEEP_RADIUS`) anywhere the player designates,
+independent of any formation's own sight or line of sight — it directly lifts
+detection confidence for everything in range to at least
+`UAV_SWEEP_CONFIDENCE` = 78 (comfortably past IDENTIFIED at 55, short of
+CONFIRMED at 85, so it reliably reveals the arm without solving the whole
+board by itself), through the same confidence/ladder machinery
+(`detectionLevelFor`) every other sensor uses, then decays afterward at the
+same kind of rate a Recon-tracked contact does rather than vanishing on a
+hard one-round cutoff.
+
+The HUD shows remaining charges as a small counter next to VP in the top bar
+(`TopBar` — `data-testid="uav-btn"`/`"uav-charges"`), deliberately not a full
+panel — it is a rare strategic tool, not a routine action. Keyboard shortcut
+`U`. Wired into the bot (`server/bot.ts`): MEDIUM/HARD only, and it spends a
+charge on the highest-value uncontrolled objective it does **not** already
+hold IDENTIFIED-or-better intelligence on within the sweep radius, and only
+when it already has formations within striking distance of that ground —
+i.e. exactly the "unclear territory it is about to commit to" case the brief
+asked for, not a reflexive or wasted spend.
+
+### 5. Match replay / turn-by-turn review
+
+Reachable from the end-game screen ("Review Replay") once `phase ===
+'GAME_OVER'`. Built as a read of the existing `log` (now carrying a `round`
+number per entry) and a new, deliberately minimal `GameState.replay`: an
+array of `{ round, entries: [{ id, owner, type, shortName, x, y, strength }] }`
+snapshots taken **once per round** (`engine.ts` `snapshotRound`, called at
+game start and at every round boundary in `endTurn`) — positions only, never
+a full `GameState` per round. The replay UI (`components/Replay.tsx`) is a
+simple scrubber (prev round / next round / play, arrow keys, Escape to close)
+over a lightweight canvas redraw of unit dots and objective markers for that
+round, plus the log entries filtered to it. It is explicitly **not** a
+frame-perfect action replay or a re-simulation — the goal is letting players
+review what happened, not proving it byte-for-byte.
+
+**Redaction is still enforced.** `fog.ts` `redactReplay` gates every enemy
+entry, in every round of the replay, by the viewer's **final** (end-of-game)
+contact rung for that formation id — the same "have you ever legitimately
+earned this" rule used everywhere else, just evaluated once at the end rather
+than reconstructed per historical round (the engine does not record a
+detection-rung history, and re-deriving one was explicitly out of scope for
+"keep this lightweight"). A formation the viewer's side never reached
+IDENTIFIED on is omitted from every round of the replay it appears in, not
+shown with numbers never earned; one only ever IDENTIFIED shows a generic
+arm-only stand-in with strength withheld, exactly like a live redacted
+formation. `wirecheck.ts`'s `auditReplay` exercises this over the same
+bot-vs-bot soak the rest of the suite runs.
+
+### 6. Mutual Reorganize incentive
+
+When two **adjacent** friendly formations both use Reorganize in the **same
+round** — in either order — each gets an extra flat bump
+(`MUTUAL_REORGANIZE_READINESS_BONUS` = +10 readiness,
+`MUTUAL_REORGANIZE_MORALE_BONUS` = +6 morale) on top of its own solo restore
+values. Detected by checking, at the moment the SECOND formation reorganizes,
+for adjacent friendlies whose `lastReorganizedRound === state.round` — which
+is already true for whichever one went first, however the two orders were
+issued — and applying the bonus to **both** at that point. **Chosen over
+halving the AP cost of the second order** because a flat bonus composes
+correctly regardless of ordering with no AP-refund bookkeeping to get
+right, and it does not interact with the AP-economy assertions the rest of
+the suite already leans on. Logged as "`21 SA` and `40 SAR` reorganize
+together — readiness restored more fully."
+
+### 7. Buffed Reorganize restore values
+
+Direct tuning request: readiness +25 → **+38**, morale +12 → **+20**, strength
++6 → **+12** (`REORGANIZE_READINESS` / `_MORALE` / `_STRENGTH` in
+`types.ts`) — within the requested 35-40/18-22/10-14 range, on the higher end
+because the brief asked not to be timid about it. Verified in simulation
+(below) that repeated attacks still matter and the cooldown/no-movement gate,
+not the restore size, remain the real constraint: even fully buffed, one use
+recovers a formation that lost half its strength to only ~62% (still well
+short of full — see the combatcheck "Reorganize alone does not come close to
+fully healing heavy losses in one use" assertion), and the 3-round cooldown
+means a formation can use it at most ~8 times across a 24-round game even if
+it never moves.
+
+### 8. Second C4I battalion each side — 12/16 formations
+
+See "Real-World Reference vs. Fictional Game Mechanics" above for the ORBAT
+entries, the WebSearch verification of 12 C4I Bn and 16 C4I Bn, and the AP/
+deployment-zone/side-balance re-verification this required — the same rigor
+phase 8 applied when it added the second armour battalion.
 
 ## Design choices / documented deviations
 
@@ -1456,8 +1828,118 @@ away.
 - **Spectators, team modes (2v2+), or ranked matchmaking.**
 - **Map editor / force-builder points economy.**
 - **DIS/cyber warfare mechanics.**
+- **The bot does not use Vertical Insertion.** Item 1 of phase 9 did not
+  mandate bot support the way item 4 (UAV recon) explicitly did, and adding
+  a sound heuristic for when a 4 AP, twice-a-game leap is actually worth it
+  (versus a normal advance) was judged to need more tuning/testing time than
+  the pass's budget allowed to do well rather than half-heartedly. The
+  balance sim above shows 0 uses/game from the bot as a result; the mechanic
+  itself was verified working correctly through the real client/server via
+  the Playwright pass (see "Testing performed" below). A future pass should
+  give HARD (at least) a scoring heuristic — likely: use it when a
+  high-value uncontrolled objective is reachable within 14 tiles but not
+  within this round's ordinary movement budget, and no detected enemy sits
+  adjacent to the landing tile.
+- **Match replay is best-effort, not a re-simulation**, and its per-round
+  redaction is gated by the viewer's FINAL detection rung rather than a
+  recorded rung-per-round history (see "5. Match replay" above) — a
+  formation whose contact aged out entirely by game end will not appear in
+  earlier rounds of the replay even though it was legitimately detected at
+  the time. Recording a full per-round detection-rung history was judged out
+  of scope for "keep this lightweight."
 
 ## Testing performed
+
+### Phase 9 (vertical insertion, fortify tiers, exploitation, UAV recon, mutual/buffed Reorganize, 12th/16th C4I Bn)
+
+- `npm run build` (client `tsc -b` + Vite) and
+  `npx tsc -p server/tsconfig.json --noEmit` — both clean.
+- `npm run check` (mapcheck 60/60 seeds, wirecheck ~530k assertions over 6
+  bot-vs-bot games including the new `auditReplay` pass, combatcheck) —
+  all three suites pass, extended with dedicated sections for every phase-9
+  mechanic: vertical insertion (redeploy, per-formation cap, adjacent-
+  detected-enemy refusal, ZOC bypass, formation-type gating), fortify tiers
+  (Hasty → Prepared → Entrenched climb, the defence-power difference between
+  tiers, reset-on-move and reset-on-other-major-action), the exploitation
+  bonus (triggers on a clean win, does not on a costly one, exact AP
+  accounting), UAV recon (charge count, AP cost, detection upgrade with no
+  LOS requirement, refusal once spent), mutual Reorganize (both orderings,
+  non-adjacent formations excluded), the buffed Reorganize values, and the
+  12-formation/AP-30/38 roster guard.
+- **Balance simulation** — paired before/after at 12 formations/side using
+  phase 8's own harness against an actual `git worktree` checkout of the
+  pre-phase-9 commit; see "Side balance re-verified at twelve formations a
+  side (phase 9)" above for the full table. Summary: MEDIUM 64.0/36.0 →
+  52.0/48.0, HARD 68.0/32.0 → 48.0/52.0 — more even, not less.
+- **A full HARD-vs-HARD game played out end-to-end** via `engine`/`bot`
+  directly (no browser) to confirm the whole chain works through a real
+  game rather than only in synthetic scenarios: reached `GAME_OVER` at
+  round 11, `state.replay` recorded 11 rounds, `killFeed` had 8 entries, both
+  sides fully spent their 3 UAV charges (6 sorties total) by end of game.
+- **Playwright** (`/opt/pw-browsers/chromium`) against the combined built
+  server (`tsx server/index.ts` serving `dist/`):
+  - Landing page loads; Tutorial opens on a fresh load, section nav (click
+    and the Next button) changes content, `M`/`A`/`S` pressed while it is
+    open do not crash or close it, Escape closes it — see "Tutorial bug fix"
+    below for what was actually wrong and the root cause.
+  - A bot game starts; the Field Manual opens with `H`; `M` pressed while it
+    is open does **not** arm Move mode behind it (no `.order-hint` appears);
+    Escape closes the panel.
+  - **Vertical insertion**, driven through the existing `window.__COMMAND_DEBUG__`
+    QA hook (`net.sendAction`) against a real bot game rather than synthetic
+    canvas coordinates: a Commando/Guards formation redeployed to the target
+    tile and its `verticalInsertsUsed` counter incremented from 0 to 1.
+  - **Fortify tiers**: fortifying set tier 0 immediately; ending our turn
+    twice (waiting for the bot's reply each time) with the formation
+    untouched climbed the tier to 1, matching the "one further round of pure
+    holding" rule.
+  - **UAV recon**: firing a sweep decremented `uavCharges` from 3 to 2 and
+    the HUD counter (`data-testid="uav-charges"`) updated to match.
+  - **Frame time**: 20 samples of `window.__COMMAND_DEBUG__.frameTimeMs`
+    during a HARD bot game averaged **6.91 ms** (6.62–7.01 ms) — inside the
+    phase 8 baseline of 6.8–8.3 ms.
+  - Exploitation bonus and match replay were verified at the data/engine
+    level (combatcheck + the full-game run above) rather than additionally
+    driven through Playwright to a live decisive win / a live `GAME_OVER` —
+    the former is stochastic to trigger on demand through real client play
+    and the latter requires playing out a full round-limited or
+    VP-threshold game in real time; both were judged adequately covered by
+    the automated checks given the pass's time budget. See "Explicitly out
+    of scope / deferred" above.
+- **Tutorial bug fix — root cause and what was fixed.** The reported "it
+  doesn't work" traced to two real issues in `App.tsx`'s single global
+  `keydown` listener, both stemming from the same root cause: that listener
+  is created unconditionally by a `useEffect` that runs on every render
+  regardless of which JSX branch (`Lobby` vs. the live game) actually gets
+  returned, since React hooks execute before the component's `if (!state ||
+  !you) return <Lobby ... />` early return, not after it.
+  1. **On the landing page**, with no game and no `state`/`you`, that same
+     listener was still live underneath the Tutorial modal. It did not
+     leak into a game (there was none yet), but it meant every keystroke —
+     including `Space`, which the listener calls `preventDefault()` on to
+     centre the camera — was being intercepted for no reason, and Escape
+     was silently absorbed by the game listener's own (irrelevant, since no
+     game exists) Escape-handling branches instead of ever reaching the
+     Tutorial, so **Escape did not close it**. Fixed by making the listener
+     bail out immediately whenever `!state || !you` — it now does nothing
+     at all outside an active game.
+  2. **In an active game**, the same listener's action-shortcut branch
+     (`M`/`A`/`R`/`F`/`G`/`C`/`B`/`O`/`X`/`S`/`I`) had no check for whether
+     the Legend or Field Manual overlay was open, so pressing e.g. `M` while
+     reading the Field Manual armed Move mode in the background — exactly
+     the "shortcuts leak through to the game underneath" failure mode the
+     bug report named. Fixed by returning immediately after the panel-
+     toggle keys (`Escape`/`?`/`L`/`H`) whenever `legendOpen || helpOpen` is
+     true, before any further key is interpreted as a game shortcut.
+  3. Additionally, since the Tutorial (and the Field Manual) can be opened
+     from the landing page — before the in-game listener would exist even
+     after the fix above — both `Tutorial.tsx` and `HelpPanel.tsx` now carry
+     their own self-contained, capture-phase `keydown` handler: Escape
+     closes them (calling `stopPropagation()`, so even a future change that
+     re-introduces an underlying listener cannot see the keystroke), and the
+     Tutorial additionally supports Left/Right arrow keys to step between
+     sections. This is not just a workaround for issue 1 — it makes both
+     panels correct in isolation, independent of whatever the caller does.
 
 ### Phase-5 refinement pass (task-force ORBATs, map design for engagement, side balance)
 

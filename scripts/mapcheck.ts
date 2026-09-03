@@ -66,6 +66,15 @@ for (let i = 0; i < COUNT; i++) {
     }
     if (map.objectives.length < 12) errs.push(`only ${map.objectives.length} objectives`);
 
+    // Phase 9: 12 formations a side (10 land + 2 naval) — every side's
+    // deployment area must legally seat all 10 land formations on distinct
+    // tiles (generateBattlefield already enforces >= 10 internally and would
+    // have failed `ok`, but this independently re-checks the artifact that
+    // actually ships, the way the naval checks above do for water).
+    (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
+      if (map.startZones[side].length < 10) errs.push(`${side} deployment zone seats only ${map.startZones[side].length} land formations (need >= 10)`);
+    });
+
     if (errs.length) failures.push(`seed ${seed}: ${errs.join(' | ')}`);
     else pass++;
   } catch (e) {

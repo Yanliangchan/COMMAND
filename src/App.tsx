@@ -31,6 +31,8 @@ const TARGET_HINTS: Record<string, string> = {
   ENGINEER_BRIDGE: 'Click an adjacent river tile to bridge it.',
   ENGINEER_CLEAR: 'Click an adjacent tile to clear its obstacles and dug-in defences.',
   SPECIAL_OP: 'Click a tile within this battalion\u2019s insertion reach to raid or probe it.',
+  VERTICAL_INSERT: 'Click a landing zone within reach \u2014 not adjacent to any enemy formation you have detected.',
+  UAV_RECON: 'Click anywhere on the map to sweep that area with a UAV sortie.',
 };
 
 /** Ladder rank, for spotting an upgrade between two state pushes. */
@@ -350,6 +352,13 @@ export default function App() {
   // ---- Keyboard ------------------------------------------------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // No active game (landing page / lobby, Tutorial and Field Manual
+      // included) — this listener has nothing to do. Bailing out here, rather
+      // than falling through the branches below with `selected`/`myTurn` both
+      // false, is what stops a keypress on the landing page's Tutorial modal
+      // (its own nav buttons, or just typing) from preventDefault-ing browser
+      // defaults (e.g. Space activating a focused button) for no reason.
+      if (!state || !you) return;
       // Never steal keys from a text field (the room-code input in particular).
       if (isTypingTarget(e)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -392,6 +401,15 @@ export default function App() {
         e.preventDefault();
         return;
       }
+      // The Legend and Field Manual are read-only overlays with no keyboard
+      // handling of their own — everything past this point is a GAME
+      // shortcut (Tab / Z / E / +- / arrows / the action letters), and none
+      // of it should reach the map underneath while one of these is open.
+      // Escape (above) and the L/H toggles (just above) still work to close
+      // them; this is exactly the leak the phase-9 tutorial bug report
+      // named — pressing M/A/R/F/E/S while an overlay is open must not arm
+      // an action mode in the background.
+      if (legendOpen || helpOpen) return;
       if (k === 'Tab') {
         nextReady();
         e.preventDefault();
@@ -404,6 +422,17 @@ export default function App() {
       }
       if (up === 'E') {
         if (myTurn) doEndTurn();
+        e.preventDefault();
+        return;
+      }
+      if (up === 'U') {
+        // UAV recon (phase 9) — a player-level order, not tied to a selected
+        // formation, so it is handled here rather than through ACTION_BY_SHORTCUT.
+        if (myTurn && state && you && state.players[you].uavCharges > 0) {
+          setTargetMode((m) => (m === 'UAV_RECON' ? null : 'UAV_RECON'));
+        } else if (myTurn) {
+          flash('No UAV sorties left this operation.');
+        }
         e.preventDefault();
         return;
       }
@@ -444,7 +473,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [targetMode, legendOpen, helpOpen, endTurnWarn, selected, actions, runAction, nextReady, centreOn, doEndTurn, myTurn, flash, groupIds]);
+  }, [targetMode, legendOpen, helpOpen, endTurnWarn, selected, actions, runAction, nextReady, centreOn, doEndTurn, myTurn, flash, groupIds, state, you]);
 
   if (!state || !you) {
     return (
@@ -501,6 +530,11 @@ export default function App() {
       clearMode();
       return;
     }
+    if (targetMode === 'UAV_RECON') {
+      net.sendAction({ type: 'UAV_RECON', x, y });
+      clearMode();
+      return;
+    }
     if (!selected) return;
     switch (targetMode) {
       case 'MOVE': {
@@ -541,6 +575,10 @@ export default function App() {
         net.sendAction({ type: 'SPECIAL_OP', formationId: selected.id, x, y });
         clearMode();
         break;
+      case 'VERTICAL_INSERT':
+        net.sendAction({ type: 'VERTICAL_INSERT', formationId: selected.id, x, y });
+        clearMode();
+        break;
       default:
         break;
     }
@@ -577,7 +615,14 @@ export default function App() {
         kills={killMarkers}
       />
 
-      <TopBar state={state} you={you} objectivesHeld={objectivesHeld} objectivesTotal={state.objectives.length} />
+      <TopBar
+        state={state}
+        you={you}
+        objectivesHeld={objectivesHeld}
+        objectivesTotal={state.objectives.length}
+        uavArmed={targetMode === 'UAV_RECON'}
+        onUav={() => setTargetMode((m) => (m === 'UAV_RECON' ? null : 'UAV_RECON'))}
+      />
       <OverlayToggles
         overlays={overlays}
         setOverlays={setOverlays}

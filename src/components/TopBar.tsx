@@ -1,13 +1,15 @@
 import React from 'react';
-import { AP_CAP, MAX_ROUNDS, GameState, PlayerId, VP_WIN_THRESHOLD, otherPlayer } from '../game/types';
+import { AP_CAP, AP_COSTS, MAX_ROUNDS, GameState, PlayerId, VP_WIN_THRESHOLD, otherPlayer } from '../game/types';
 import { FACTION_SHORT } from '../game/data';
 
-export const TopBar: React.FC<{ state: GameState; you: PlayerId; objectivesHeld: number; objectivesTotal: number }> = ({
-  state,
-  you,
-  objectivesHeld,
-  objectivesTotal,
-}) => {
+export const TopBar: React.FC<{
+  state: GameState;
+  you: PlayerId;
+  objectivesHeld: number;
+  objectivesTotal: number;
+  uavArmed?: boolean;
+  onUav?: () => void;
+}> = ({ state, you, objectivesHeld, objectivesTotal, uavArmed, onUav }) => {
   const mine = state.players[you];
   const myTurn = state.activePlayer === you;
   return (
@@ -56,6 +58,18 @@ export const TopBar: React.FC<{ state: GameState; you: PlayerId; objectivesHeld:
             <span className={you === 'SABRE' ? 'vp-red' : 'vp-blue'}>{state.players[otherPlayer(you)].vp}</span>
           </b>
         </span>
+        {onUav && (
+          <button
+            className={`uav-btn ${uavArmed ? 'armed' : ''}`}
+            data-testid="uav-btn"
+            title={`UAV recon sweep — reveals a radius anywhere on the map for a round. ${AP_COSTS.UAV_RECON} AP per sortie. Press U.`}
+            onClick={onUav}
+            disabled={state.players[you].uavCharges <= 0 || state.activePlayer !== you}
+          >
+            <i>UAV</i>
+            <b data-testid="uav-charges">{state.players[you].uavCharges}</b>
+          </button>
+        )}
       </div>
     </div>
   );

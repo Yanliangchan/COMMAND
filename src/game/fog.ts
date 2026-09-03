@@ -27,7 +27,7 @@
 // ============================================================================
 
 import { FORMATION_DEFS } from './data';
-import { Contact, DetectionLevel, Formation, GameState, KillEvent, PlayerId, otherPlayer } from './types';
+import { Contact, DetectionLevel, Formation, GameState, KillEvent, PlayerId, ReplayRound, otherPlayer } from './types';
 
 /** Two-letter designation shown on a redacted counter, by arm. */
 const GENERIC_SHORT: Record<Formation['type'], string> = {
@@ -83,6 +83,11 @@ function redactIdentified(f: Formation): Formation {
     suppression: REDACTED_NUMBER,
     lastSuppressedRound: 0,
     lastReorganizedRound: 0,
+    // Phase 9 fields — same tier as everything else above: intelligence,
+    // withheld until CONFIRMED.
+    fortifyTier: REDACTED_NUMBER,
+    fortifiedThisRound: false,
+    verticalInsertsUsed: REDACTED_NUMBER,
     intel: 'IDENTIFIED',
     redacted: true,
   };
@@ -147,6 +152,34 @@ function redactKillEvent(state: GameState, viewer: PlayerId, k: KillEvent): Kill
 }
 
 /**
+ * Redact the match-replay snapshots (phase 9) for `viewer`. Best-effort, by
+ * design (see README "Match replay"): rather than reconstructing what the
+ * viewer's detection actually was AT EACH PAST ROUND (which the engine does
+ * not record), an enemy formation is shown in ANY round of the replay only
+ * if the viewer's CURRENT, final contact for it reached IDENTIFIED or
+ * better — the same "have you ever legitimately earned this" gate fog.ts
+ * uses everywhere else, just evaluated once at the end of the game rather
+ * than per round. A formation the viewer never got that far on (or whose
+ * contact aged out entirely) is omitted from every round of the replay,
+ * never shown with numbers it did not earn.
+ */
+function redactReplay(state: GameState, viewer: PlayerId): ReplayRound[] {
+  const contacts = state.players[viewer].contacts;
+  return state.replay.map((r) => ({
+    round: r.round,
+    entries: r.entries
+      .filter((e) => e.owner === viewer || (contacts[e.id]?.level === 'IDENTIFIED' || contacts[e.id]?.level === 'CONFIRMED'))
+      .map((e) => {
+        if (e.owner === viewer) return e;
+        const level = contacts[e.id]?.level;
+        if (level === 'CONFIRMED') return e;
+        // IDENTIFIED — arm and position only, strength withheld like a live redacted formation.
+        return { ...e, shortName: GENERIC_SHORT[e.type], strength: REDACTED_NUMBER };
+      }),
+  }));
+}
+
+/**
  * Redact `state` down to what `viewer` is permitted to know:
  *  - all of the viewer's own formations, untouched
  *  - CONFIRMED enemy formations in full
@@ -195,6 +228,7 @@ export function filterStateForPlayer(state: GameState, viewer: PlayerId): GameSt
     log: state.log.filter((e) => e.audience === 'ALL' || e.audience === viewer),
     formations,
     killFeed,
+    replay: redactReplay(state, viewer),
     players: {
       ...state.players,
       [viewer]: { ...state.players[viewer], contacts },

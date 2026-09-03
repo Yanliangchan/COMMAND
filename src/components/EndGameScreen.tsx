@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { GameState, PlayerId, otherPlayer } from '../game/types';
 import { FACTION_NAMES, FACTION_SHORT } from '../game/data';
+import { Replay } from './Replay';
 
 export const EndGameScreen: React.FC<{ state: GameState; you: PlayerId; onRestart: () => void }> = ({ state, you, onRestart }) => {
+  const [replayOpen, setReplayOpen] = useState(false);
   const won = state.winner === you;
   const draw = state.winner === 'DRAW';
   const held = state.objectives.filter((o) => o.controlledBy === you).length;
@@ -25,10 +27,14 @@ export const EndGameScreen: React.FC<{ state: GameState; you: PlayerId; onRestar
         <div className="handoff-note">
           You finished holding {held} of {state.objectives.length} objectives after {state.round} rounds.
         </div>
+        <button className="btn-ghost small" data-testid="open-replay" onClick={() => setReplayOpen(true)}>
+          Review Replay
+        </button>
         <button className="close-btn" onClick={onRestart}>
           Return to Lobby
         </button>
       </div>
+      {replayOpen && <Replay state={state} you={you} onClose={() => setReplayOpen(false)} />}
     </div>
   );
 };

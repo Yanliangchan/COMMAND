@@ -55,6 +55,8 @@ import { FORMATION_DEFS, MORALE_MULTIPLIER, TERRAIN_DEFS } from './data';
 import {
   BattleFactor,
   DetectionLevel,
+  FORTIFY_TIER_DEFENCE_MULT,
+  FORTIFY_TIER_NAMES,
   Formation,
   FormationType,
   GameState,
@@ -365,8 +367,14 @@ export function defencePower(state: GameState, defender: Formation, tile: Tile):
   }
 
   if (defender.fortified) {
-    power *= 1.3;
-    factors.push({ label: 'Dug in (fortified)', positive: true, magnitude: 30 });
+    // Prepared-defence tiers (phase 9): fortifyTier is redacted to -1 for an
+    // enemy known only to IDENTIFIED, same as every other intelligence field
+    // — treat that (or an undefined value on an older/legacy object) as
+    // Hasty, the base tier, rather than crashing the index.
+    const tier = Math.max(0, Math.min(FORTIFY_TIER_DEFENCE_MULT.length - 1, defender.fortifyTier ?? 0));
+    const mult = FORTIFY_TIER_DEFENCE_MULT[tier];
+    power *= mult;
+    factors.push({ label: `Dug in — ${FORTIFY_TIER_NAMES[tier]}`, positive: true, magnitude: (mult - 1) * 100 });
   }
 
   const friends = adjacentFriendlies(state, defender);
