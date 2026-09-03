@@ -4,7 +4,16 @@
 // expected to clone the state before calling a mutator, see store.ts).
 // ============================================================================
 
-import { EXERCISE_NAME, FACTION_NAMES, FORMATION_DEFS, MORALE_MULTIPLIER, ORDERS_OF_BATTLE, TERRAIN_DEFS } from './data';
+import { EXERCISE_NAME, FACTION_NAMES, FORMATION_DEFS, ORDERS_OF_BATTLE } from './data';
+import {
+  COMBAT_ROLL_PCT,
+  STANDOFF_RETURN_FIRE,
+  attackPower,
+  defencePower,
+  lossFromDelta,
+  lossesFromShare,
+  predictEngagement,
+} from './combat';
 import { generateBattlefield } from './mapgen';
 import {
   computeReachable as computeReachableTiles,
@@ -14,6 +23,7 @@ import {
 } from './movement';
 import { deepProbe, reconSweep, refreshAllSpotting, refreshSpotting } from './detection';
 import {
+  AMMO_REGEN_PER_ROUND,
   COHESION_RADIUS,
   MORALE_BASELINE,
   MORALE_CASUALTY_DEADZONE,
@@ -35,9 +45,6 @@ import {
   DetectionLevel,
   Formation,
   GameState,
-  LossLevel,
-  Morale,
-  Objective,
   PlayerId,
   SPECIAL_OP_RANGE,
   SPECIAL_OP_RANGE_BY_TYPE,
@@ -87,8 +94,8 @@ function makeFormation(owner: PlayerId, profileIndex: number, x: number, y: numb
     moraleBaseline: MORALE_BASELINE[p.type],
     lastEngagedRound: 0,
     readiness: 100,
-    supply: 100,
-    ammo: 100,
+    ammo: def.maxAmmo ?? 0,
+    lastFiredRound: 0,
     movesUsed: 0,
     movesMax: def.movesPerRound,
     hasActedThisTurn: false,
@@ -160,10 +167,6 @@ export function formationAt(state: GameState, x: number, y: number): Formation |
 
 export function distance(x0: number, y0: number, x1: number, y1: number) {
   return Math.abs(x0 - x1) + Math.abs(y0 - y1);
-}
-
-function moraleMult(m: Morale) {
-  return MORALE_MULTIPLIER[m];
 }
 
 /** Movement actions this formation still has left this round. */
@@ -326,7 +329,7 @@ function mourn(state: GameState, lost: Formation) {
 
 /**
  * End-of-round morale tick for one side: positional shocks (isolated,
- * surrounded, out of supply) first, then gradual recovery back toward the
+ * surrounded) first, then gradual recovery back toward the
  * formation's baseline for anyone who was not in a fight this round.
  */
 function tickMorale(state: GameState, owner: PlayerId) {
@@ -347,15 +350,6 @@ function tickMorale(state: GameState, owner: PlayerId) {
       shock += MORALE_SHOCKS.SURROUNDED;
       reasons.push('surrounded');
     }
-    if (!FORMATION_DEFS[f.type].isNaval) {
-      if (f.supply < 20) {
-        shock += MORALE_SHOCKS.SUPPLY_CRITICAL;
-        reasons.push('supply critical');
-      } else if (f.supply < 40) {
-        shock += MORALE_SHOCKS.SUPPLY_LOW;
-        reasons.push('supply running low');
-      }
-    }
     if (shock < 0) applyMoraleShock(state, f, shock, reasons.join(', '));
 
     const engaged = f.lastEngagedRound === state.round;
@@ -369,7 +363,6 @@ function tickMorale(state: GameState, owner: PlayerId) {
     if (f.moraleValue >= f.moraleBaseline) return;
 
     let recovery = MORALE_RECOVERY.BASE;
-    if (FORMATION_DEFS[f.type].isNaval || isInSupplyRange(state, f)) recovery += MORALE_RECOVERY.IN_SUPPLY;
     if (f.movesUsed === 0 || f.fortified) recovery += MORALE_RECOVERY.HELD_POSITION;
     if (friends.length > 0) recovery += MORALE_RECOVERY.NEAR_FRIENDS;
     if (friends.length === 0) recovery = recovery / 2; // nobody to reorganise around
@@ -428,7 +421,7 @@ export function reconAction(state: GameState, formationId: string): GameState {
 }
 
 // ---------------------------------------------------------------------------
-// Fortify / Resupply / Engineer ops
+// Fortify / Ammunition / Engineer ops
 // ---------------------------------------------------------------------------
 
 export function fortifyAction(state: GameState, formationId: string): GameState {
@@ -443,51 +436,29 @@ export function fortifyAction(state: GameState, formationId: string): GameState 
   return state;
 }
 
-/** Radius each kind of supply source projects. */
-export const SUPPLY_RADIUS = 14;
-
 /**
- * Supply is a POSITIONAL modifier, not a logistics mini-game: a formation is
- * in supply if it sits inside the radius of one of its side's supply sources —
- * its depots, or any Port / Airfield / Supply Depot objective it currently
- * holds. There are no supply convoys or transport routes to shepherd; pushing
- * your front line beyond your held rear areas is what costs you supply.
+ * AMMUNITION (phase 6). Artillery and naval formations carry a small number of
+ * ready rounds; everything else has none and needs none. Spending one is the
+ * only cost of a fire mission, and a formation that holds its fire for a round
+ * gets one back. There is no depot, no radius and no logistics order.
  */
-export function supplySources(state: GameState, owner: PlayerId): { x: number; y: number }[] {
-  const out: { x: number; y: number }[] = [];
-  for (const row of state.tiles) {
-    for (const t of row) {
-      if (t.isDepot && t.depotOwner === owner) out.push({ x: t.x, y: t.y });
-    }
-  }
-  for (const o of state.objectives) {
-    if (o.controlledBy !== owner) continue;
-    if (o.kind === 'Port' || o.kind === 'Airfield' || o.kind === 'Supply Depot') out.push({ x: o.x, y: o.y });
-  }
-  return out;
+export function maxAmmo(f: Formation): number {
+  return FORMATION_DEFS[f.type].maxAmmo ?? 0;
 }
 
-export function isInSupplyRange(state: GameState, f: Formation): boolean {
-  return supplySources(state, f.owner).some((s) => distance(f.x, f.y, s.x, s.y) <= SUPPLY_RADIUS);
+export function usesAmmo(f: Formation): boolean {
+  return FORMATION_DEFS[f.type].maxAmmo !== null;
 }
 
-export function resupplyAction(state: GameState, formationId: string): GameState {
-  const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn) return state;
-  if (!canAfford(state, 'RESUPPLY')) return state;
-  if (!isInSupplyRange(state, f)) {
-    log(state, `${f.name} attempted to resupply but is out of supply range.`);
-    return state;
-  }
-  spendAP(state, 'RESUPPLY');
-  f.supply = 100;
-  f.ammo = 100;
-  f.readiness = Math.min(100, f.readiness + 20);
-  f.hasActedThisTurn = true;
-  f.lastOrder = 'Resupplied';
-  applyMoraleShock(state, f, MORALE_SHOCKS.RESUPPLIED, 'resupplied and reorganised');
-  log(state, `${f.name} resupplied — ammo and supply restored.`);
-  return state;
+/** True when this formation is able to shoot right now. */
+export function hasAmmo(f: Formation): boolean {
+  return !usesAmmo(f) || f.ammo > 0;
+}
+
+function spendRound(state: GameState, f: Formation) {
+  if (!usesAmmo(f)) return;
+  f.ammo = Math.max(0, f.ammo - 1);
+  f.lastFiredRound = state.round;
 }
 
 export function engineerBridgeAction(state: GameState, formationId: string, x: number, y: number): GameState {
@@ -527,110 +498,44 @@ export function engineerClearAction(state: GameState, formationId: string, x: nu
 // Combat
 // ---------------------------------------------------------------------------
 
-function lossFromDelta(delta: number): LossLevel {
-  const d = Math.abs(delta);
-  if (d < 2) return 'None';
-  if (d < 12) return 'Light';
-  if (d < 25) return 'Moderate';
-  if (d < 45) return 'Heavy';
-  return 'Destroyed';
-}
-
 /**
  * How well the attacker actually knows what it is attacking. Passive spotting
  * means you can nearly always SEE the enemy you are next to; the ladder is
  * what decides whether you are attacking a known formation or a shape in the
- * treeline. Recon is what buys the top rung.
+ * treeline.
+ *
+ * Phase 6: this NO LONGER changes the attack's power. Attacking a target you
+ * have merely identified used to cost 40% of your combat power, which is not
+ * how anything works — if you can see well enough to engage, you fight just as
+ * well. The rung now decides only how PREDICTABLE the engagement is: see
+ * combat.ts `predictEngagement`. Recon buys certainty, not firepower.
  */
 function intelLevel(state: GameState, attacker: PlayerId, target: Formation): DetectionLevel {
   const c = state.players[attacker].contacts[target.id];
   return c ? c.level : 'UNKNOWN';
 }
 
-function hasSupportingUnits(state: GameState, f: Formation): { infantry: boolean; armour: boolean; recon: boolean } {
-  const near = Object.values(state.formations).filter(
-    (o) => o.owner === f.owner && o.id !== f.id && distance(o.x, o.y, f.x, f.y) <= 1
-  );
-  return {
-    infantry: near.some((o) => o.type === 'INFANTRY'),
-    armour: near.some((o) => o.type === 'ARMOUR'),
-    recon: near.some((o) => o.type === 'RECON'),
-  };
-}
-
-export function computePower(
-  state: GameState,
-  f: Formation,
-  role: 'attack' | 'defense',
-  tile: Tile,
-  factors: BattleFactor[],
-  opts: { intel?: DetectionLevel; artillerySupport?: boolean; airSupport?: boolean } = {}
-): number {
-  const def = FORMATION_DEFS[f.type];
-  const base = role === 'attack' ? def.baseAttack : def.baseDefense;
-  let power = base * (f.strength / 100);
-  factors.push({ label: `${def.label} base ${role}`, positive: true, magnitude: base });
-
-  const mm = moraleMult(f.morale);
-  power *= mm;
-  if (mm !== 1) factors.push({ label: `Morale (${f.morale})`, positive: mm > 1, magnitude: Math.abs((mm - 1) * 100) });
-
-  const readinessMult = 0.5 + (f.readiness / 100) * 0.5;
-  power *= readinessMult;
-  if (f.readiness < 70) factors.push({ label: `Low readiness (${Math.round(f.readiness)}%)`, positive: false, magnitude: (1 - readinessMult) * 100 });
-
-  const supplyMult = f.supply < 30 ? 0.6 : f.supply < 60 ? 0.85 : 1;
-  power *= supplyMult;
-  if (supplyMult < 1) factors.push({ label: `Supply shortage (${Math.round(f.supply)}%)`, positive: false, magnitude: (1 - supplyMult) * 100 });
-
-  if (def.maxAmmo !== null) {
-    const ammoMult = f.ammo < 20 ? 0.5 : f.ammo < 50 ? 0.8 : 1;
-    power *= ammoMult;
-    if (ammoMult < 1) factors.push({ label: `Ammo shortage (${Math.round(f.ammo)}%)`, positive: false, magnitude: (1 - ammoMult) * 100 });
-  }
-
-  if (role === 'defense') {
-    const terrainDef = TERRAIN_DEFS[tile.terrain];
-    if (terrainDef.defenseBonus !== 0) {
-      power *= 1 + terrainDef.defenseBonus;
-      factors.push({ label: `${terrainDef.label} terrain`, positive: terrainDef.defenseBonus > 0, magnitude: Math.abs(terrainDef.defenseBonus) * 100 });
-    }
-    if (f.fortified) {
-      power *= 1.3;
-      factors.push({ label: 'Fortified position', positive: true, magnitude: 30 });
-    }
-  }
-
-  if (role === 'attack' && opts.intel) {
-    // Attacking what you have merely *detected* is materially worse than
-    // attacking a formation you have identified, or confirmed with recon.
-    if (opts.intel === 'CONTACT' || opts.intel === 'UNKNOWN') {
-      power *= 0.6;
-      factors.push({ label: 'Target unidentified — contact only', positive: false, magnitude: 40 });
-    } else if (opts.intel === 'IDENTIFIED') {
-      power *= 0.88;
-      factors.push({ label: 'Target identified but not confirmed', positive: false, magnitude: 12 });
-    } else {
-      factors.push({ label: 'Target confirmed by reconnaissance', positive: true, magnitude: 0 });
-    }
-  }
-
-  const support = hasSupportingUnits(state, f);
-  if (f.type !== 'RECON' && ((support.infantry && support.armour) || (support.recon && (support.infantry || support.armour)))) {
-    power *= 1.15;
-    factors.push({ label: 'Combined-arms support', positive: true, magnitude: 15 });
-  }
-
-  if (opts.artillerySupport) {
-    power *= 1.2;
-    factors.push({ label: 'Artillery support fire', positive: true, magnitude: 20 });
-  }
-  if (opts.airSupport) {
-    power *= 1.25;
-    factors.push({ label: 'Air support strike', positive: true, magnitude: 25 });
-  }
-
-  return Math.max(0.1, power);
+/**
+ * The odds preview the UI draws when Attack is armed and a target is hovered.
+ * Exported so the client, the bot and the engine all read the same numbers —
+ * this function IS the promise the pre-attack preview makes, and `attackAction`
+ * below resolves the very same chain with a live roll.
+ */
+export function previewAttack(state: GameState, attackerId: string, targetId: string) {
+  const attacker = state.formations[attackerId];
+  const target = state.formations[targetId];
+  if (!attacker || !target) return null;
+  const def = FORMATION_DEFS[attacker.type];
+  const d = distance(attacker.x, attacker.y, target.x, target.y);
+  if (d < 1 || d > def.attackRange) return null;
+  const closeAssault = d === 1 && !def.isNaval;
+  // On the client this reads the fog-filtered state, so `intel` is derived from
+  // the viewer's own contact table; on the server it is the true one.
+  const known = intelLevel(state, attacker.owner, target);
+  // On the client the enemy's own contact table is blanked by fog.ts, so fall
+  // back to the redaction flag the wire object carries.
+  const intel: DetectionLevel = known !== 'UNKNOWN' ? known : target.redacted ? 'IDENTIFIED' : 'CONFIRMED';
+  return predictEngagement(state, attacker, target, closeAssault, intel);
 }
 
 export function attackAction(state: GameState, attackerId: string, targetId: string): GameState {
@@ -648,60 +553,58 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   // Only a close assault (range-1 engagement) can take ground; standoff fire
   // from a ship or a gun battalion damages but does not occupy.
   const closeAssault = d === 1 && !attackerDef.isNaval;
+  // Ships and guns shoot with ammunition; everyone else fights with what they
+  // carry. No depot, no radius — just a round spent and a round regained.
+  if (!hasAmmo(attacker)) {
+    log(state, `${attacker.name} has no ready rounds — hold fire for a round to replenish.`);
+    return state;
+  }
 
   spendAP(state, 'ATTACK');
 
-  const attackerFactors: BattleFactor[] = [];
-  const defenderFactors: BattleFactor[] = [];
-  const intel = intelLevel(state, attacker.owner, target);
   const attackerTile = state.tiles[attacker.y][attacker.x];
   const defenderTile = state.tiles[target.y][target.x];
 
-  const attackerPower = computePower(state, attacker, 'attack', attackerTile, attackerFactors, { intel });
-  const defenderPower = computePower(state, target, 'defense', defenderTile, defenderFactors);
-
-  const roll = Math.round((Math.random() * 2 - 1) * 15); // -15..+15
-  const rollMult = 1 + roll / 100;
-  const finalAttacker = attackerPower * rollMult;
+  // ---- The formula (combat.ts). Both sides' full multiplicative chains, then
+  // one bounded roll, then losses proportional to the opponent's share.
+  const atk = attackPower(state, attacker, target, defenderTile, closeAssault);
+  const dfn = defencePower(state, target, defenderTile);
+  const roll = Math.round((Math.random() * 2 - 1) * COMBAT_ROLL_PCT);
+  const finalAttacker = atk.power * (1 + roll / 100);
+  const share = finalAttacker / (finalAttacker + dfn.power);
+  const res = lossesFromShare(share, closeAssault);
 
   const factors: BattleFactor[] = [
-    ...attackerFactors.map((f) => ({ ...f, side: 'attacker' as const })),
-    ...defenderFactors.map((f) => ({ ...f, side: 'defender' as const })),
-    { label: `Combat roll ${roll >= 0 ? '+' : ''}${roll}%`, positive: roll >= 0, magnitude: Math.abs(roll), side: 'attacker' as const },
+    ...atk.factors.map((f) => ({ ...f, side: 'attacker' as const })),
+    ...dfn.factors.map((f) => ({ ...f, side: 'defender' as const })),
   ];
-
-  const ratio = finalAttacker / (defenderPower + finalAttacker);
-  // ratio near 1 = attacker dominates, near 0 = defender dominates.
-  let outcome: BattleReport['outcome'];
-  let attackerDelta = 0;
-  let defenderDelta = 0;
-  let captured = false;
-
-  if (ratio > 0.65 && closeAssault) {
-    outcome = 'Position Captured';
-    defenderDelta = -(20 + (ratio - 0.65) * 80);
-    attackerDelta = -(5 + (1 - ratio) * 20);
-    captured = true;
-  } else if (ratio > 0.5) {
-    outcome = 'Defender Repelled';
-    defenderDelta = -(10 + (ratio - 0.5) * 60);
-    attackerDelta = -(8 + (1 - ratio) * 15);
-  } else if (ratio > 0.35) {
-    outcome = 'Mutual Attrition';
-    defenderDelta = -(8 + ratio * 10);
-    attackerDelta = -(12 + (0.5 - ratio) * 30);
-  } else {
-    outcome = 'Attack Repulsed';
-    attackerDelta = -(20 + (0.35 - ratio) * 60);
-    defenderDelta = -(4 + ratio * 10);
+  if (!closeAssault) {
+    factors.push({
+      label: 'Standoff fire — no return engagement, ground not taken',
+      positive: true,
+      magnitude: (1 - STANDOFF_RETURN_FIRE) * 100,
+      side: 'attacker',
+    });
   }
+  factors.push({
+    label: `Combat roll ${roll >= 0 ? '+' : ''}${roll}%`,
+    positive: roll >= 0,
+    magnitude: Math.abs(roll),
+    side: 'attacker',
+  });
 
-  attackerDelta = Math.max(-60, attackerDelta);
-  defenderDelta = Math.max(-60, defenderDelta);
+  const outcome = res.outcome;
+  const attackerDelta = res.attacker;
+  const defenderDelta = res.defender;
+  const captured = res.captured;
 
   attacker.strength = Math.max(0, Math.min(100, attacker.strength + attackerDelta));
   target.strength = Math.max(0, Math.min(100, target.strength + defenderDelta));
-  if (FORMATION_DEFS[attacker.type].maxAmmo !== null) attacker.ammo = Math.max(0, attacker.ammo - 15);
+  spendRound(state, attacker);
+  // A fight costs readiness — that is what readiness now measures, with supply
+  // gone: how fit this formation is to do it again right away.
+  attacker.readiness = Math.max(25, attacker.readiness - (closeAssault ? 10 : 5));
+  target.readiness = Math.max(25, target.readiness - 8);
 
   const attackerLoss = lossFromDelta(attackerDelta);
   const defenderLoss = lossFromDelta(defenderDelta);
@@ -726,9 +629,6 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
     if (captured || destroyedTarget) {
       if (destroyedTarget) mourn(state, target);
       delete state.formations[target.id];
-      if (captured && !destroyedTarget) {
-        // survives but retreats off the tile — simplified as removal from board for prototype clarity
-      }
       if (closeAssault) {
         attacker.x = target.x;
         attacker.y = target.y;
@@ -752,14 +652,16 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
     defenderName: target.name ?? 'Unknown',
     outcome,
     attackerPower: finalAttacker,
-    defenderPower,
+    defenderPower: dfn.power,
     roll,
+    share,
     factors,
     attackerLoss,
     defenderLoss,
     attackerStrengthDelta: attackerDelta,
     defenderStrengthDelta: defenderDelta,
     captured,
+    closeAssault,
     attackerX: attackerTile.x,
     attackerY: attackerTile.y,
     defenderX: defenderTile.x,
@@ -779,8 +681,8 @@ export function artilleryAction(state: GameState, formationId: string, x: number
   const f = state.formations[formationId];
   if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn || f.type !== 'ARTILLERY') return state;
   if (!canAfford(state, 'ARTILLERY')) return state;
-  if (f.ammo < 10) {
-    log(state, `${f.name} lacks ammunition for a fire mission.`);
+  if (!hasAmmo(f)) {
+    log(state, `${f.name} has no ready rounds — hold fire for a round to replenish.`);
     return state;
   }
   const d = distance(f.x, f.y, x, y);
@@ -788,15 +690,23 @@ export function artilleryAction(state: GameState, formationId: string, x: number
   const target = formationAt(state, x, y);
   if (!target || target.owner === f.owner) return state;
   spendAP(state, 'ARTILLERY');
-  f.ammo = Math.max(0, f.ammo - 25);
+  spendRound(state, f);
   f.hasActedThisTurn = true;
-  f.lastOrder = `Fire mission on grid ${gridRef(x, y)}`;
+  f.lastOrder = `Fire mission on grid ${gridRef(x, y)} — ${f.ammo}/${maxAmmo(f)} rounds left`;
 
-  const factors: BattleFactor[] = [];
-  const power = computePower(state, f, 'attack', state.tiles[f.y][f.x], factors) * 0.5;
-  const delta = -Math.min(35, 10 + power);
+  // A fire mission is the same standoff engagement the ATTACK path resolves,
+  // just reached by a different order, so it uses the same chain and the same
+  // preview numbers.
+  const defenderTile = state.tiles[target.y][target.x];
+  const atk = attackPower(state, f, target, defenderTile, false);
+  const dfn = defencePower(state, target, defenderTile);
+  const roll = Math.round((Math.random() * 2 - 1) * COMBAT_ROLL_PCT);
+  const share = (atk.power * (1 + roll / 100)) / (atk.power * (1 + roll / 100) + dfn.power);
+  const res = lossesFromShare(share, false);
+  const delta = res.defender;
   target.strength = Math.max(0, target.strength + delta);
   target.lastEngagedRound = state.round;
+  target.readiness = Math.max(25, target.readiness - 6);
   // Indirect fire is harassing: it carries half the morale weight of a
   // stand-up assault, and a light stonk carries none at all.
   applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'under artillery fire');
@@ -864,7 +774,7 @@ export function specialOpAction(state: GameState, formationId: string, x: number
 }
 
 // ---------------------------------------------------------------------------
-// Objectives, supply tick, turn management
+// Objectives, condition tick, turn management
 // ---------------------------------------------------------------------------
 
 /**
@@ -925,23 +835,24 @@ function tickObjectives(state: GameState, scoringSide: PlayerId) {
   });
 }
 
-function tickSupply(state: GameState, owner: PlayerId) {
+/**
+ * End-of-round condition tick (phase 6 — this replaced the supply tick).
+ *
+ * READINESS is now purely a formation's own state: it falls when it fights and
+ * climbs back when it does not. There is no geography in it and nothing to
+ * manage — a formation that has been in contact is less fit to attack again
+ * next round, and that is the whole rule.
+ *
+ * AMMUNITION regenerates for the guns and the ships that held their fire. Both
+ * numbers are on the unit card.
+ */
+function tickCondition(state: GameState, owner: PlayerId) {
   Object.values(state.formations).forEach((f) => {
     if (f.owner !== owner) return;
-    if (FORMATION_DEFS[f.type].isNaval) {
-      // Warships carry their own stores — no shore logistics to babysit.
-      f.supply = Math.min(100, f.supply + 10);
-      f.readiness = Math.min(100, f.readiness + 8);
-      return;
-    }
-    if (isInSupplyRange(state, f)) {
-      f.supply = Math.min(100, f.supply + 15);
-      f.readiness = Math.min(100, f.readiness + 10);
-    } else {
-      f.supply = Math.max(0, f.supply - 12);
-      f.readiness = Math.max(20, f.readiness - 8);
-      // Morale is NOT touched here — supply pressure feeds the morale tick as a
-      // named, gradual shock instead of a per-turn band demotion.
+    const engaged = f.lastEngagedRound === state.round;
+    f.readiness = engaged ? Math.max(25, f.readiness - 4) : Math.min(100, f.readiness + 12);
+    if (usesAmmo(f) && f.lastFiredRound !== state.round) {
+      f.ammo = Math.min(maxAmmo(f), f.ammo + AMMO_REGEN_PER_ROUND);
     }
   });
 }
@@ -975,7 +886,7 @@ function checkVictory(state: GameState, roundComplete: boolean) {
 export function endTurn(state: GameState): GameState {
   const finishing = state.activePlayer;
   tickObjectives(state, otherPlayer(finishing));
-  tickSupply(state, finishing);
+  tickCondition(state, finishing);
   tickMorale(state, finishing);
   const roundComplete = finishing === otherPlayer(state.initiative);
   if (roundComplete) state.round += 1;

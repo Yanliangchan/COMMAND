@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { computeReachable, distance, formationAt, supplySources, SUPPLY_RADIUS } from '../game/engine';
+import { computeReachable, distance, formationAt } from '../game/engine';
 import { FORMATION_DEFS } from '../game/data';
 import { Formation, GameState, GRID_SIZE, PlayerId } from '../game/types';
 import { Camera, ContactPing, MapLabel, Overlays, render, screenToTile } from '../render/renderMap';
@@ -26,23 +26,6 @@ interface Props {
   pings?: ContactPing[];
   /** Reports the smoothed frame time of the render loop, for the perf readout. */
   onFrameTime?: (ms: number) => void;
-}
-
-/** Mirrors engine.isInSupplyRange so the overlay shows exactly what the rules use. */
-function computeSupplySet(state: GameState, viewer: PlayerId): Set<string> {
-  const set = new Set<string>();
-  const sources = supplySources(state, viewer);
-  for (let y = 0; y < GRID_SIZE; y++) {
-    for (let x = 0; x < GRID_SIZE; x++) {
-      for (const src of sources) {
-        if (distance(x, y, src.x, src.y) <= SUPPLY_RADIUS) {
-          set.add(`${x},${y}`);
-          break;
-        }
-      }
-    }
-  }
-  return set;
 }
 
 /**
@@ -114,12 +97,7 @@ export const MapCanvas: React.FC<Props> = ({
     return set;
   }, [state.formations, selected?.id, selected?.x, selected?.y]);
 
-  const supplySet = useMemo(
-    () => (overlays.supply ? computeSupplySet(state, viewer) : new Set<string>()),
-    [overlays.supply, state.formations, state.objectives, viewer]
-  );
-
-  propsRef.current = { state, viewer, selected, reachable, attackable, overlays, supplySet, labels, flashTiles, size, camera, groupIds, pathPreview, pathInvalid, pings };
+  propsRef.current = { state, viewer, selected, reachable, attackable, overlays, labels, flashTiles, size, camera, groupIds, pathPreview, pathInvalid, pings };
 
   // ---- Animation / render loop -------------------------------------------
   useEffect(() => {
@@ -178,7 +156,6 @@ export const MapCanvas: React.FC<Props> = ({
         reachable: p.reachable,
         attackable: p.attackable,
         overlays: p.overlays,
-        supplySet: p.supplySet,
         hoverTile: hoverRef.current,
         labels: p.labels,
         flashTiles: p.flashTiles,

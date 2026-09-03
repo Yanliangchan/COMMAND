@@ -56,7 +56,7 @@ function occupantAt(state: GameState, x: number, y: number): Formation | undefin
 // Range
 // ---------------------------------------------------------------------------
 
-/** A readiness/supply modifier applied to a formation's range, with its label. */
+/** A readiness modifier applied to a formation's range, with its label. */
 export interface RangeModifier {
   label: string;
   multiplier: number;
@@ -65,7 +65,7 @@ export interface RangeModifier {
 export interface MovementProfile {
   /** Published base range in tiles for ONE movement action. */
   baseRange: number;
-  /** Range after readiness / supply modifiers, in tiles (1 dp). */
+  /** Range after readiness modifiers, in tiles (1 dp). */
   effectiveRange: number;
   /** Tiles the same action would cover following a road the whole way. */
   roadRange: number;
@@ -82,14 +82,13 @@ export interface MovementProfile {
 }
 
 /**
- * Readiness and supply still modulate range, but only in two coarse, published
- * steps that are named on the unit card — never a smooth hidden fudge. The
- * same unit on the same ground always gets the same number.
+ * Readiness still modulates range, but only in one coarse, published step that
+ * is named on the unit card — never a smooth hidden fudge. The same unit on the
+ * same ground always gets the same number. (Supply was removed in phase 6.)
  */
 function rangeModifiers(f: Formation): RangeModifier[] {
   const mods: RangeModifier[] = [];
   if (f.readiness < 50) mods.push({ label: `Low readiness (${Math.round(f.readiness)}%)`, multiplier: 0.75 });
-  if (f.supply < 30) mods.push({ label: `Low supply (${Math.round(f.supply)}%)`, multiplier: 0.75 });
   return mods;
 }
 

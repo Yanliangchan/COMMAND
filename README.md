@@ -147,7 +147,7 @@ movement, and fog-of-war in the whole codebase.
     F-42" is the whole of what is sent.
   - **Identified** — a *redacted* formation object: id, owner, arm, position,
     a generic title ("Enemy Infantry"), and `-1` in every numeric field. The
-    true designation, strength, morale, supply, ammo, readiness, dug-in state,
+    true designation, strength, morale, ammunition, readiness, dug-in state,
     equipment and last order never leave the server.
   - **Confirmed** — the real formation object, untouched.
 
@@ -220,7 +220,7 @@ screen — lobby included — with:
    network that actually flows downhill to the sea with confluences, large
    continuous forest stands, five settlements grown around water and road
    junctions, industrial ground on coastal fringes, two airfields, two ports,
-   two supply depots, an A*-routed road network with bridges at the river
+   two depot objectives, an A*-routed road network with bridges at the river
    crossings, and ~22 capture objectives spread across the map (urban
    districts, ports, airfields, bridges, hills, depots and three open-sea
    anchorages). Generated **once, server-side**, when a room is created, and
@@ -231,11 +231,11 @@ screen — lobby included — with:
    Commandos for Sabre, Guards for Vanguard — Armour, Artillery, Combat
    Engineers, C4I/ISR, and two RSN squadrons: one surface-combatant, one
    littoral),
-   each with strength/morale/readiness/supply/ammo stats that all affect
-   combat power or movement, and each with a **per-round movement-action
+   each with strength/morale/readiness stats that all affect combat power or
+   movement (plus an ammunition count on the guns and the ships), and each with a **per-round movement-action
    allowance** (see "Movement actions and the AP economy").
 4. 26 AP/turn (rollover, capped at 34), with the documented per-action AP
-   costs. Move, Attack, Recon, Fortify, Resupply, Artillery fire mission,
+   costs. Move, Attack, Recon, Fortify, Artillery fire mission,
    Air strike call-in, Engineer bridge/clear and Commando special ops are
    implemented, validated and applied server-side.
 5. Click a formation → see its movement range (Dijkstra over terrain cost;
@@ -243,13 +243,17 @@ screen — lobby included — with:
    land units unless bridged, ships are confined to the validated navigable
    water body). Click a reachable tile to send a `MOVE` action for 1 AP —
    and do it again, up to that formation's movement allowance for the round.
-6. Click "Attack", then an adjacent (or in-range, for artillery) enemy to
-   send an `ATTACK` action: terrain defense bonus, morale/readiness/supply/
-   ammo multipliers, recon-revealed vs. unrevealed penalty, combined-arms
-   bonus, artillery/air support bonus, and a bounded ±15% random roll —
-   all resolved on the server. Produces a full battle report modal on
-   **both** clients: outcome, a bulleted +/- factor list, and
-   Light/Moderate/Heavy/Destroyed loss levels for both sides.
+6. Click "Attack", then hover an in-range enemy: the **pre-attack odds
+   preview** (phase 6) shows the predicted outcome, the strength both sides
+   expect to lose, your share of the combat power and every factor for and
+   against, before a single AP is spent. Click to send the `ATTACK` action.
+   The engagement resolves on the server through the same pure module
+   (`src/game/combat.ts`) the preview called — base attack/defence × strength
+   × readiness × morale × the arm-vs-arm matchup × terrain × fortification ×
+   combined-arms support, one bounded ±12% roll, losses split in proportion to
+   each side's share of the combat power. Produces a battle report on **both**
+   clients that reads as the preview resolved: same share bar, same factor
+   list, same numbers with the roll filled in.
 7. Fog of war, enforced server-side (see above). Spotting is **passive and
    continuous**: every formation watches its surroundings for free, and an
    enemy inside its detection range with line of sight is detected without any
@@ -274,13 +278,15 @@ screen — lobby included — with:
    payout (see "Side balance"). Victory is only adjudicated at a round
    boundary. First to 280 VP (or the higher score after 24 rounds) wins, with
    an end-game screen driven by server-pushed `phase: 'GAME_OVER'`.
-9. Supply is a **positional modifier, not a logistics mini-game**: a formation
-   is in supply within 14 tiles of one of its side's supply sources — its
-   depots, or any Port / Airfield / Supply Depot objective it currently holds.
-   Outside that it loses supply/readiness each turn and fights and moves
-   worse. Warships carry their own stores. A Supply overlay toggle highlights
-   supplied vs. isolated ground; the Resupply action restores a formation.
-   There are no supply convoys, transports or routes to shepherd.
+9. **There is no supply system** (removed in phase 6 — see "Combat model").
+   Depots, ports and airfields are objectives worth VP and nothing more; no
+   radius, no isolation penalty, no Resupply order. The one job supply did
+   that was worth keeping — stopping the guns and the ships firing every turn
+   forever — is done by a visible **ammunition count** on artillery and naval
+   formations only: 4 / 4 / 3 ready rounds, one spent per fire mission, one
+   regained at the end of any round the formation held its fire. Readiness
+   survives supply's removal and now measures only a formation's own state:
+   it falls when it fights and recovers when it does not.
 10. Real two-client multiplayer via room code or Quick Match (see
     "Multiplayer design" above) — no pass-and-play, no shared browser tab.
 
@@ -413,8 +419,8 @@ comparably strong**, and neither is a strict upgrade of the other:
 - **Fictional, game-balance data:** every number that affects gameplay —
   base attack/defense, movement range, movement-action allowance,
   attack range, sight/recon radius, AP costs, VP thresholds, morale
-  multipliers, terrain cost/defense bonuses, supply radius, combat roll
-  bounds — is an invented design choice for a playable prototype, not real
+  multipliers, terrain cost/defense bonuses, the arm-vs-arm matchup table,
+  ammunition counts, combat roll bounds — is an invented design choice for a playable prototype, not real
   SAF data. These live in `src/game/data.ts`, `src/game/types.ts`
   (`AP_COSTS`, `AP_PER_TURN`, `MOBILITY`, `MORALE_BASELINE`, `VP_WIN_THRESHOLD`, …) and
   `src/game/engine.ts`.
@@ -429,7 +435,7 @@ replaced by a **two-budget** model:
 
 - **A global AP pool** — 26 AP per turn, rolling over up to a 34 AP cap. Every
   action still costs AP exactly as before (Move 1, Attack 2, Recon 1, Fortify
-  1, Resupply 1, Artillery 2, Engineer bridge 2 / clear 1, Special Op 3, Air
+  1, Artillery 2, Engineer bridge 2 / clear 1, Special Op 3, Air
   strike 3).
 - **A per-unit, per-round movement-action allowance** (`MOBILITY` in
   `src/game/types.ts`), surfaced on every `Formation` as `movesUsed` /
@@ -477,8 +483,8 @@ element is stranded more than 8 tiles from any manoeuvre element:
 | Support stranded > 8 tiles, MEDIUM bot | 36.6% | **6.6%** |
 | Support stranded > 8 tiles, HARD bot | 37.6% | **4.9%** |
 
-Readiness and supply still modulate range, but in two coarse, **named** steps
-(×0.75 for readiness < 50%, ×0.75 for supply < 30%) that are printed on the
+Readiness still modulates range, but in one coarse, **named** step
+(×0.75 for readiness < 50%) that is printed on the
 unit card — never a smooth hidden fudge. The same unit on the same ground
 always gets the same number.
 
@@ -545,10 +551,12 @@ still multiply combat power exactly as before.
 - **Shocks** (`MORALE_SHOCKS`) are the only other thing that moves it: a major
   attack repulsed (−5), being driven off a position (−8), losing an objective
   your side held (−6 to units near it), a friendly battalion destroyed nearby
-  (−7), being surrounded (−4/round), isolated (−3/round), supply critical
-  (−5/round) or low (−2/round). Upward: taking a position by assault (+6),
-  capturing an objective (+8), resupplying and reorganising (+3).
-- **Recovery** is gradual and conditional: +3 base, +3 in supply, +2 holding
+  (−7), being surrounded (−4/round), isolated (−3/round). Upward: taking a
+  position by assault (+6), capturing an objective (+8). *(Phase 6 removed the
+  two supply shocks and the resupply lift with the supply system; nothing
+  replaced them, and morale got strictly more stable as a result — see
+  "Combat model".)*
+- **Recovery** is gradual and conditional: +6 base, +2 holding
   position (did not move, or dug in), +2 with a friendly formation inside the
   cohesion radius — halved if the formation is on its own, and zero in the
   round it fought. Recovery only ever pulls **toward** the baseline.
@@ -573,7 +581,7 @@ Measured over 12 bot-vs-bot games per configuration (HARD, same seeds):
 It has not lost its teeth: three consecutive heavy maulings (−40 strength each)
 plus being driven off its position still walks an infantry battalion
 72 → 59.5 → 47 → 34.5 → 26.5, i.e. Steady → Stressed → Shaken → **Broken**; six
-quiet rounds in supply beside friendly forces bring it back to 72. Five light
+quiet rounds beside friendly forces bring it back to 72. Five light
 contacts (−12 strength each) move it **not at all**.
 
 ## Detection model (phase 4b)
@@ -734,16 +742,251 @@ each other.
   and they contest the three open-sea **Anchorage** objectives, which only
   warships can hold.
 - **Logistics units are gone.** The `LOGISTICS` formation type was removed
-  along with supply-convoy positioning. Supply and readiness survive as
-  combat/movement **modifiers** and the Resupply action remains, but supply
-  range is now purely positional (14 tiles from a depot or a held
-  Port/Airfield/Depot objective). Warships resupply themselves.
+  along with supply-convoy positioning, and phase 6 removed the remaining
+  positional supply modifier as well. Readiness survives as a combat/movement
+  modifier; ammunition survives on the guns and the ships only.
 - The bot (`server/bot.ts`) was updated in step: it no longer reasons about
   removed systems, sails its warships toward maritime objectives and coastal
   targets, uses per-type attack ranges, and — at Medium and Hard — spends its
   formations' **full movement allowance** (Easy deliberately uses only one
   bound per unit per round). It also relaxes its "is this worth doing"
   threshold as unspent AP piles up, so it stops ending turns on a full wallet.
+
+## Combat model, supply removal and the odds preview (phase 6)
+
+Four pieces of player feedback drove this pass, and they interact: supply was
+frustrating, naval units felt toothless, the "recon before you attack or take a
+penalty" rule was unintuitive, and the damage model was not something a player
+could reason about. The result is one new pure module — `src/game/combat.ts` —
+that the engine, the client preview and the bot all share.
+
+### Supply is gone
+
+Supply was gated on proximity to a depot, which meant the interesting decision
+("where do I push?") was taxed by an uninteresting one ("am I still inside a
+14-tile circle?"). Removed entirely: the `supply` stat, `SUPPLY_RADIUS`,
+`supplySources` / `isInSupplyRange`, the supply combat and movement penalties,
+the two supply morale shocks, the `RESUPPLY` order and its `S` shortcut, and the
+Supply map overlay. **Depots, ports and airfields remain as objectives worth
+VP** — they simply no longer project anything.
+
+Two things survive, deliberately:
+
+- **Readiness**, because it describes a formation's own state rather than
+  logistics geography. It now falls when a formation fights (−10 in a close
+  assault, −5 firing from standoff, −8 as the defender of an assault, −6 under
+  a fire mission, and −4/round while in contact) and recovers +12 a round when
+  it is not, floored at 25%. It still multiplies combat
+  power and still gates movement range below 50%.
+- **Ammunition**, rebuilt. The one genuinely useful thing supply did was stop
+  the guns and the ships firing every single turn forever. That is now a plain
+  count of ready rounds on **artillery and naval formations only** — 4 for a
+  gun battalion, 4 for a frigate, 3 for a littoral squadron — drawn as pips on
+  the unit card. A fire mission spends one; any round a formation does not fire
+  returns one. No depot, no radius, no order. Every other formation has
+  `maxAmmo: null` and shows no ammunition line at all.
+
+Morale got **more** stable, not less, because the supply shocks were the main
+thing dragging it down (see the measurements below).
+
+### Naval standoff reach
+
+Warships are standoff assets and now feel like it. Frigate attack range
+**4 → 9 tiles**; littoral squadron **3 → 6**. A frigate therefore out-ranges a
+land artillery battalion (7) and a corvette comes just short of one, so a
+warship can work a coastline from water nothing ashore can answer. The existing
+constraint is untouched: **a standoff engagement damages but never occupies
+ground** — only a close assault takes a tile.
+
+Measured over 480 bot-vs-bot games, this is a real capability and not a
+dominant one: naval fire is 34–40% of all engagements, deals ~13% strength per
+mission at ~1.4% cost to itself, and cannot capture anything. Coastal
+objectives still change hands — 25–32% of all engagements were "Position
+Captured", all of them by ground formations.
+
+### The identification damage penalty is gone
+
+Attacking a Contact-rung enemy used to cost 40% of your combat power and an
+Identified one 12%. That is exactly backwards: if a formation can see a target
+well enough to engage it, it does not fight worse for bureaucratic reasons.
+**Removed.** `scripts/combatcheck.ts` asserts that attack power is bit-identical
+at every rung.
+
+What recon buys instead is **certainty**. Identification quality now sets the
+width of the pre-attack prediction:
+
+| Rung | What the preview does |
+| --- | --- |
+| Confirmed | Predicts from the target's true strength, morale and dug-in state. The band is just the ±12% combat roll — measured 1.6 percentage points wide on defender losses. |
+| Identified | The target's strength, morale and fortification are *not* established, so the panel predicts from a stated assumption (80% strength, Steady, not dug in), says so out loud, lists the assumptions, and widens the band by ±30% — measured 6.0 points wide, ~4× the confirmed reading. |
+| Contact | Not attackable at all: at that rung `fog.ts` sends no formation object, only a position. |
+
+The **resolution is identical either way** — the server always uses the true
+values. Recon buys the plan, not the punch. Help text, legend and tutorial were
+rewritten accordingly.
+
+### The formula
+
+Both sides build one effective power as a legible multiplicative chain. Every
+link is named, and every link appears in both the preview and the report.
+
+```
+ATTACK  = baseAttack
+        × strength/100
+        × readiness      (0.60 + readiness/100 × 0.40)
+        × morale         (Elite 1.25 … Broken 0.40)
+        × MATCHUP[attacking arm][defending arm][open | close ground]
+        × closeAssaultPenalty     (guns ×0.50, ships ×0.60, support ×0.75)
+        × combinedArms   (+7% per adjacent complementary arm, cap +21%)
+
+DEFENCE = baseDefense
+        × strength/100
+        × readiness
+        × morale
+        × terrain        (urban +35%, hills +30%, forest +25%, open −10%, beach −15%)
+        × defenceAffinity(infantry ×1.20 in close country, armour ×0.85, guns ×0.80 in the open)
+        × fortification  (×1.30 dug in)
+        × mutualSupport  (+5% per adjacent friendly, cap +15%)
+```
+
+One bounded roll of **±12%** is applied to the attacker, and then:
+
+```
+share = A' / (A' + D)
+
+defender loses  2 × 13% × share        × 1.15 if it is a close assault
+attacker loses  2 × 13% × (1 − share)  × 1.15 if it is a close assault
+```
+
+i.e. **losses are proportional to the opponent's share of the combat power.**
+An even fight costs both sides 14.9%; a 3:1 fight costs the loser three times
+what it costs the winner; there is no free attack. Standoff fire scales the
+attacker's own losses to 15% and the defender's to 80%, and cannot capture.
+Outcome bands: share ≥ 0.65 with a close assault captures the position, ≥ 0.55
+repels the defender, 0.45–0.55 is mutual attrition, below that the attack is
+repulsed.
+
+#### The matchup table
+
+Attacker arm (rows) × defender arm (columns), as `open / close` ground. This is
+where combined arms comes from — it *is* the maths, not a bonus bolted on.
+
+| | vs infantry | vs armour | vs guns | vs support | vs warships |
+| --- | --- | --- | --- | --- | --- |
+| **Infantry** | 1.00 / 0.90 | 0.85 / **1.30** | 1.40 / 1.30 | 1.35 / 1.25 | 0.50 |
+| **Armour** | **1.45** / 0.70 | 1.20 / 0.75 | 1.75 / 0.95 | 1.70 / 0.90 | 0.40 |
+| **Artillery** | **1.50** / 0.80 | 1.10 / **0.65** | 1.80 / 1.00 | 1.80 / 1.00 | 0.70 |
+| **Support** (engineers, C4I) | 0.60 / 0.50 | 0.50 / 0.60 | 0.80 / 0.70 | 0.80 / 0.70 | 0.40 |
+| **Naval** | 1.30 / 0.70 | 1.00 / 0.60 | 1.50 / 0.85 | 1.50 / 0.85 | 1.20 |
+
+Read out as power shares for a full-strength, Steady attacker against a
+full-strength, Steady defender:
+
+| Ground | Armour → infantry | Infantry → armour | Guns → infantry | Armour → dug-in infantry |
+| --- | --- | --- | --- | --- |
+| Grass | **67%** | 43% | 66% | 61% |
+| Hills | 61% | 36% | 60% | 55% |
+| Forest | 40% | **55%** | 41% | 34% |
+| Urban | 38% | 53% | 39% | **32%** |
+
+Lead with armour in the open, lead with infantry into the town, put the guns
+onto whatever is caught in the open — and the numbers say so before you commit.
+
+### Pre-attack odds preview
+
+Arm Attack (`A`) and hover a target. In the same slot the movement preview
+uses, a panel gives the likely outcome (and the outcome at the far end of the
+band), expected strength loss to **both** sides as a range, a bar showing your
+share of the combat power, and the factors for and against you, biggest first —
+plus, for an unconfirmed target, an explicit warning and the list of what it is
+being forced to assume. It calls `engine.previewAttack`, which is the very
+function the server resolves with; the battle report afterwards uses the same
+share bar and the same factor filter, so it reads as the prediction resolved.
+
+Verified end to end in Playwright: a previewed `Mutual Attrition (could be
+Attack Repulsed) | you 13–20% them 10–17%` resolved to `Attack Repulsed | you
+17.7% them 12.2%` — inside the band on both sides — and a previewed
+`Defender Repelled | you 2% them 13%` resolved to `you 1.6% them 12.3%`.
+
+### Measured outcomes
+
+480 bot-vs-bot games (120 per difficulty per seed block, two independent seed
+blocks) after the change:
+
+| | MEDIUM | HARD |
+| --- | --- | --- |
+| Engagements sampled | 3,163 | 3,883 |
+| Avg attacker strength lost | 7.0% | 8.8% |
+| Avg defender strength lost | 17.1% | 15.9% |
+| Position Captured | 30.8% | 25.8% |
+| Defender Repelled | 47.7% | 39.0% |
+| Mutual Attrition | 12.1% | 14.3% |
+| Attack Repulsed | 9.4% | 20.8% |
+| Close assault: attacker / defender loss | 10.7% / 19.3% | 12.6% / 17.3% |
+| Standoff: attacker / defender loss | 1.3% / 13.7% | 1.5% / 13.2% |
+
+Attacking is worth it when you pick the fight — the bots' attack thresholds are
+what produce the attacker-favourable average, and the HARD bot, which attacks
+on thinner margins, is repulsed twice as often. No arm dominates: armour wins
+77–88% of the attacks it chooses, infantry 59–76%, and engineers and the C4I
+battalion 12–17%, which is the table doing its job.
+
+Side balance, against phase 5's 47.3%:
+
+| Difficulty | Games | SABRE win rate |
+| --- | --- | --- |
+| MEDIUM | 240 | **52.5%** |
+| HARD | 240 | **52.1%** |
+
+Difficulty ordering is unchanged (40 games each, sides alternated): HARD beats
+EASY 78%, MEDIUM beats EASY 75%, HARD beats MEDIUM 57%.
+
+Morale stability, against the phase 4a numbers it must not regress from:
+
+| Metric | Phase 4a | Phase 6 |
+| --- | --- | --- |
+| Unit-rounds Shaken or Broken | 0.0% | **0.01–0.06%** |
+| Band changes per round | 2.2% | **0.26–0.37 per round** (≈0.3–0.4% of unit-rounds) |
+
+### Accessibility pass
+
+Friction removed rather than features added:
+
+- **The supply stat and the Supply overlay are gone** from the unit card and
+  the HUD; so is the "Nearby friendly" line (the "Supporting" row already
+  carried the cohesion story) and the dead `overlays.terrain` flag, which had a
+  field in the type and no effect in the renderer.
+- **Ammunition reads as pips and a count** (`3 / 4`) instead of a percentage
+  bar, and only appears on the formations that carry it.
+- **A formation is auto-selected** the moment it is your turn and nothing is
+  selected, so a new player lands on a screen that already shows a unit's
+  orders rather than an empty bar telling them to go and click one.
+- **A greyed-out order now explains itself.** It is styled unavailable but is
+  not an HTML-`disabled` button, because a disabled button swallows the click
+  and says nothing; clicking one flashes the exact reason from
+  `actions.ts`. Those reasons were re-audited after the rules change ("No ready
+  rounds left (0 / 4). Hold fire for a round and one comes back.").
+- **Fire Mission now has a real disabled reason** when there is nothing in
+  range, instead of silently arming a targeting mode with no legal target.
+- Tutorial, field manual and legend were rewritten for everything that changed;
+  the manual gained "Matchups", "The pre-attack preview" and "Ammunition"
+  topics, and the stale `S` Resupply key and the 24th/9th battalion names left
+  over from an earlier phase were removed.
+
+### Test suites added
+
+- `npm run wirecheck` — the wire-redaction assertion suite, recreated. It drives
+  real bot games and audits every push, field by field from an **explicit
+  contract**, at all four detection rungs (284,908 assertions over 6 games in
+  the default run). It fails closed: a field added to `Formation` and not
+  classified in the contract is reported rather than quietly shipped, which is
+  how the `supply` removal and the `ammo` / `lastFiredRound` additions were
+  checked.
+- `npm run combatcheck` — deterministic assertions on the combat model's
+  promises: the matchup inverts with the ground, terrain and fortification are
+  real, both sides bleed, attack power is identical at every detection rung, and
+  ammunition depletes and regenerates.
+- `npm run check` runs mapcheck, wirecheck and combatcheck together.
 
 ## Map generation
 
@@ -968,7 +1211,7 @@ A routine per-action broadcast is **7 KB** instead of ~440 KB.
 - **Movement:** flat 1 AP per Move action regardless of distance travelled
   within range, per the brief; the *range* itself is computed from
   unit-type move points, terrain cost, roads, elevation change, and a
-  readiness/supply penalty. The number of Move actions a formation may take
+  readiness penalty. The number of Move actions a formation may take
   in a round is capped separately (`MOBILITY`) — see "Movement actions
   and the AP economy".
 - **Combat resolution on capture:** a "Position Captured" outcome removes
@@ -1010,8 +1253,11 @@ shortcut, AP cost, target mode, beginner blurb, and a per-formation
 `enabled` / `reason` verdict. Selecting a formation immediately shows every
 order it could take as a button with the shortcut on its face; orders it
 cannot take right now are visibly disabled and say why on hover ("No visible
-enemy within attack range (1 tiles)", "Out of supply range — move closer to a
-depot or a held port/airfield", "Not enough AP — needs 3, you have 2").
+enemy within attack range (1 tiles)", "No ready rounds left (0 / 4). Hold fire
+for a round and one comes back.", "Not enough AP — needs 3, you have 2"). Since
+phase 6 an unavailable order is *not* an HTML-disabled button: clicking it
+flashes that reason, because a disabled button swallows the click and tells a
+new player nothing.
 
 | Key | Order | | Key | Action |
 |-----|-------|-|-----|--------|
@@ -1019,7 +1265,7 @@ depot or a held port/airfield", "Not enough AP — needs 3, you have 2").
 | `A` | Attack | | `Tab` | Next formation with orders left |
 | `R` | Recon | | `Z` / `Space` | Centre the camera on the selected unit |
 | `F` | Fortify | | `Esc` | Cancel targeting / close panel / deselect |
-| `S` | Resupply | | `L` | Map legend |
+| | | | `L` | Map legend |
 | `G` | Fire mission (artillery) | | `?` or `H` | Field manual (help) |
 | `C` | Close air support | | `↑ ↓ ← →` | Pan |
 | `B` | Build bridge (engineer) | | `+` / `−` | Zoom |
@@ -1237,7 +1483,7 @@ away.
   6 → 5 (objectives 22 → ~20, so objective *density* is unchanged),
   named bridge crossings 4 → 3, and the minimum spacings for settlements,
   bridges, hills, airfields, depots and deployment rings scaled with the
-  board. Artillery range 8 → 7 tiles and supply radius 16 → 14 tiles keep
+  board. Artillery range 8 → 7 tiles keeps
   those reaches the same fraction of the battlefield they were tuned against.
   Deployment separation is derived from N, so it scaled on its own.
 - **Live app driven with Playwright/Chromium** against the combined server

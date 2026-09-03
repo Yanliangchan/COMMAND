@@ -25,7 +25,7 @@ const UNITS: Topic[] = [
   },
   {
     title: 'Artillery',
-    body: 'Guns that strike from many tiles away with a Fire Mission — but only at an enemy you have already spotted. Nearly helpless if the enemy reaches them.',
+    body: 'Guns that strike seven tiles away with a Fire Mission — but only at an enemy you have already spotted, and only while they have rounds left (four, one back per round they hold their fire). Devastating against anything caught in the open, nearly useless against a target under cover, and nearly helpless if the enemy reaches them.',
   },
   {
     title: 'Engineers',
@@ -33,7 +33,7 @@ const UNITS: Topic[] = [
   },
   {
     title: 'Recon',
-    body: 'The 24th C4I Battalion (and, on the other side, the 9th Recce & EW Battalion) is your sensor. It spots passively out to about 9 tiles where a rifle battalion manages 5 and a gun battalion 3, it identifies what it sees far faster, and it holds on to a contact for many rounds after everyone else has lost it. Its Recon order sweeps 14 tiles. It fights badly; its value is what it shows you.',
+    body: 'The C4I / ISR battalion (10 C4I Bn for Sabre, 11 C4I Bn for Vanguard) is your sensor. It spots passively out to about 9 tiles where a rifle battalion manages 5 and a gun battalion 3, it identifies what it sees far faster, and it holds on to a contact for many rounds after everyone else has lost it. Its Recon order sweeps 14 tiles. It fights badly; its value is what it shows you.',
   },
   {
     title: 'Air support',
@@ -41,7 +41,7 @@ const UNITS: Topic[] = [
   },
   {
     title: 'Naval units',
-    body: 'Frigates and littoral squadrons move on navigable water only. They shell coastal targets from a distance and are the only formations that can hold an Anchorage.',
+    body: 'Frigates and littoral squadrons move on navigable water only, and they are standoff assets: a frigate engages out to NINE tiles and a littoral squadron to six, against seven for a land gun battalion, so a warship works a coastline from water nothing ashore can answer. Naval fire damages but never occupies — only a close assault takes ground — and they carry four and three rounds respectively. They are also the only formations that can hold an Anchorage.',
   },
 ];
 
@@ -56,15 +56,27 @@ const CONCEPTS: Topic[] = [
   },
   {
     title: 'Terrain',
-    body: 'The ground decides fights. Urban, forest and hill tiles make a defender much harder to shift; open ground and beaches leave them exposed. Rivers stop land units until an engineer bridges them. Every tile on the sheet has a grid reference — column letter, row number, e.g. H-42 — and that is the reference used in the movement preview, the order log and the battle report.',
+    body: 'The ground decides fights, twice over: it multiplies the defender\u2019s resistance directly (urban +35%, hills +30%, forest +25%, open −10%, beach −15%) and it selects which column of the arm-vs-arm matchup table applies. Urban, forest and hill tiles make a defender much harder to shift; open ground and beaches leave them exposed. Rivers stop land units until an engineer bridges them. Every tile on the sheet has a grid reference — column letter, row number, e.g. H-42 — and that is the reference used in the movement preview, the order log and the battle report.',
   },
   {
-    title: 'Combat',
-    body: 'When you attack, both sides compute a strength from unit type, current strength, morale, readiness, supply, terrain, whether the defender is dug in, and whether friendly units are supporting nearby. The bigger number usually wins, with a small element of luck.',
+    title: 'Combat — how the numbers work',
+    body: 'Both sides build one effective power by multiplying a short, published chain, and nothing is hidden. ATTACK = base attack × strength × readiness × morale × the arm-vs-arm matchup for the ground the defender is standing in × combined-arms support from adjacent friendly arms (+7% each, up to +21%). DEFENCE = base defence × strength × readiness × morale × terrain × how well that arm holds that kind of ground × ×1.30 if dug in × mutual support from adjacent friendlies (+5% each, up to +15%). One bounded roll of ±12% is applied to the attacker, and then the split decides everything: your share of the total combat power is the fraction of the losses the ENEMY takes, and their share is the fraction YOU take. An even fight costs both sides about 13% strength; a 3:1 fight costs the loser three times what it costs the winner. Attacking always costs something. Every single one of those factors appears in the pre-attack preview and again in the battle report — if you can read the preview you can predict the report.',
+  },
+  {
+    title: 'Matchups — why combined arms works',
+    body: 'The arm-vs-arm table is where combined arms comes from; it is not a bonus bolted on the side. Armour in open country is devastating against infantry (×1.45) and bogs down in a town or a wood (×0.70). Infantry are the arm that digs armour out of built-up ground (×1.30) and are poor against it in the open (×0.85). Guns are murderous against anything exposed (×1.50 against infantry in the open, ×1.80 against unescorted guns and sensors) and nearly useless against a target under cover (×0.65–0.80) — and halve their power again if they are dragged into a close assault. Warships shell a coastline hard and cannot reach into a city. Engineers and the C4I battalion fight badly against everything. On defence, infantry hold close country ×1.20 better than the terrain bonus alone, armour ×0.85 worse. So: lead with armour in the open, lead with infantry into towns and forests, and put the guns onto whatever is caught in the open.',
+  },
+  {
+    title: 'The pre-attack preview',
+    body: 'Press A and hover a target. Before you spend anything, the panel shows the likely outcome, the expected strength loss to BOTH sides as a range, your share of the total combat power as a bar, and the factors for and against you, biggest first. Against a CONFIRMED formation the range is tight — it only has to cover the ±12% combat roll. Against one you have merely IDENTIFIED you do not know its strength, its morale, or whether it is dug in, so the panel says so out loud, lists what it is assuming, and the range opens right out. The battle report afterwards is the same information with the roll filled in.',
+  },
+  {
+    title: 'Ammunition',
+    body: 'Only artillery and the two naval squadrons carry ammunition: four ready fire missions for a gun battalion or a frigate, three for a littoral squadron, drawn as pips on the unit card. Firing spends one. Any round in which a formation does not fire, it gets one back. There is no depot, no radius and no resupply order — the only thing ammunition does is stop the guns and the ships firing every single turn forever.',
   },
   {
     title: 'Morale',
-    body: 'Morale is a long-term condition, not a running total. Every formation has a normal level it sits at and drifts back toward. Routine movement and small engagements do not shift it at all. What does: heavy casualties, a major attack repulsed, being driven off a position, losing an objective you held, losing a battalion nearby, being surrounded or isolated, or a serious supply failure. It recovers a few points each round when a formation is out of contact, in supply, holding its ground and near friendly forces — and taking an objective or resupplying lifts it. Elite has to be earned and cannot be farmed. The five bands — Elite, Steady, Stressed, Shaken, Broken — still multiply combat power, so a broken formation is a real liability.',
+    body: 'Morale is a long-term condition, not a running total. Every formation has a normal level it sits at and drifts back toward. Routine movement and small engagements do not shift it at all. What does: heavy casualties, a major attack repulsed, being driven off a position, losing an objective you held, losing a battalion nearby, or being surrounded or isolated. It recovers several points each round when a formation is out of contact, holding its ground and near friendly forces — and taking an objective lifts it. Elite has to be earned and cannot be farmed. The five bands — Elite, Steady, Stressed, Shaken, Broken — still multiply combat power, so a broken formation is a real liability.',
   },
   {
     title: 'AP (Action Points)',
@@ -100,11 +112,11 @@ const CONCEPTS: Topic[] = [
   },
   {
     title: 'Detection states',
-    body: 'What you know about an enemy is a four-rung ladder. UNKNOWN — nothing; the game does not even tell your client it exists. CONTACT — a hollow dashed "?" blip: something is at that grid, and that is all, e.g. "CONTACT · Unknown Enemy · Grid F-42 · Confidence 58%". IDENTIFIED — a dashed counter with the arm and a "?" badge: enemy infantry, say, but not which battalion and not how strong. CONFIRMED — a solid counter with a "✓" badge and the real designation. Confidence rises with closer, clearer and repeated observation (once per round), and with recon assets; it decays every round once you lose sight, sliding a Confirmed formation back down to a stale last-known-position marker. Attacking something you have only made Contact with costs you 40% of your combat power; Identified costs 12%; Confirmed costs nothing.',
+    body: 'What you know about an enemy is a four-rung ladder. UNKNOWN — nothing; the game does not even tell your client it exists. CONTACT — a hollow dashed "?" blip: something is at that grid, and that is all, e.g. "CONTACT · Unknown Enemy · Grid F-42 · Confidence 58%". IDENTIFIED — a dashed counter with the arm and a "?" badge: enemy infantry, say, but not which battalion and not how strong. CONFIRMED — a solid counter with a "✓" badge and the real designation. Confidence rises with closer, clearer and repeated observation (once per round), and with recon assets; it decays every round once you lose sight, sliding a Confirmed formation back down to a stale last-known-position marker. Identification does NOT change how hard you hit — if you can see a target well enough to engage it, you fight just as well. What it changes is how well you can PREDICT the engagement before committing to it.',
   },
   {
     title: 'Recon vs normal spotting',
-    body: 'Ordinary troops detect nearby enemies. Recon sees further, sooner, and knows what it is looking at. The R order is worth its AP because it does five things passive spotting does not: it uses a much longer sensor range (14 tiles for C4I, 11 for commandos, against 9 and 7 passively), it pushes through forest and built-up ground instead of being stopped by it, it adds a flat confidence bonus that jumps contacts up the ladder in one go, it marks what it finds as recon-tracked so those contacts decay far more slowly, and it re-fixes stale contacts you are about to lose. A Special Op by the commandos (6 tiles) or the Guards (4 tiles) can also probe behind the lines and confirm whatever is around the objective it lands on.',
+    body: 'Ordinary troops detect nearby enemies. Recon sees further, sooner, and knows what it is looking at — and what that buys you is CERTAINTY, not firepower. Attacking an unconfirmed formation costs you nothing in combat power; it costs you the ability to know what you are walking into, because the preview has to guess at the target\u2019s strength, morale and defences and shows you a wide band instead of a number. Confirm it first and the prediction becomes reliable. The R order is worth its AP because it does five things passive spotting does not: it uses a much longer sensor range (14 tiles for C4I, 11 for commandos, against 9 and 7 passively), it pushes through forest and built-up ground instead of being stopped by it, it adds a flat confidence bonus that jumps contacts up the ladder in one go, it marks what it finds as recon-tracked so those contacts decay far more slowly, and it re-fixes stale contacts you are about to lose. A Special Op by the commandos (6 tiles) or the Guards (4 tiles) can also probe behind the lines and confirm whatever is around the objective it lands on.',
   },
 ];
 

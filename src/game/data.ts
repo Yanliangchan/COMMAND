@@ -38,7 +38,7 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     sightRadius: DETECTION.INFANTRY.baseRange,
     reconRadius: DETECTION.INFANTRY.reconRange,
     isNaval: false,
-    maxAmmo: 100,
+    maxAmmo: null,
     movesPerRound: MOBILITY.INFANTRY.movesPerRound,
   },
   COMMANDO: {
@@ -52,7 +52,7 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     sightRadius: DETECTION.COMMANDO.baseRange,
     reconRadius: DETECTION.COMMANDO.reconRange,
     isNaval: false,
-    maxAmmo: 100,
+    maxAmmo: null,
     movesPerRound: MOBILITY.COMMANDO.movesPerRound,
   },
   // Phase 5: each task force fields ONE elite manoeuvre battalion. SABRE's
@@ -73,7 +73,7 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     sightRadius: DETECTION.GUARDS.baseRange,
     reconRadius: DETECTION.GUARDS.reconRange,
     isNaval: false,
-    maxAmmo: 100,
+    maxAmmo: null,
     movesPerRound: MOBILITY.GUARDS.movesPerRound,
   },
   ARMOUR: {
@@ -87,7 +87,7 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     sightRadius: DETECTION.ARMOUR.baseRange,
     reconRadius: DETECTION.ARMOUR.reconRange,
     isNaval: false,
-    maxAmmo: 100,
+    maxAmmo: null,
     movesPerRound: MOBILITY.ARMOUR.movesPerRound,
   },
   ARTILLERY: {
@@ -103,7 +103,11 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     sightRadius: DETECTION.ARTILLERY.baseRange,
     reconRadius: DETECTION.ARTILLERY.reconRange,
     isNaval: false,
-    maxAmmo: 100,
+    // Phase 6: ammunition is a small whole number of ready fire missions, not a
+    // percentage, and it is the ONLY thing that stops the guns firing every
+    // turn forever now that supply is gone. Four rounds, one back per quiet
+    // round: fire two or three missions, then let the battery replenish.
+    maxAmmo: 4,
     movesPerRound: MOBILITY.ARTILLERY.movesPerRound,
   },
   ENGINEER: {
@@ -131,7 +135,7 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     sightRadius: DETECTION.RECON.baseRange,
     reconRadius: DETECTION.RECON.reconRange,
     isNaval: false,
-    maxAmmo: 100,
+    maxAmmo: null,
     movesPerRound: MOBILITY.RECON.movesPerRound,
   },
   FRIGATE: {
@@ -141,11 +145,15 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     baseAttack: 9,
     baseDefense: 7,
     moveRange: MOBILITY.FRIGATE.moveRange,
-    attackRange: 4, // naval surface fire against coastal targets
+    // Phase 6: naval gunfire is a STANDOFF capability and now feels like one.
+    // 4 -> 9 tiles: the frigate out-ranges a land artillery battalion (7) and
+    // can work a coastline from water the enemy cannot reach at all. It still
+    // cannot take ground — standoff fire damages and never occupies.
+    attackRange: 9,
     sightRadius: DETECTION.FRIGATE.baseRange,
     reconRadius: DETECTION.FRIGATE.reconRange,
     isNaval: true,
-    maxAmmo: 100,
+    maxAmmo: 4,
     movesPerRound: MOBILITY.FRIGATE.movesPerRound,
   },
   CORVETTE: {
@@ -155,11 +163,14 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     baseAttack: 6,
     baseDefense: 5,
     moveRange: MOBILITY.CORVETTE.moveRange,
-    attackRange: 3,
+    // 3 -> 6 tiles: real standoff reach, but clearly inside the frigate's, and
+    // just short of a gun battalion's — the littoral squadron has to come in
+    // closer to make its weight felt.
+    attackRange: 6,
     sightRadius: DETECTION.CORVETTE.baseRange,
     reconRadius: DETECTION.CORVETTE.reconRange,
     isNaval: true,
-    maxAmmo: 100,
+    maxAmmo: 3,
     movesPerRound: MOBILITY.CORVETTE.movesPerRound,
   },
 };

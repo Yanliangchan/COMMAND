@@ -1,7 +1,7 @@
 import React from 'react';
 import { FORMATION_DEFS } from '../game/data';
-import { isInSupplyRange, movesRemaining } from '../game/engine';
-import { movementProfile, nearbyFriendlies, supportedFormation } from '../game/movement';
+import { maxAmmo, movesRemaining, usesAmmo } from '../game/engine';
+import { movementProfile, supportedFormation } from '../game/movement';
 import { currentDetectionRange, detectionModifiers } from '../game/detection';
 import { COHESION_RADIUS, DETECTION, Formation, GameState, gridRef } from '../game/types';
 
@@ -36,10 +36,8 @@ export const UnitDetailPanel: React.FC<{
   onClose: () => void;
 }> = ({ state, formation: f, onCentre, onClose }) => {
   const def = FORMATION_DEFS[f.type];
-  const supplied = isInSupplyRange(state, f);
   const movesLeft = movesRemaining(f);
   const mv = movementProfile(f);
-  const friends = nearbyFriendlies(state, f).slice(0, 3);
   const partner = supportedFormation(state, f);
   // Passive detection is situational — the number quoted is what this formation
   // actually achieves from the ground it is standing on right now.
@@ -79,7 +77,6 @@ export const UnitDetailPanel: React.FC<{
           {f.hasActedThisTurn ? 'major action used' : 'major action ready'}
         </span>
         {f.fortified && <span className="mini-chip chip-amber">fortified</span>}
-        {!supplied && <span className="mini-chip chip-danger">out of supply</span>}
       </div>
 
       <div className="unit-move-block" data-testid="unit-movement">
@@ -112,8 +109,22 @@ export const UnitDetailPanel: React.FC<{
 
       <Bar label="Strength" value={f.strength} color="var(--olive)" />
       <Bar label="Readiness" value={f.readiness} color="var(--blue)" />
-      <Bar label="Supply" value={f.supply} color={supplied ? 'var(--olive)' : 'var(--danger)'} />
-      {def.maxAmmo !== null && <Bar label="Ammo" value={f.ammo} color="var(--amber)" />}
+      {/* Ammunition (phase 6) — whole rounds, drawn as pips, and shown ONLY for
+          the guns and the ships that actually use them. Everything else has no
+          ammunition line at all, which is one fewer number to read. */}
+      {usesAmmo(f) && (
+        <div className="stat-row" data-testid="ammo-row">
+          <span className="stat-label">Ammunition</span>
+          <div className="ammo-pips" title="Ready fire missions. One comes back at the end of any round this formation does not fire.">
+            {Array.from({ length: maxAmmo(f) }).map((_, i) => (
+              <span key={i} className={`ammo-pip ${i < f.ammo ? 'full' : ''}`} />
+            ))}
+          </div>
+          <span className="stat-val" data-testid="ammo-count">
+            {f.ammo} / {maxAmmo(f)}
+          </span>
+        </div>
+      )}
 
       <div className="unit-card-rows">
         <div>
@@ -143,10 +154,6 @@ export const UnitDetailPanel: React.FC<{
         <div>
           <span className="k">Grid</span>
           <span className="v" data-testid="unit-grid">{gridRef(f.x, f.y)}</span>
-        </div>
-        <div>
-          <span className="k">Nearby friendly</span>
-          <span className="v">{friends.length ? friends.map((n) => `${n.shortName} ${n.distance}`).join(' · ') : 'none within ' + COHESION_RADIUS}</span>
         </div>
         {partner && (
           <div>

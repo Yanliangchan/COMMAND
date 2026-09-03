@@ -8,7 +8,7 @@
 // ============================================================================
 
 import { FORMATION_DEFS } from './data';
-import { distance, isInSupplyRange, movesRemaining, computeReachable } from './engine';
+import { distance, hasAmmo, maxAmmo, movesRemaining, computeReachable } from './engine';
 import { AP_COSTS, ActionKind, Formation, GameState, PlayerId, SPECIAL_OP_TYPES } from './types';
 import { TargetMode } from '../App.types';
 
@@ -43,7 +43,7 @@ export const ACTION_SPECS: ActionSpec[] = [
     shortcut: 'A',
     apCost: AP_COSTS.ATTACK,
     mode: 'ATTACK',
-    blurb: 'Engage an enemy formation inside your attack range.',
+    blurb: 'Engage an enemy formation inside your attack range. Hover a target to see the predicted result — expected losses to both sides and every factor for and against — before you commit.',
   },
   {
     id: 'RECON',
@@ -51,7 +51,7 @@ export const ACTION_SPECS: ActionSpec[] = [
     shortcut: 'R',
     apCost: AP_COSTS.RECON,
     mode: null,
-    blurb: 'Your formations already spot nearby enemies on their own. A Recon sweep goes further: a much longer sensor range, it pushes through forest and built-up ground, and it jumps contacts up the detection ladder — Contact to Identified to Confirmed — and keeps tracking them long after you lose sight.',
+    blurb: 'Your formations already spot nearby enemies on their own. A Recon sweep goes further: a much longer sensor range, it pushes through forest and built-up ground, and it jumps contacts up the detection ladder — Contact to Identified to Confirmed — and keeps tracking them long after you lose sight. Confirming a target does not make your attack stronger; it makes the pre-attack prediction reliable instead of a wide guess.',
   },
   {
     id: 'FORTIFY',
@@ -62,20 +62,12 @@ export const ACTION_SPECS: ActionSpec[] = [
     blurb: 'Dig in. The formation defends much better until it moves again.',
   },
   {
-    id: 'RESUPPLY',
-    label: 'Resupply',
-    shortcut: 'S',
-    apCost: AP_COSTS.RESUPPLY,
-    mode: null,
-    blurb: 'Restore supply, ammunition and readiness. Only works inside your supply range.',
-  },
-  {
     id: 'ARTILLERY',
     label: 'Fire Mission',
     shortcut: 'G',
     apCost: AP_COSTS.ARTILLERY,
     mode: 'ARTILLERY',
-    blurb: 'Long-range gunfire onto a spotted enemy. Artillery only, and it burns ammunition.',
+    blurb: 'Long-range gunfire onto a spotted enemy. Artillery only. Each mission spends one round of ammunition; a battery that holds its fire for a round gets one back.',
   },
   {
     id: 'AIR',
@@ -153,7 +145,6 @@ export function actionAvailability(state: GameState, f: Formation, viewer: Playe
   const myTurn = state.activePlayer === viewer;
   const majorFree = !f.hasActedThisTurn;
   const moves = movesRemaining(f);
-  const supplied = isInSupplyRange(state, f);
 
   return ACTION_SPECS.map((spec) => {
     let applicable = true;
@@ -179,10 +170,14 @@ export function actionAvailability(state: GameState, f: Formation, viewer: Playe
     else if (spec.id !== 'MOVE' && spec.id !== 'AIR' && !majorFree) reason = 'This formation has already taken its major action this round.';
     else if (ap < spec.apCost) reason = `Not enough AP — needs ${spec.apCost}, you have ${ap}.`;
     else if (spec.id === 'MOVE' && computeReachable(state, f.id).size === 0) reason = 'No reachable tile from here.';
+    else if (spec.id === 'ATTACK' && !hasAmmo(f))
+      reason = `No ready rounds left (0 / ${maxAmmo(f)}). Hold fire for a round and one comes back.`;
     else if (spec.id === 'ATTACK' && enemiesInRange(state, f) === 0)
       reason = `No identified enemy within attack range (${def.attackRange} tiles). Your formations spot nearby enemies automatically — close the distance, or use Recon (R) to identify a contact.`;
-    else if (spec.id === 'RESUPPLY' && !supplied) reason = 'Out of supply range — move closer to a depot or a held port/airfield.';
-    else if (spec.id === 'ARTILLERY' && f.ammo < 10) reason = 'Out of ammunition — resupply first.';
+    else if (spec.id === 'ARTILLERY' && !hasAmmo(f))
+      reason = `No ready rounds left (0 / ${maxAmmo(f)}). Hold fire for a round and one comes back.`;
+    else if (spec.id === 'ARTILLERY' && enemiesInRange(state, f) === 0)
+      reason = `No identified enemy within ${def.attackRange} tiles to fire on.`;
     else if (spec.id === 'AIR' && state.players[viewer].airSorties < 1) reason = 'No air sorties left this turn.';
     else if (spec.id === 'AIR' && visibleEnemies(state, f.owner) === 0)
       reason = 'No identified enemy to strike — push a formation forward until it spots one, or Recon (R) an existing contact to identify it.';

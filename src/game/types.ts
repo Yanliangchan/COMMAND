@@ -136,7 +136,11 @@ export interface FormationDef {
   /** Nominal radius of a deliberate Recon sweep — mirrors DETECTION[type].reconRange. */
   reconRadius: number;
   isNaval: boolean;
-  maxAmmo: number | null; // null = doesn't consume ammo
+  /**
+   * Ready rounds carried. null = this formation does not use ammunition at all
+   * (every land formation except the guns). See Formation.ammo.
+   */
+  maxAmmo: number | null;
   /** Movement actions this formation may take per round (see MOVES_PER_ROUND). */
   movesPerRound: number;
 }
@@ -251,7 +255,14 @@ export const MORALE_CASUALTY_SCALE = 0.5;
  */
 export const MORALE_ELAN_CEILING = 20;
 
-/** Named shocks. Everything that can move morale by itself lives here. */
+/**
+ * Named shocks. Everything that can move morale by itself lives here.
+ *
+ * Phase 6: the two supply shocks (SUPPLY_CRITICAL / SUPPLY_LOW) and the
+ * RESUPPLIED lift are gone with the supply system. Nothing replaced them —
+ * a formation's condition is now its own (strength, readiness, morale), not a
+ * function of how far it has walked from a depot.
+ */
 export const MORALE_SHOCKS = {
   ATTACK_REPULSED: -5, // a major attack that failed outright
   POSITION_LOST: -8, // driven off ground you were holding
@@ -259,17 +270,17 @@ export const MORALE_SHOCKS = {
   KEY_FORMATION_LOST: -7, // a friendly formation was destroyed nearby
   SURROUNDED: -4, // more enemy than friendly formations close by, per round
   ISOLATED: -3, // no friendly formation within COHESION_RADIUS, per round
-  SUPPLY_CRITICAL: -5, // supply under 20%, per round
-  SUPPLY_LOW: -2, // supply under 40%, per round
   ASSAULT_SUCCESS: 6, // took the position
   OBJECTIVE_TAKEN: 8, // captured an objective
-  RESUPPLIED: 3, // reorganised and re-stocked
 } as const;
 
-/** Per-round recovery toward baseline, additive, for a formation not engaged. */
+/**
+ * Per-round recovery toward baseline, additive, for a formation not engaged.
+ * BASE absorbed the old IN_SUPPLY component (3 + 3) when supply was removed, so
+ * a formation in the field recovers exactly as fast as a supplied one used to.
+ */
 export const MORALE_RECOVERY = {
-  BASE: 3,
-  IN_SUPPLY: 3,
+  BASE: 6,
   HELD_POSITION: 2, // did not move this round (or is fortified)
   NEAR_FRIENDS: 2, // at least one friendly formation within COHESION_RADIUS
   /** Decay back down toward baseline when a unit is riding ABOVE it. */
@@ -282,6 +293,14 @@ export const MORALE_RECOVERY = {
  * "becoming separated from supported formation" advisory.
  */
 export const COHESION_RADIUS = 6;
+
+/**
+ * Rounds of ammunition an artillery or naval formation recovers at the end of
+ * a round in which it did NOT fire. With maxAmmo 3-4 this means roughly "fire,
+ * fire, then sit a turn out" — visible on the unit card as a row of pips, with
+ * no depot, no radius and no logistics order to manage.
+ */
+export const AMMO_REGEN_PER_ROUND = 1;
 
 export interface Formation {
   id: string;
@@ -309,8 +328,20 @@ export interface Formation {
   /** Round in which this formation last took part in a fight (0 = never). */
   lastEngagedRound: number;
   readiness: number; // 0-100 %
-  supply: number; // 0-100 %
-  ammo: number; // 0-100 %, meaningless if def.maxAmmo === null (kept at 100)
+  /**
+   * AMMUNITION (phase 6) — whole ready rounds/fire missions, and ONLY for the
+   * formations that shoot from a distance: artillery and the two naval
+   * squadrons (`FormationDef.maxAmmo`). Everything else has maxAmmo === null
+   * and carries 0 here; the unit card does not show the field at all.
+   *
+   * There is no depot dependency of any kind. A fire mission spends one round;
+   * a formation that does not fire during a round gets AMMO_REGEN_PER_ROUND
+   * back, up to its maximum. That is the whole system, and it exists for one
+   * reason: to stop the guns and the ships firing every single turn forever.
+   */
+  ammo: number;
+  /** Round this formation last spent ammunition (0 = never). */
+  lastFiredRound: number;
   /** Movement actions already spent this round. */
   movesUsed: number;
   /** Movement actions allowed this round (from MOBILITY). */
@@ -344,7 +375,7 @@ export interface Formation {
 //               entirely, not merely hidden in the UI.
 //   CONTACT     something is there. Position only. Type, strength, identity
 //               are NOT sent to the client (see fog.ts).
-//   IDENTIFIED  the arm is known ("Enemy Infantry"). Strength, morale, supply
+//   IDENTIFIED  the arm is known ("Enemy Infantry"). Strength, morale, ammo
 //               and the true unit title are still withheld.
 //   CONFIRMED   the exact formation is known, in full.
 //
@@ -515,6 +546,11 @@ export interface BattleReport {
   attackerPower: number;
   defenderPower: number;
   roll: number;
+  /** Attacker's share of the total combat power after the roll, 0..1. This is
+   *  the single number the whole result is derived from — see combat.ts. */
+  share: number;
+  /** True when this was a close assault (the only engagement that takes ground). */
+  closeAssault: boolean;
   factors: BattleFactor[];
   attackerLoss: LossLevel;
   defenderLoss: LossLevel;
@@ -538,7 +574,6 @@ export type ActionKind =
   | 'ATTACK'
   | 'RECON'
   | 'FORTIFY'
-  | 'RESUPPLY'
   | 'ARTILLERY'
   | 'AIR'
   | 'ENGINEER_BRIDGE'
@@ -550,7 +585,6 @@ export const AP_COSTS: Record<ActionKind, number> = {
   ATTACK: 2,
   RECON: 1,
   FORTIFY: 1,
-  RESUPPLY: 1,
   ARTILLERY: 2,
   AIR: 3,
   ENGINEER_BRIDGE: 2,

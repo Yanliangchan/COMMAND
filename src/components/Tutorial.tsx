@@ -27,7 +27,7 @@ const SECTIONS: Section[] = [
           </li>
           <li>
             <b>Its orders appear at the bottom of the screen</b>, each with its key: <K>M</K> Move, <K>A</K> Attack, <K>R</K> Recon,{' '}
-            <K>F</K> Fortify, <K>S</K> Resupply.
+            <K>F</K> Fortify.
           </li>
           <li>
             <b>Click the order</b> (or press the key), then click the tile or enemy you mean. <K>Esc</K> cancels.
@@ -38,7 +38,7 @@ const SECTIONS: Section[] = [
         </ol>
         <p>
           Two budgets limit you. <b>Action Points</b> are shared across your whole force and refresh every turn. <b>Movement
-          actions</b> are per formation — most units may move twice a round, scouts three times, artillery once.
+          actions</b> are per formation — most units may move twice a round and the fast ones three times.
         </p>
         <p className="tut-tip">
           Press <K>Tab</K> at any time to jump to the next formation that still has orders available.
@@ -97,7 +97,7 @@ const SECTIONS: Section[] = [
               A destination that will not work always tells you why — too far, terrain impassable, enemy-controlled — and if a
               support element is about to be left behind you get an advisory, not a veto.
             </li>
-            <li>Moving cancels a dug-in position, and a tired or unsupplied formation covers less ground (the unit card says so).</li>
+            <li>Moving cancels a dug-in position, and a formation whose readiness has fallen below 50% covers less ground (the unit card says so).</li>
           </ul>
         </>
       );
@@ -134,15 +134,27 @@ const SECTIONS: Section[] = [
               enemy is inside range. Anything missing greys the button out and says why.
             </li>
             <li>
-              <b>Range varies.</b> Infantry, armour and commandos fight adjacent. Artillery reaches eight tiles with a Fire
-              Mission (<K>G</K>); ships shell the coast from three or four.
+              <b>Read the prediction before you commit.</b> Hover a target with <K>A</K> armed and a panel appears: the likely
+              outcome, the strength both sides expect to lose, your share of the combat power, and every factor for and
+              against you. The battle report afterwards is the same panel with the dice filled in — if you can read one you
+              can predict the other.
             </li>
             <li>
-              <b>Terrain decides the outcome as much as strength.</b> A defender in a town, forest or on a hill is far harder to
-              beat than the same unit on open ground or a beach.
+              <b>Range varies.</b> Infantry, armour, commandos and Guards fight adjacent. Artillery reaches seven tiles with a
+              Fire Mission (<K>G</K>); a frigate engages out to nine and a littoral squadron to six.
             </li>
             <li>
-              <b>Only a close assault takes ground.</b> Long-range fire hurts the enemy but never occupies their tile.
+              <b>Terrain and the matchup decide the outcome as much as strength.</b> A defender in a town, forest or on a hill
+              is far harder to shift — and armour attacking into that town fights at 0.70 while infantry attacking the same
+              town fight at full weight. Bring the right arm for the ground.
+            </li>
+            <li>
+              <b>Attacking always costs you something.</b> Losses are shared out in proportion to combat power: an even fight
+              takes about 13% off both sides. There is no free attack, only a good trade.
+            </li>
+            <li>
+              <b>Only a close assault takes ground.</b> Long-range fire — guns and ships — hurts the enemy badly at almost no
+              risk to itself, but it never occupies their tile.
             </li>
           </ul>
         </>
@@ -215,8 +227,11 @@ const SECTIONS: Section[] = [
               sooner, and knows what it is looking at.
             </li>
             <li>
-              <b>Recon pays off in combat.</b> Attacking something you have only made contact with costs you 40% of your
-              combat power. Identified costs 12%. Confirmed costs nothing at all.
+              <b>What recon is worth: certainty, not firepower.</b> Attacking a formation you have only identified does not
+              weaken your attack one bit — if you can see it well enough to engage it, you fight just as well. What you lose
+              is the ability to know what you are walking into: the pre-attack preview has to guess at the target's strength,
+              its morale and whether it is dug in, so it shows a wide band and says so. Confirm the target first and the same
+              panel gives you a tight, reliable prediction. Recon buys you the plan, not the punch.
             </li>
           </ul>
         </>
@@ -287,19 +302,22 @@ const SECTIONS: Section[] = [
           />
           <ul className="tut-list">
             <li>
-              <b>Recon first.</b> Identify the target so your attack is not blind, and so you know what is really there.
+              <b>Recon first.</b> Confirm the target so the pre-attack preview is a prediction rather than a guess — you will
+              often find the fight you were about to pick is not the one you thought.
             </li>
             <li>
-              <b>Artillery and air strikes soften.</b> They cannot take ground, so use them to cut strength and morale before the
-              assault.
+              <b>Artillery, warships and air strikes soften.</b> They cannot take ground, so use them to cut strength and morale
+              before the assault. Guns and ships carry only three or four rounds and get one back per round they hold their
+              fire, so pick the moment.
             </li>
             <li>
               <b>Armour leads in the open; infantry leads into towns and forests.</b> Attacking with the wrong arm for the ground
               is how good forces lose.
             </li>
             <li>
-              <b>Keep friendly units adjacent.</b> Supporting formations nearby measurably improve your odds, and give you
-              somewhere to fall back to.
+              <b>Keep friendly units adjacent.</b> Each different friendly arm next to your attacker adds 7% to its power, up
+              to 21%, and each friendly next to a defender adds 5% to its resistance, up to 15%. It is itemised in the
+              preview, so you can see the bonus before you spend the AP.
             </li>
             <li>
               <b>Engineers unlock the map</b> — a bridge across a river turns an impossible flank into an obvious one.
@@ -346,10 +364,6 @@ const SECTIONS: Section[] = [
             </li>
             <li>
               <b>Anchorages are maritime</b> — only a ship can hold one.
-            </li>
-            <li>
-              <b>Ports, airfields and depots also project supply.</b> Formations outside your supply range lose readiness and
-              cannot resupply.
             </li>
             <li>
               <b>Winning:</b> first task force to 280 VP wins immediately; otherwise the higher score after 24 rounds takes the

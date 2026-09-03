@@ -11,7 +11,10 @@
     "preview": "vite preview",
     "prestart": "npm run build",
     "start": "tsx server/index.ts",
-    "mapcheck": "tsx scripts/mapcheck.ts"
+    "mapcheck": "tsx scripts/mapcheck.ts",
+    "wirecheck": "tsx scripts/wirecheck.ts",
+    "combatcheck": "tsx scripts/combatcheck.ts",
+    "check": "npm run mapcheck && npm run wirecheck && npm run combatcheck"
   },
   "dependencies": {
     "react": "^18.3.1",

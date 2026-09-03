@@ -285,9 +285,6 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
     case 'FORTIFY':
       engine.fortifyAction(state, action.formationId);
       break;
-    case 'RESUPPLY':
-      engine.resupplyAction(state, action.formationId);
-      break;
     case 'ENGINEER_BRIDGE':
       engine.engineerBridgeAction(state, action.formationId, action.x, action.y);
       break;

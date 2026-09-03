@@ -74,8 +74,7 @@ export const HeroBackdrop: React.FC = () => {
           selected: null,
           reachable: new Map(),
           attackable: new Set(),
-          overlays: { terrain: true, movement: false, intel: true, supply: false, objectives: true },
-          supplySet: new Set(),
+          overlays: { movement: false, intel: true, objectives: true },
           hoverTile: null,
           labels: state.objectives
             .filter((o) => o.kind === 'Urban District')

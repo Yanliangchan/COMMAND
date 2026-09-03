@@ -22,7 +22,6 @@ export type GameAction =
   | { type: 'ATTACK'; attackerId: string; targetId: string }
   | { type: 'RECON'; formationId: string }
   | { type: 'FORTIFY'; formationId: string }
-  | { type: 'RESUPPLY'; formationId: string }
   | { type: 'ENGINEER_BRIDGE'; formationId: string; x: number; y: number }
   | { type: 'ENGINEER_CLEAR'; formationId: string; x: number; y: number }
   | { type: 'ARTILLERY'; formationId: string; x: number; y: number }

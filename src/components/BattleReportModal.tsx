@@ -8,17 +8,21 @@ const OUTCOME_COLOR: Record<BattleReport['outcome'], string> = {
   'Mutual Attrition': 'var(--amber)',
 };
 
-/** The factors that actually moved the needle, biggest first. */
+/**
+ * The factors that actually moved the needle, biggest first. Deliberately the
+ * SAME filter the pre-attack preview uses (AttackPreview.ranked) so the report
+ * reads as the prediction resolved rather than as a different document.
+ */
 function decisive(factors: BattleFactor[], side: 'attacker' | 'defender'): BattleFactor[] {
   return factors
-    .filter((f) => f.side === side && f.magnitude >= 10 && !/base (attack|defense)/i.test(f.label))
+    .filter((f) => f.side === side && f.magnitude >= 4 && !/base (attack|defen[cs]e)/i.test(f.label))
     .sort((a, b) => b.magnitude - a.magnitude);
 }
 
 /** One plain sentence explaining the result, built from the decisive factors. */
 function explain(report: BattleReport): string {
   const attackerWon = report.outcome === 'Position Captured' || report.outcome === 'Defender Repelled';
-  const ratio = report.attackerPower / (report.attackerPower + report.defenderPower);
+  const ratio = report.share;
   const margin = Math.abs(ratio - 0.5) < 0.06 ? 'narrowly' : Math.abs(ratio - 0.5) > 0.2 ? 'decisively' : 'clearly';
   const helped = decisive(report.factors, attackerWon ? 'attacker' : 'defender')
     .filter((f) => f.positive)
@@ -50,7 +54,7 @@ export const BattleReportModal: React.FC<{ report: BattleReport; onClose: () => 
   const top = [...decisive(report.factors, 'attacker').slice(0, 3), ...decisive(report.factors, 'defender').slice(0, 3)].sort(
     (a, b) => b.magnitude - a.magnitude
   );
-  const shown = showAll ? report.factors : top.slice(0, 4);
+  const shown = showAll ? report.factors : top.slice(0, 6);
 
   return (
     <div className="battle-card" data-testid="battle-report">
@@ -66,6 +70,14 @@ export const BattleReportModal: React.FC<{ report: BattleReport; onClose: () => 
       <div className="battle-line">
         <b>{report.attackerName}</b> (grid {gridRef(report.attackerX, report.attackerY)}) attacked{' '}
         <b>{report.defenderName}</b> (grid {gridRef(report.defenderX, report.defenderY)})
+      </div>
+
+      <div className="ap-bar" title="The attacker's share of the total combat power — the number the whole result comes from">
+        <div className="ap-bar-fill" style={{ width: `${Math.round(report.share * 100)}%` }} />
+        <span className="ap-bar-label" data-testid="battle-share">
+          {Math.round(report.share * 100)}% of the combat power was the attacker's
+          {report.closeAssault ? '' : ' · standoff fire, ground not taken'}
+        </span>
       </div>
 
       <div className="battle-bars">

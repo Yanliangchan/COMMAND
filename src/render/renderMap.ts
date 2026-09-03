@@ -29,10 +29,8 @@ export interface Camera {
 }
 
 export interface Overlays {
-  terrain: boolean;
   movement: boolean;
   intel: boolean;
-  supply: boolean;
   objectives: boolean;
 }
 
@@ -69,7 +67,6 @@ export interface RenderContext {
   reachable: Map<string, number>;
   attackable: Set<string>; // formation ids attackable from selection
   overlays: Overlays;
-  supplySet: Set<string>;
   hoverTile: { x: number; y: number } | null;
   /** Settlement names to letter onto the sheet at sufficient zoom. */
   labels?: MapLabel[];
@@ -841,19 +838,6 @@ export function render(rc: RenderContext) {
     for (let x = x0; x <= x1; x++) {
       const tile = state.tiles[y][x];
       if (tile.bridge) drawBridge(rc, tile);
-    }
-  }
-
-  // ---- Supply overlay ----
-  if (rc.overlays.supply) {
-    for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
-        const key = `${x},${y}`;
-        const { sx, sy } = worldToScreen(camera, width, height, x, y);
-        const supplied = rc.supplySet.has(key);
-        ctx.fillStyle = supplied ? 'rgba(120,200,140,0.12)' : 'rgba(200,60,60,0.12)';
-        ctx.fillRect(sx - s / 2, sy - s / 2, s + 1, s + 1);
-      }
     }
   }
 

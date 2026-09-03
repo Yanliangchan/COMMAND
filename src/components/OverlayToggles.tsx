@@ -20,7 +20,6 @@ export const OverlayToggles: React.FC<{
     <div className="hud-tools">
       {item('movement', 'Move', 'Show the movement range of the selected formation')}
       {item('intel', 'Intel', 'Show suspected enemy contacts')}
-      {item('supply', 'Supply', 'Shade tiles inside your supply range')}
       {item('objectives', 'Objectives', 'Show objective markers')}
       <span className="hud-sep" />
       <button className={`chip-toggle ${legendOpen ? 'on' : ''}`} onClick={onLegend} title="Map legend (L)" data-testid="legend-btn">

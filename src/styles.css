@@ -1170,3 +1170,82 @@ canvas { display: block; touch-action: none; }
 }
 .group-chip .group-x { color: var(--text-faint); }
 .roster-row.grouped { box-shadow: inset 2px 0 0 var(--blue); }
+
+/* ---------------------------------------------------------------------------
+ * Ammunition pips (unit card) — phase 6. A count of whole ready rounds reads
+ * far faster as pips than as a percentage bar, and it only appears on the
+ * formations that actually carry ammunition.
+ * ------------------------------------------------------------------------ */
+.ammo-pips { flex: 1; display: flex; gap: 3px; align-items: center; }
+.ammo-pip {
+  width: 12px;
+  height: 8px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  background: #0d1114;
+}
+.ammo-pip.full { background: var(--amber); border-color: var(--amber-dim); }
+
+/* ---------------------------------------------------------------------------
+ * Pre-attack odds preview — phase 6. Sits in the same slot as the movement
+ * preview so "arm an order, hover a target, read what will happen" is one
+ * consistent habit across Move and Attack.
+ * ------------------------------------------------------------------------ */
+.attack-preview {
+  background: rgba(13, 17, 20, 0.96);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
+  border-radius: 5px;
+  padding: 9px 12px;
+  font-size: 11.5px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+.ap-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 5px; }
+.ap-title { letter-spacing: 0.16em; font-size: 10px; color: var(--text-faint); }
+.ap-intel { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.ap-intel.tight { color: var(--olive-bright); }
+.ap-intel.wide { color: var(--amber-bright); }
+.ap-line { color: var(--text-dim); margin-bottom: 5px; }
+.ap-outcome { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+.ap-outcome.good { color: var(--olive-bright); }
+.ap-outcome.even { color: var(--amber-bright); }
+.ap-outcome.bad { color: var(--danger); }
+.ap-outcome-band { font-size: 11px; font-weight: 400; color: var(--text-faint); }
+.ap-losses { display: flex; gap: 18px; margin-bottom: 6px; }
+.ap-loss { display: flex; flex-direction: column; }
+.ap-loss-k { font-size: 9.5px; letter-spacing: 0.1em; color: var(--text-faint); text-transform: uppercase; }
+.ap-loss-v { font-size: 13px; font-weight: 700; }
+.ap-bar {
+  position: relative;
+  height: 16px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: rgba(193, 82, 74, 0.22);
+  overflow: hidden;
+  margin-bottom: 7px;
+}
+.ap-bar-fill { position: absolute; inset: 0 auto 0 0; background: rgba(147, 163, 95, 0.42); }
+.ap-bar-label {
+  position: relative;
+  display: block;
+  text-align: center;
+  line-height: 16px;
+  font-size: 10px;
+  color: var(--text);
+}
+.ap-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 5px; }
+.ap-col-head { font-size: 9.5px; letter-spacing: 0.12em; margin-bottom: 2px; }
+.ap-col-head.good { color: var(--olive-bright); }
+.ap-col-head.bad { color: var(--danger); }
+.ap-factor { font-size: 10.5px; color: var(--text-dim); }
+.ap-factor.good { color: var(--olive-bright); }
+.ap-factor.bad { color: var(--danger); }
+.ap-factor.muted { color: var(--text-faint); font-style: italic; }
+.ap-factor em { color: var(--text-faint); font-style: normal; }
+.ap-note { font-size: 10.5px; color: var(--text-faint); margin-top: 4px; }
+.ap-note.warn { color: var(--amber-bright); }
+.ap-assumptions { font-size: 10px; color: var(--amber-dim); margin-top: 3px; }
+
+/* An unavailable order stays clickable so it can explain itself (see ActionBar). */
+.order-btn.unavailable { opacity: 0.42; cursor: help; }
+.order-btn.unavailable:hover { opacity: 0.62; }

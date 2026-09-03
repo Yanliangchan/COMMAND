@@ -13,17 +13,18 @@ import { Legend } from './components/Legend';
 import { HelpPanel } from './components/HelpPanel';
 import { Lobby } from './components/Lobby';
 import { GroupMovePreview, MovementPreview } from './components/MovementPreview';
+import { AttackPreview } from './components/AttackPreview';
 import { Camera, ContactPing, Overlays, PING_LIFETIME_MS } from './render/renderMap';
 import { TargetMode } from './App.types';
 import { ActionAvailability, actionAvailability, ACTION_BY_SHORTCUT, formationsWithActions } from './game/actions';
-import { computeReachable, formationAt } from './game/engine';
+import { computeReachable, formationAt, previewAttack } from './game/engine';
 import { cohesionAdvisory, planGroupMove, planMove } from './game/movement';
 import { AP_COSTS, Contact, DETECTION_LEVEL_LABEL, DetectionLevel, Formation, GRID_SIZE, gridRef } from './game/types';
 
 const TARGET_HINTS: Record<string, string> = {
   MOVE: 'Click a highlighted tile to move there. Shift-click friendly formations to group them for a formation move.',
   MOVE_GROUP: 'Click the objective tile — the whole group advances together at the slowest formation\u2019s pace.',
-  ATTACK: 'Click a red-ringed enemy inside your attack range.',
+  ATTACK: 'Hover a red-ringed enemy to see the predicted result, then click to commit.',
   ARTILLERY: 'Click a spotted enemy inside the red range diamond to fire on it.',
   AIR_TARGET: 'Click any spotted enemy formation to call the strike in.',
   ENGINEER_BRIDGE: 'Click an adjacent river tile to bridge it.',
@@ -65,7 +66,7 @@ export default function App() {
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [hoverTile, setHoverTile] = useState<{ x: number; y: number } | null>(null);
   const [camera, setCamera] = useState<Camera>({ x: GRID_SIZE / 2, y: GRID_SIZE / 2, scale: 11 });
-  const [overlays, setOverlays] = useState<Overlays>({ terrain: true, movement: true, intel: true, supply: false, objectives: true });
+  const [overlays, setOverlays] = useState<Overlays>({ movement: true, intel: true, objectives: true });
   const [showReportId, setShowReportId] = useState<string | null>(null);
   const [legendOpen, setLegendOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -163,6 +164,7 @@ export default function App() {
     setGroupIds([]);
   }, [state?.activePlayer]);
 
+
   // Drop group members that no longer exist (destroyed, or not ours).
   useEffect(() => {
     if (!state || !you) return;
@@ -180,6 +182,16 @@ export default function App() {
   );
 
   const readyFormations = useMemo(() => (state && you ? formationsWithActions(state, you) : []), [state, you]);
+
+  // The first thing a new player sees should be a unit already selected with
+  // its orders on screen, not an empty bar telling them to go and click one.
+  // Only ever fills a genuinely empty selection — it never steals one.
+  useEffect(() => {
+    if (!state || !you || selectedId) return;
+    if (state.activePlayer !== you) return;
+    const first = readyFormations[0];
+    if (first) setSelectedId(first.id);
+  }, [state, you, selectedId, readyFormations]);
 
   const groupFormations = useMemo(
     () => (state ? (groupIds.map((id) => state.formations[id]).filter(Boolean) as Formation[]) : []),
@@ -200,6 +212,22 @@ export default function App() {
         : null,
     [state, selected, targetMode, hoverTile?.x, hoverTile?.y, movePlan?.ok]
   );
+  // ---- Pre-attack odds preview -------------------------------------------
+  // Same pure function the server resolves with, run against the fog-filtered
+  // state the client holds — so an unconfirmed target is predicted from the
+  // very assumptions the player is being asked to make.
+  const attackTarget = useMemo(
+    () => (state && selected && targetMode === 'ATTACK' && hoverTile ? formationAt(state, hoverTile.x, hoverTile.y) ?? null : null),
+    [state, selected, targetMode, hoverTile?.x, hoverTile?.y]
+  );
+  const attackPrediction = useMemo(
+    () =>
+      state && selected && attackTarget && attackTarget.owner !== selected.owner
+        ? previewAttack(state, selected.id, attackTarget.id)
+        : null,
+    [state, selected, attackTarget]
+  );
+
   const groupPlan = useMemo(
     () =>
       state && targetMode === 'MOVE_GROUP' && hoverTile && groupIds.length
@@ -245,9 +273,6 @@ export default function App() {
           break;
         case 'FORTIFY':
           net.sendAction({ type: 'FORTIFY', formationId: selected.id });
-          break;
-        case 'RESUPPLY':
-          net.sendAction({ type: 'RESUPPLY', formationId: selected.id });
           break;
         default:
           break;
@@ -536,6 +561,18 @@ export default function App() {
 
       {selected && (
         <UnitDetailPanel state={state} formation={selected} onCentre={() => centreOn(selected)} onClose={() => setSelectedId(null)} />
+      )}
+
+      {targetMode === 'ATTACK' && attackPrediction && attackTarget && selected && (
+        <div className="move-preview-wrap">
+          <AttackPreview
+            prediction={attackPrediction}
+            attackerName={selected.shortName}
+            defenderName={attackTarget.shortName}
+            defenderX={attackTarget.x}
+            defenderY={attackTarget.y}
+          />
+        </div>
       )}
 
       {(targetMode === 'MOVE' || targetMode === 'MOVE_GROUP') && (

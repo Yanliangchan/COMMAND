@@ -17,7 +17,7 @@
 //               F-42" is the whole of what is sent.
 //   IDENTIFIED  a REDACTED formation object: id, owner, type, position — and
 //               generic identity strings plus -1 sentinels in every numeric
-//               field. The true title, strength, morale, supply, ammo,
+//               field. The true title, strength, morale, ammunition,
 //               readiness, orders and equipment never leave the server.
 //   CONFIRMED   the real formation object, untouched.
 //
@@ -68,8 +68,8 @@ function redactIdentified(f: Formation): Formation {
     moraleBaseline: REDACTED_NUMBER,
     lastEngagedRound: 0,
     readiness: REDACTED_NUMBER,
-    supply: REDACTED_NUMBER,
     ammo: REDACTED_NUMBER,
+    lastFiredRound: 0,
     movesUsed: 0,
     movesMax: 0,
     hasActedThisTurn: false,

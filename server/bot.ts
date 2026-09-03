@@ -21,8 +21,13 @@
 // on Recon merely to see; it spends it to IDENTIFY contacts it already holds,
 // to see further, and to keep tracking what it has found.
 //
+// Phase 6: supply is gone, so the bot no longer manages logistics at all. Its
+// attack scoring now runs on the shared combat model in src/game/combat.ts via
+// engine.previewAttack — the same prediction the human player is shown in the
+// pre-attack preview, computed from the bot's fog-of-war view.
+//
 // Difficulty is a set of scoring weights over a shared candidate-generation
-// pass (per formation: move / attack / recon / fortify / resupply / air),
+// pass (per formation: move / attack / recon / fortify / air),
 // each candidate scored by a small utility function, best score wins. This
 // is deliberately a greedy per-action policy, not a search tree — the AP
 // budget already forces a natural multi-step "plan" to emerge turn to turn.
@@ -59,7 +64,6 @@ interface Weights {
   attackThreshold: number; // predicted win-ratio below which an attack is considered "bad"
   isolationBonus: number; // reward per point of target weakness/isolation (combined-arms target priority)
   reconPriority: number; // baseline value of a recon sweep
-  resupplyThreshold: number; // supply % below which resupplying takes priority over offense
   clusterWeight: number; // reward massing near friendlies (crude combined-arms positioning)
   randomness: number; // chance to ignore the best-scoring candidate and pick a weaker one
   minScore: number; // candidates below this aren't worth spending AP on
@@ -82,13 +86,13 @@ interface Weights {
 const WEIGHTS: Record<BotDifficulty, Weights> = {
   // Mostly-random legal moves, weak objective/combined-arms awareness, will
   // take bad attacks and can waste AP on low-value actions.
-  EASY: { objectiveWeight: 0.4, objectiveValueBias: 0, attackThreshold: 0, isolationBonus: 0, reconPriority: 0.2, resupplyThreshold: 15, clusterWeight: 0, randomness: 0.45, minScore: -100, maxBoundsPerUnit: 1, cohesionWeight: 0, useGroupMoves: false },
+  EASY: { objectiveWeight: 0.4, objectiveValueBias: 0, attackThreshold: 0, isolationBonus: 0, reconPriority: 0.2, clusterWeight: 0, randomness: 0.45, minScore: -100, maxBoundsPerUnit: 1, cohesionWeight: 0, useGroupMoves: false },
   // Prioritizes objectives, recons before committing when AP allows, avoids
-  // clearly bad attacks, keeps an eye on supply.
-  MEDIUM: { objectiveWeight: 1.1, objectiveValueBias: 2.5, attackThreshold: 0.42, isolationBonus: 4, reconPriority: 0.7, resupplyThreshold: 35, clusterWeight: 0.3, randomness: 0.12, minScore: 0.2, maxBoundsPerUnit: 3, cohesionWeight: 0.7, useGroupMoves: true },
+  // clearly bad attacks.
+  MEDIUM: { objectiveWeight: 1.1, objectiveValueBias: 2.5, attackThreshold: 0.42, isolationBonus: 4, reconPriority: 0.7, clusterWeight: 0.3, randomness: 0.12, minScore: 0.2, maxBoundsPerUnit: 3, cohesionWeight: 0.7, useGroupMoves: true },
   // Combined-arms aware, target-prioritizes weakened/isolated formations,
-  // defends held objectives, manages logistics, spends its AP efficiently.
-  HARD: { objectiveWeight: 1.4, objectiveValueBias: 4, attackThreshold: 0.5, isolationBonus: 9, reconPriority: 1.1, resupplyThreshold: 55, clusterWeight: 0.8, randomness: 0.02, minScore: 0.5, maxBoundsPerUnit: 3, cohesionWeight: 1.2, useGroupMoves: true },
+  // defends held objectives, spends its AP efficiently.
+  HARD: { objectiveWeight: 1.4, objectiveValueBias: 4, attackThreshold: 0.5, isolationBonus: 9, reconPriority: 1.1, clusterWeight: 0.8, randomness: 0.02, minScore: 0.5, maxBoundsPerUnit: 3, cohesionWeight: 1.2, useGroupMoves: true },
 };
 
 interface Candidate {
@@ -137,7 +141,6 @@ function bestUncontrolledObjective(
 // knowledge that a battalion in the field is usually in decent shape.
 const ESTIMATED_STRENGTH = 80;
 const ESTIMATED_READINESS = 85;
-const ESTIMATED_SUPPLY = 80;
 const ESTIMATED_AMMO = 80;
 
 /**
@@ -155,22 +158,20 @@ function estimateEnemy(f: Formation): Formation {
     moraleValue: 70,
     moraleBaseline: 70,
     readiness: ESTIMATED_READINESS,
-    supply: ESTIMATED_SUPPLY,
     ammo: ESTIMATED_AMMO,
+    lastFiredRound: 0,
   };
 }
 
 /**
- * Predicted attacker-favour ratio (0..1), same formula as engine.attackAction,
- * with no side effects. `view` is the bot's fog-filtered world with redacted
- * enemies already estimated — never the authoritative state.
+ * Predicted attacker-favour share (0..1) — literally the number the human
+ * player's pre-attack preview shows, from the bot's fog-filtered view with
+ * redacted enemies already replaced by neutral estimates. Never the
+ * authoritative state.
  */
 function predictRatio(view: GameState, attacker: Formation, target: Formation): number {
-  const attackerTile = view.tiles[attacker.y][attacker.x];
-  const defenderTile = view.tiles[target.y][target.x];
-  const atk = engine.computePower(view, attacker, 'attack', attackerTile, [], { intel: target.intel ?? 'CONFIRMED' });
-  const def = engine.computePower(view, target, 'defense', defenderTile, []);
-  return atk / (atk + def);
+  const p = engine.previewAttack(view, attacker.id, target.id);
+  return p ? p.share : 0.5;
 }
 
 /**
@@ -243,16 +244,11 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
     const boundsLeft = Math.min(w.maxBoundsPerUnit, f.movesMax) - f.movesUsed;
     const majorAvailable = !f.hasActedThisTurn;
 
-    // --- RESUPPLY: logistics management — don't push an offense on empty tanks.
-    if (majorAvailable && !def.isNaval && f.supply < w.resupplyThreshold && affordable(state, 'RESUPPLY') && engine.isInSupplyRange(state, f)) {
-      candidates.push({ action: { type: 'RESUPPLY', formationId: f.id }, score: 6 - f.supply / 20 });
-    }
-
     // --- ATTACK (melee adjacency, or artillery fire mission at range).
     const isArtillery = f.type === 'ARTILLERY';
     const range = def.attackRange;
     const attackKind: ActionKind = isArtillery ? 'ARTILLERY' : 'ATTACK';
-    if (majorAvailable && (def.maxAmmo === null || f.ammo > 0) && affordable(state, attackKind)) {
+    if (majorAvailable && engine.hasAmmo(f) && affordable(state, attackKind)) {
       for (const e of visibleEnemies) {
         const d = dist(f.x, f.y, e.x, e.y);
         if (d === 0 || d > range) continue;
