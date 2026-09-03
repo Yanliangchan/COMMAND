@@ -1249,3 +1249,56 @@ canvas { display: block; touch-action: none; }
 /* An unavailable order stays clickable so it can explain itself (see ActionBar). */
 .order-btn.unavailable { opacity: 0.42; cursor: help; }
 .order-btn.unavailable:hover { opacity: 0.62; }
+
+/* ---------------------------------------------------------------------------
+ * Operations log (phase 7). Collapsed by default — a small strip bottom-left
+ * that expands into a scrolling feed of everything the fog-filtered log
+ * already carries: orders, reaction fire, objective changes, destructions.
+ * ------------------------------------------------------------------------ */
+.ops-log {
+  position: absolute;
+  left: 12px;
+  bottom: 14px;
+  width: 300px;
+  max-height: 46vh;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: var(--hud-radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+}
+.ops-log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--olive-bright);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.ops-log.collapsed .ops-log-head { border-bottom: none; }
+.ops-log-title { flex: 1; text-align: left; }
+.ops-log-count { font-size: 10px; color: var(--text-faint); }
+.ops-log-caret { color: var(--text-dim); }
+.ops-log-body { overflow-y: auto; padding: 6px 10px 10px; display: flex; flex-direction: column-reverse; gap: 3px; }
+.ops-log-line { font-size: 11px; line-height: 1.4; color: var(--text-dim); border-left: 2px solid transparent; padding-left: 6px; }
+.ops-log-line.kill { color: #e8a08f; border-left-color: var(--danger); }
+.ops-log-line.reaction { color: var(--amber-bright); border-left-color: var(--amber); }
+.ops-log-empty { font-size: 11px; color: var(--text-faint); font-style: italic; }
+
+/* ---------------------------------------------------------------------------
+ * On-alert badge and suppression bar (unit card, phase 7).
+ * ------------------------------------------------------------------------ */
+.mini-chip.chip-alert { border-color: var(--danger); color: #e8a08f; background: rgba(193, 82, 74, 0.16); }
+.stat-fill.suppression { background: #8a6fae; }

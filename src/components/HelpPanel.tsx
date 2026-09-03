@@ -41,7 +41,7 @@ const UNITS: Topic[] = [
   },
   {
     title: 'Naval units',
-    body: 'Frigates and littoral squadrons move on navigable water only, and they are standoff assets: a frigate engages out to NINE tiles and a littoral squadron to six, against seven for a land gun battalion, so a warship works a coastline from water nothing ashore can answer. Naval fire damages but never occupies — only a close assault takes ground — and they carry four and three rounds respectively. They are also the only formations that can hold an Anchorage.',
+    body: 'Frigates and littoral squadrons move on navigable water only, and they are standoff assets: a frigate engages out to NINE tiles and a littoral squadron to six, against seven for a land gun battalion, so a warship works a coastline from water nothing ashore can answer. That range works against ANY target within it, land or sea — a frigate can shell well inland, not just the coastline — as long as there is a clear line of sight from the ship: a ridge or high ground between the ship and the target blocks the shot exactly the way it blocks passive spotting. Naval fire damages but never occupies — only a close assault takes ground — and they carry four and three rounds respectively. They are also the only formations that can hold an Anchorage.',
   },
 ];
 
@@ -73,6 +73,26 @@ const CONCEPTS: Topic[] = [
   {
     title: 'Ammunition',
     body: 'Only artillery and the two naval squadrons carry ammunition: four ready fire missions for a gun battalion or a frigate, three for a littoral squadron, drawn as pips on the unit card. Firing spends one. Any round in which a formation does not fire, it gets one back. There is no depot, no radius and no resupply order — the only thing ammunition does is stop the guns and the ships firing every single turn forever.',
+  },
+  {
+    title: 'Overwatch & reaction fire',
+    body: 'End a formation’s turn WITHOUT spending its major action (it may still have moved) and it goes ON ALERT for the opponent’s following turn — no order, no AP, it is the reward for holding rather than acting. A pulsing red ring and a "!" badge mark it on the map and in its unit card. During the opponent’s turn, if an enemy formation moves into a tile within the alert formation’s weapons range AND its detection range and line of sight — the exact model passive spotting uses, so it only reacts to what it could legitimately see — it fires ONE reduced-power shot (about 55% of a normal attack) through the same combat chain a normal attack uses, at no cost to itself. One alert formation fires at most once per opponent turn, however many enemies pass near it. Artillery never stands overwatch — it is not a direct-fire weapon. The alert clears the moment the formation’s own next turn begins, or the instant it spends its major action.',
+  },
+  {
+    title: 'Zones of Control',
+    body: 'Every land formation except artillery projects a Zone of Control into its four adjacent tiles — shown as red hatching automatically while Move is armed. An enemy formation MOVING THROUGH one of your ZOC tiles has its bound end there: it may still enter and stop on the tile, it just cannot use it as a step to somewhere further, so a move that needs to pass beyond it is refused with the reason spelled out, or has to route around. Leaving a ZOC tile your formation STARTED its move standing in — disengaging from contact — costs a full movement action’s worth of points on the spot, itemised in the movement preview as soon as you hover a destination. Naval formations neither project nor are affected by ZOC.',
+  },
+  {
+    title: 'Suppression',
+    body: 'A battlefield condition separate from strength, morale and readiness — shown as its own purple bar on the unit card, never folded into another stat. Artillery, naval standoff fire and air strikes apply a heavy dose (30); a direct assault applies a smaller amount too (12). Suppression cuts the SUPPRESSED formation’s own attack power and movement range, up to -50% at maximum — it never causes strength loss by itself, that is what the damage numbers are for. It decays 25 points a round it is not refreshed, faster in forest, built-up ground or while dug in (cover lets a unit recover its composure), slower in the open (there is nowhere to get out of the beaten zone). The pre-attack preview and the battle report both show how much suppression an engagement will apply, right alongside the expected losses.',
+  },
+  {
+    title: 'Reorganize',
+    body: 'Press S with any formation selected to stand it down for the round: readiness and morale recover a real amount immediately, and a little strength comes back too (replacements, at the same %-of-strength abstraction the rest of the game uses). It is deliberately not a return of the old supply system — no depot, no radius, nothing to manage — but it is gated so it cannot flatten out what combat did: it costs the formation’s major action AND requires it to have made NO movement action this round ("stand down to reorganize"), and it cannot be used again for three rounds. A formation on cooldown says so on its unit card.',
+  },
+  {
+    title: 'Destruction',
+    body: 'A formation reduced to 0 strength is destroyed: a brief cross-marker flashes at the spot on the map for a few seconds, on both sides, and a log line names it — "40 SAR destroyed at grid H-42" for the side that owned it. The OTHER side is told only as much as its own detection had actually established: a formation it had CONFIRMED is named in full, one it had only IDENTIFIED is named by arm ("Enemy Infantry destroyed at grid H-42"), and one it never legitimately detected is not mentioned at all — the fog of war applies to a kill exactly the way it applies to everything else.',
   },
   {
     title: 'Morale',

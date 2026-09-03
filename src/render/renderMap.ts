@@ -50,6 +50,24 @@ export interface ContactPing {
 /** How long a contact ping stays on the sheet. */
 export const PING_LIFETIME_MS = 7000;
 
+/**
+ * A transient "formation destroyed here" marker (phase 7). Derived client-side
+ * from GameState.killFeed (already fog-redacted per viewer) the same way
+ * ContactPing is derived from newly-arrived contacts.
+ */
+export interface KillMarker {
+  id: string;
+  x: number;
+  y: number;
+  at: number;
+  owner: PlayerId;
+  /** Present only when the viewer's detection had reached IDENTIFIED or better. */
+  type?: Formation['type'];
+}
+
+/** How long a kill marker stays on the sheet. */
+export const KILL_MARKER_LIFETIME_MS = 5500;
+
 export interface MapLabel {
   x: number;
   y: number;
@@ -72,6 +90,10 @@ export interface RenderContext {
   labels?: MapLabel[];
   /** Transient new-contact pings. */
   pings?: ContactPing[];
+  /** Transient "destroyed here" wreck markers. */
+  kills?: KillMarker[];
+  /** Enemy Zone of Control tiles, shown while a move order is armed. */
+  zocTiles?: Set<string>;
   /** Tiles to flash (e.g. the two ends of the engagement a battle report describes). */
   flashTiles?: { x: number; y: number }[];
   /** Formation ids currently grouped for a Move Formation order. */
@@ -890,6 +912,39 @@ export function render(rc: RenderContext) {
     ctx.stroke(border);
   }
 
+  // ---- Zones of Control (phase 7) — shown automatically while a move order
+  // is armed, so the player sees exactly what will stop or tax their move. ----
+  if (rc.zocTiles?.size) {
+    const region = new Path2D();
+    rc.zocTiles.forEach((key) => {
+      const [zx, zy] = key.split(',').map(Number);
+      if (zx < x0 - 1 || zx > x1 + 1 || zy < y0 - 1 || zy > y1 + 1) return;
+      const { sx, sy } = worldToScreen(camera, width, height, zx, zy);
+      region.rect(sx - s / 2 - 0.3, sy - s / 2 - 0.3, s + 0.6, s + 0.6);
+      // Diagonal hatch reads as "contested ground" without competing with the
+      // amber reachable wash underneath it.
+      const hatch = new Path2D();
+      const step = Math.max(4, s * 0.22);
+      for (let o = -s; o < s * 2; o += step) {
+        hatch.moveTo(sx - s / 2 + o, sy + s / 2);
+        hatch.lineTo(sx - s / 2 + o + s, sy - s / 2);
+      }
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(sx - s / 2, sy - s / 2, s, s);
+      ctx.clip();
+      ctx.strokeStyle = 'rgba(193,82,74,0.55)';
+      ctx.lineWidth = Math.max(1, s * 0.045);
+      ctx.stroke(hatch);
+      ctx.restore();
+    });
+    ctx.strokeStyle = 'rgba(193,82,74,0.8)';
+    ctx.lineWidth = Math.max(1.2, s * 0.05);
+    ctx.setLineDash([3, 2]);
+    ctx.stroke(region);
+    ctx.setLineDash([]);
+  }
+
   // ---- Objectives ----
   if (rc.overlays.objectives) {
     for (const o of state.objectives) {
@@ -974,6 +1029,7 @@ export function render(rc: RenderContext) {
   }
 
   drawPings(rc);
+  drawKillMarkers(rc);
 
   // ---- Formations ----
   Object.values(state.formations).forEach((f) => {
@@ -1538,6 +1594,53 @@ function drawPings(rc: RenderContext) {
   }
 }
 
+/**
+ * A brief, unmistakable wreck marker where a formation was just destroyed
+ * (phase 7) — held for KILL_MARKER_LIFETIME_MS before fading, on both sides,
+ * fog-redaction already applied upstream (a marker with no `type` is a
+ * generic "something died here" the viewer only had CONTACT-level detection
+ * on; one with `type` names the arm).
+ */
+function drawKillMarkers(rc: RenderContext) {
+  if (!rc.kills?.length) return;
+  const { ctx, width, height, camera } = rc;
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const s = camera.scale;
+  for (const k of rc.kills) {
+    const age = now - k.at;
+    if (age < 0 || age > KILL_MARKER_LIFETIME_MS) continue;
+    const fade = 1 - age / KILL_MARKER_LIFETIME_MS;
+    const { sx, sy } = worldToScreen(camera, width, height, k.x, k.y);
+    const r = Math.max(7, s * 0.4);
+    const pc = PLAYER_COLORS[k.owner];
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, fade * 1.4);
+    // Dark casing, then a scorched ring in the owner's colour, then a cross.
+    ctx.beginPath();
+    ctx.arc(sx, sy, r + 2, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(9,12,16,0.72)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = pc.main;
+    ctx.lineWidth = Math.max(1.4, r * 0.18);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(230,182,101,0.95)';
+    ctx.lineWidth = Math.max(1.6, r * 0.24);
+    ctx.beginPath();
+    ctx.moveTo(sx - r * 0.5, sy - r * 0.5);
+    ctx.lineTo(sx + r * 0.5, sy + r * 0.5);
+    ctx.moveTo(sx + r * 0.5, sy - r * 0.5);
+    ctx.lineTo(sx - r * 0.5, sy + r * 0.5);
+    ctx.stroke();
+    if (s >= 9) {
+      const label = k.type ? formationGlyph(k.type) : '???';
+      drawLabel(rc, sx, sy + r + Math.max(7, s * 0.32), `${label} destroyed`, Math.max(8, s * 0.24), 'rgba(230,182,101,0.95)', 0.04);
+    }
+    ctx.restore();
+  }
+}
+
 function drawFormation(rc: RenderContext, f: Formation) {
   const { ctx, width, height, camera } = rc;
   const s = camera.scale;
@@ -1585,6 +1688,36 @@ function drawFormation(rc: RenderContext, f: Formation) {
     ctx.stroke();
   }
 
+  // On alert (phase 7): a pulsing red-amber ring — visible for your own
+  // formations always, and for an enemy only once CONFIRMED (the same rung
+  // fortified/suppression are withheld at).
+  if (f.onAlert) {
+    const pulse = 0.55 + 0.35 * Math.sin(((typeof performance !== 'undefined' ? performance.now() : Date.now()) / 420) % (Math.PI * 2));
+    ctx.strokeStyle = `rgba(230,120,90,${pulse.toFixed(2)})`;
+    ctx.lineWidth = Math.max(1.2, r * 0.14);
+    ctx.setLineDash([r * 0.35, r * 0.3]);
+    ctx.beginPath();
+    ctx.arc(sx, sy, r * 1.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (s >= 9) {
+      const bx = sx - r * 0.85;
+      const by = sy - r * 0.85;
+      ctx.beginPath();
+      ctx.arc(bx, by, Math.max(4, r * 0.4), 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(9,12,16,0.85)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(230,120,90,0.95)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.fillStyle = '#f0b083';
+      ctx.font = `bold ${Math.max(6, r * 0.6)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('!', bx, by + 0.5);
+    }
+  }
+
   if (s >= 6) {
     const bw = r * 1.9;
     const bx = sx - bw / 2;
@@ -1600,6 +1733,17 @@ function drawFormation(rc: RenderContext, f: Formation) {
       const pct = Math.max(0, Math.min(1, f.strength / 100));
       ctx.fillStyle = pct > 0.6 ? '#93a35f' : pct > 0.3 ? '#cf9a44' : '#c1524a';
       ctx.fillRect(bx, by, bw * pct, 3);
+    }
+    // Suppression (phase 7): a second, distinct thin bar under the strength
+    // one — never folded into it. Only drawn once there is something to show,
+    // and only when the value is known (own formations, or an enemy CONFIRMED).
+    if (!identifiedOnly && f.suppression > 0) {
+      const sby = by + 4;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(bx, sby, bw, 3);
+      const spct = Math.max(0, Math.min(1, f.suppression / 100));
+      ctx.fillStyle = '#8a6fae';
+      ctx.fillRect(bx, sby, bw * spct, 3);
     }
   }
 

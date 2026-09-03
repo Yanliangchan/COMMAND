@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { computeReachable, distance, formationAt } from '../game/engine';
 import { FORMATION_DEFS } from '../game/data';
+import { zocTilesFor } from '../game/movement';
 import { Formation, GameState, GRID_SIZE, PlayerId } from '../game/types';
-import { Camera, ContactPing, MapLabel, Overlays, render, screenToTile } from '../render/renderMap';
+import { Camera, ContactPing, KillMarker, MapLabel, Overlays, render, screenToTile } from '../render/renderMap';
 
 interface Props {
   state: GameState;
@@ -24,6 +25,8 @@ interface Props {
   onHoverTile?: (t: { x: number; y: number } | null) => void;
   /** Transient "new contact" pings raised by passive spotting. */
   pings?: ContactPing[];
+  /** Transient "destroyed here" wreck markers. */
+  kills?: KillMarker[];
   /** Reports the smoothed frame time of the render loop, for the perf readout. */
   onFrameTime?: (ms: number) => void;
 }
@@ -56,6 +59,7 @@ export const MapCanvas: React.FC<Props> = ({
   onHoverTile,
   onFrameTime,
   pings,
+  kills,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -97,7 +101,14 @@ export const MapCanvas: React.FC<Props> = ({
     return set;
   }, [state.formations, selected?.id, selected?.x, selected?.y]);
 
-  propsRef.current = { state, viewer, selected, reachable, attackable, overlays, labels, flashTiles, size, camera, groupIds, pathPreview, pathInvalid, pings };
+  // Zones of Control (phase 7): shown automatically while a move order is
+  // armed on a land formation — exactly when the player needs to see them.
+  const zocTiles = useMemo(
+    () => (selected && (targetMode === 'MOVE' || targetMode === 'MOVE_GROUP') ? zocTilesFor(state, selected) : undefined),
+    [state, selected?.id, selected?.x, selected?.y, targetMode]
+  );
+
+  propsRef.current = { state, viewer, selected, reachable, attackable, overlays, labels, flashTiles, size, camera, groupIds, pathPreview, pathInvalid, pings, kills, zocTiles };
 
   // ---- Animation / render loop -------------------------------------------
   useEffect(() => {
@@ -163,6 +174,8 @@ export const MapCanvas: React.FC<Props> = ({
         pathPreview: p.pathPreview,
         pathInvalid: p.pathInvalid,
         pings: p.pings,
+        kills: p.kills,
+        zocTiles: p.zocTiles,
         pulse: (t % 1800) / 1800,
       });
       const dt = performance.now() - t0;

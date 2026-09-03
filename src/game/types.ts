@@ -351,6 +351,33 @@ export interface Formation {
   fortified: boolean; // dug in — bonus defense while true, cleared if it moves
   lastOrder: string; // human-readable description of the last action taken
   /**
+   * OVERWATCH (phase 7). Set true at the end of a round in which this
+   * formation did NOT spend its major action (it may still have moved) —
+   * see MORALE_RECOVERY-style end-of-round ticks in engine.ts `endTurn`.
+   * While true, during the OPPONENT'S following turn the formation may fire
+   * one reduced-power reaction shot at an enemy that moves into its
+   * detection range and line of sight (see engine.ts `triggerOverwatch`).
+   * Cleared at the start of this formation's own next turn, or immediately
+   * once it spends its major action.
+   */
+  onAlert: boolean;
+  /** True once this formation has spent its one reaction shot for the
+   *  opponent's current turn. Reset whenever `onAlert` is (re)armed. */
+  reactionFired: boolean;
+  /**
+   * SUPPRESSION (phase 7). 0-100, separate from strength/morale/readiness.
+   * Applied by artillery, naval standoff fire and (at a smaller amount)
+   * direct attacks; reduces this formation's OWN attack power and movement
+   * range for as long as it lingers (see combat.ts / movement.ts). Never
+   * causes strength loss by itself. Decays a fixed amount each round it is
+   * not re-suppressed, faster in cover, slower in the open.
+   */
+  suppression: number;
+  /** Round suppression was last applied (0 = never) — gates the decay tick. */
+  lastSuppressedRound: number;
+  /** Round this formation last used Reorganize (0 = never) — cooldown gate. */
+  lastReorganizedRound: number;
+  /**
    * Set by fog.ts on ENEMY formations only: the rung of the detection ladder
    * this viewer has reached. Undefined on your own formations. When it is
    * 'IDENTIFIED' the numeric fields above are REDACTED placeholders (-1) and
@@ -556,6 +583,8 @@ export interface BattleReport {
   defenderLoss: LossLevel;
   attackerStrengthDelta: number;
   defenderStrengthDelta: number;
+  /** Suppression applied to the defender by this engagement (phase 7), 0 if none. */
+  suppressionApplied: number;
   captured: boolean;
   /** Tiles the engagement was fought over — the UI flashes them so the player
    *  can see the action the report describes. */
@@ -578,7 +607,8 @@ export type ActionKind =
   | 'AIR'
   | 'ENGINEER_BRIDGE'
   | 'ENGINEER_CLEAR'
-  | 'SPECIAL_OP';
+  | 'SPECIAL_OP'
+  | 'REORGANIZE';
 
 export const AP_COSTS: Record<ActionKind, number> = {
   MOVE: 1,
@@ -590,7 +620,59 @@ export const AP_COSTS: Record<ActionKind, number> = {
   ENGINEER_BRIDGE: 2,
   ENGINEER_CLEAR: 1,
   SPECIAL_OP: 3,
+  // Phase 7. Restores more than Fortify (dig in) and costs the same as a
+  // committed Attack — it is a deliberate stand-down, not a free heal.
+  REORGANIZE: 2,
 };
+
+// ---------------------------------------------------------------------------
+// REORGANIZE (phase 7) — a light restorative action, distinct from the
+// supply/depot system removed in phase 6. It does not reintroduce logistics:
+// there is no depot, no radius, nothing to manage. It is a battalion standing
+// down for a round to reconstitute — replacements, maintenance, rest — at the
+// cost of an action, gated so it cannot be spammed to erase combat losses.
+// ---------------------------------------------------------------------------
+
+/** Rounds that must pass after using Reorganize before the same formation can use it again. */
+export const REORGANIZE_COOLDOWN_ROUNDS = 3;
+/** Readiness restored immediately. */
+export const REORGANIZE_READINESS = 25;
+/** Morale points restored (via the normal shock/diminishing-returns path). */
+export const REORGANIZE_MORALE = 12;
+/** Strength restored — small, representing replacements, not a full heal. */
+export const REORGANIZE_STRENGTH = 6;
+
+// ---------------------------------------------------------------------------
+// OVERWATCH / REACTION FIRE (phase 7)
+// ---------------------------------------------------------------------------
+
+/** Reaction fire's power multiplier vs. a normal attack — a snap shot, not a planned one. */
+export const REACTION_FIRE_POWER_MULT = 0.55;
+/** Reaction shots one on-alert formation may fire per opponent turn. */
+export const REACTION_FIRE_MAX_PER_TURN = 1;
+
+// ---------------------------------------------------------------------------
+// SUPPRESSION (phase 7)
+// ---------------------------------------------------------------------------
+
+/** Suppression applied by a standoff hit (artillery fire mission, naval gunfire, air strike). */
+export const SUPPRESSION_HIT_INDIRECT = 30;
+/** Suppression applied by a direct attack (close assault) — a smaller, secondary effect. */
+export const SUPPRESSION_HIT_DIRECT = 12;
+/** Suppression lost per round it is not refreshed, on ordinary (non-cover, non-fortified) ground. */
+export const SUPPRESSION_DECAY_BASE = 25;
+/** Decay multiplier in cover (forest / urban / industrial) or while dug in — recovers faster. */
+export const SUPPRESSION_DECAY_COVER_MULT = 1.5;
+/** Decay multiplier in the open (open ground / beach) — lingers longer. */
+export const SUPPRESSION_DECAY_OPEN_MULT = 0.7;
+/** Ceiling on how much suppression can cut attack power / movement range (at 100 suppression). */
+export const SUPPRESSION_MAX_PENALTY = 0.5;
+
+/** Attack-power / movement-range multiplier for a given suppression level (0-100). */
+export function suppressionMultiplier(suppression: number): number {
+  const s = Math.max(0, Math.min(100, suppression));
+  return 1 - (s / 100) * SUPPRESSION_MAX_PENALTY;
+}
 
 /**
  * AP economy (phase-1 rebalance): ten formations a side, each with 1-3
@@ -632,6 +714,28 @@ export interface LogEntry {
   audience: PlayerId | 'ALL';
 }
 
+/**
+ * A formation's destruction (phase 7). Carried on GameState so both sides get
+ * a clear, brief "kill marker" on the map and a log line — but redacted the
+ * same way a live formation is: the owner always sees the full record, the
+ * OTHER side sees only what their detection of that formation had actually
+ * established (fog.ts derives this from the surviving contact record, since a
+ * destroyed formation's contact ages out normally rather than vanishing).
+ */
+export interface KillEvent {
+  id: string;
+  formationId: string;
+  owner: PlayerId;
+  /** Present only when the viewer's detection had reached IDENTIFIED or better. */
+  type?: FormationType;
+  /** Full title / short designation — present only at CONFIRMED. */
+  name: string;
+  shortName: string;
+  x: number;
+  y: number;
+  round: number;
+}
+
 export interface GameState {
   round: number;
   activePlayer: PlayerId;
@@ -650,4 +754,6 @@ export interface GameState {
   phase: 'PLAYING' | 'TURN_HANDOFF' | 'GAME_OVER';
   winner: PlayerId | 'DRAW' | null;
   lastBattleReport: BattleReport | null;
+  /** Recent destructions, newest first, capped short — see KillEvent. */
+  killFeed: KillEvent[];
 }

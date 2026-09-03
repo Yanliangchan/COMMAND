@@ -23,6 +23,7 @@ import {
   MOBILITY,
   Tile,
   gridRef,
+  suppressionMultiplier,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,32 @@ function neighbors(x: number, y: number): [number, number][] {
 function occupantAt(state: GameState, x: number, y: number): Formation | undefined {
   for (const f of Object.values(state.formations)) if (f.x === x && f.y === y) return f;
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Zones of Control (phase 7)
+//
+// Every LAND formation except artillery projects a ZOC into its four
+// orthogonally adjacent tiles (artillery is not a manoeuvre element and does
+// not contest ground this way; naval formations neither project nor are
+// affected by ZOC — it is a land-warfare concept). An enemy formation MOVING
+// through a ZOC tile has its bound end there — it may still enter and stop on
+// a ZOC tile, but the search below refuses to use it as a step to anywhere
+// else. Leaving a ZOC tile the mover STARTED in (disengaging) costs a full
+// movement action's worth of points instead of the tile's ordinary price.
+// ---------------------------------------------------------------------------
+
+/** Tiles under enemy Zone of Control, from `mover`'s point of view. Empty for naval formations. */
+export function zocTilesFor(state: GameState, mover: Formation): Set<string> {
+  const out = new Set<string>();
+  if (FORMATION_DEFS[mover.type].isNaval) return out;
+  for (const o of Object.values(state.formations)) {
+    if (o.owner === mover.owner) continue;
+    const oDef = FORMATION_DEFS[o.type];
+    if (oDef.isNaval || o.type === 'ARTILLERY') continue;
+    for (const [nx, ny] of neighbors(o.x, o.y)) out.add(`${nx},${ny}`);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +116,10 @@ export interface MovementProfile {
 function rangeModifiers(f: Formation): RangeModifier[] {
   const mods: RangeModifier[] = [];
   if (f.readiness < 50) mods.push({ label: `Low readiness (${Math.round(f.readiness)}%)`, multiplier: 0.75 });
+  if (f.suppression > 0) {
+    const mult = suppressionMultiplier(f.suppression);
+    mods.push({ label: `Suppressed (${Math.round(f.suppression)}%)`, multiplier: mult });
+  }
   return mods;
 }
 
@@ -163,13 +194,22 @@ interface SearchResult {
  * Dijkstra out from the formation, bounded by `budget` movement points.
  * Returns the cost of reaching every tile inside the budget plus the parent
  * links needed to reconstruct the exact path the preview draws.
+ *
+ * Zones of Control (phase 7), unless `opts.ignoreZoc`: an enemy ZOC tile is a
+ * dead end — it is reachable (you may stop there) but the search never
+ * expands FROM it, so it can never be used as a step to somewhere else.
+ * Leaving a ZOC tile the formation started this search in (disengaging) costs
+ * a full movement action's worth of points on its very first step.
  */
-function search(state: GameState, f: Formation, budget: number): SearchResult {
+function search(state: GameState, f: Formation, budget: number, opts: { ignoreZoc?: boolean } = {}): SearchResult {
   const cost = new Map<string, number>();
   const parent = new Map<string, string>();
   const start = `${f.x},${f.y}`;
   cost.set(start, 0);
   if (budget <= 0) return { cost, parent };
+  const zoc = opts.ignoreZoc ? EMPTY_ZOC : zocTilesFor(state, f);
+  const startInZoc = zoc.has(start);
+  const disengageCost = movementProfile(f).effectiveRange;
   // Small maps + small budgets: a sorted array frontier is plenty and keeps
   // this dependency-free.
   const frontier: PathNode[] = [{ x: f.x, y: f.y, cost: 0 }];
@@ -179,13 +219,19 @@ function search(state: GameState, f: Formation, budget: number): SearchResult {
     const cur = frontier.splice(bi, 1)[0];
     const curKey = `${cur.x},${cur.y}`;
     if ((cost.get(curKey) ?? Infinity) < cur.cost) continue;
+    // A ZOC tile is a stopping point, not a thoroughfare — refuse to expand
+    // past it (the start tile is exempt: standing in ZOC does not stop you
+    // moving, it just makes the FIRST step out of it expensive, below).
+    if (curKey !== start && zoc.has(curKey)) continue;
     const curTile = state.tiles[cur.y][cur.x];
     for (const [nx, ny] of neighbors(cur.x, cur.y)) {
       const tile = state.tiles[ny][nx];
       if (!crossable(state, f, tile)) continue;
       const occ = occupantAt(state, nx, ny);
       if (occ && occ.owner !== f.owner) continue; // never move through or onto an enemy
-      const next = cur.cost + stepCost(f, curTile, tile);
+      let stepC = stepCost(f, curTile, tile);
+      if (curKey === start && startInZoc) stepC = Math.max(stepC, disengageCost);
+      const next = cur.cost + stepC;
       if (next > budget + 1e-9) continue;
       const key = `${nx},${ny}`;
       if (next < (cost.get(key) ?? Infinity) - 1e-9) {
@@ -197,6 +243,8 @@ function search(state: GameState, f: Formation, budget: number): SearchResult {
   }
   return { cost, parent };
 }
+
+const EMPTY_ZOC: Set<string> = new Set();
 
 /**
  * Total movement points a formation may spend this round, capped by the AP its
@@ -262,6 +310,7 @@ export type MoveRefusal =
   | 'ENEMY_HELD'
   | 'OCCUPIED'
   | 'TOO_FAR'
+  | 'ZOC_BLOCKED'
   | 'NOT_YOUR_TURN';
 
 export interface MovePlan {
@@ -288,6 +337,9 @@ export interface MovePlan {
   /** Movement actions this move consumes. */
   actionsRequired: number;
   apCost: number;
+  /** Set when the formation starts this move inside an enemy Zone of Control —
+   *  disengaging costs a full movement action's worth of points (phase 7). */
+  zocNote: string | null;
 }
 
 function terrainLabel(cost: number, tiles: number): string {
@@ -314,6 +366,7 @@ function refusal(code: MoveRefusal, reason: string, x: number, y: number): MoveP
     terrainCostLabel: 'None',
     actionsRequired: 0,
     apCost: 0,
+    zocNote: null,
   };
 }
 
@@ -364,6 +417,21 @@ export function planMove(state: GameState, f: Formation, x: number, y: number, b
     // honest. Connectivity is a plain BFS (no costs) — this runs on every
     // hover, so it must stay linear.
     const reachableAtAll = connected(state, f, x, y);
+    if (reachableAtAll) {
+      // Was it ZOC specifically that cut this off? Re-run the same search
+      // ignoring ZOC — if THAT reaches the tile inside the same budget, the
+      // enemy's Zone of Control is the reason, and the player is told so
+      // rather than left with a generic "too far".
+      const { cost: freeCost } = search(state, f, budget, { ignoreZoc: true });
+      if (freeCost.has(key)) {
+        return refusal(
+          'ZOC_BLOCKED',
+          `Blocked by an enemy Zone of Control — an enemy formation adjacent to the route stops movement passing through it. You may move onto the Zone of Control tile itself and stop there, or route around it.`,
+          x,
+          y
+        );
+      }
+    }
     return refusal(
       'TOO_FAR',
       reachableAtAll
@@ -408,6 +476,10 @@ export function planMove(state: GameState, f: Formation, x: number, y: number, b
 
   const total = cost.get(key)!;
   const actionsRequired = Math.max(1, Math.ceil((total - 1e-9) / Math.max(0.1, prof.effectiveRange)));
+  const zoc = zocTilesFor(state, f);
+  const zocNote = zoc.has(`${f.x},${f.y}`)
+    ? `Disengaging from an enemy Zone of Control — this bound spends a full movement action's worth of points (${prof.effectiveRange.toFixed(1)}) just to break contact.`
+    : null;
   return {
     ok: true,
     refusal: null,
@@ -422,6 +494,7 @@ export function planMove(state: GameState, f: Formation, x: number, y: number, b
     terrainCostLabel: terrainLabel(total, path.length),
     actionsRequired,
     apCost: actionsRequired * AP_COSTS.MOVE,
+    zocNote,
   };
 }
 

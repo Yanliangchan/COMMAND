@@ -27,7 +27,7 @@
 // ============================================================================
 
 import { FORMATION_DEFS } from './data';
-import { Contact, DetectionLevel, Formation, GameState, PlayerId, otherPlayer } from './types';
+import { Contact, DetectionLevel, Formation, GameState, KillEvent, PlayerId, otherPlayer } from './types';
 
 /** Two-letter designation shown on a redacted counter, by arm. */
 const GENERIC_SHORT: Record<Formation['type'], string> = {
@@ -75,6 +75,14 @@ function redactIdentified(f: Formation): Formation {
     hasActedThisTurn: false,
     fortified: false, // whether they are dug in is intelligence too
     lastOrder: 'Unknown',
+    // Phase 7 fields — all intelligence, withheld until CONFIRMED just like
+    // strength, morale and readiness. An on-alert enemy is not revealed as
+    // such at this rung: you find out the hard way, or you confirm it first.
+    onAlert: false,
+    reactionFired: false,
+    suppression: REDACTED_NUMBER,
+    lastSuppressedRound: 0,
+    lastReorganizedRound: 0,
     intel: 'IDENTIFIED',
     redacted: true,
   };
@@ -118,6 +126,27 @@ export function contactLevel(state: GameState, viewer: PlayerId, formationId: st
 }
 
 /**
+ * Redact one kill-feed entry (phase 7) for `viewer`, mirroring the live
+ * formation rules exactly: your own losses are always yours in full; an
+ * enemy loss is capped at whatever your side's CONTACT record for that
+ * formation had actually established — a destroyed formation's contact ages
+ * out normally rather than being deleted, so this reads the same ladder a
+ * live formation would. UNKNOWN is not represented on the wire at all.
+ */
+function redactKillEvent(state: GameState, viewer: PlayerId, k: KillEvent): KillEvent | null {
+  if (k.owner === viewer) return k;
+  const level = contactLevel(state, viewer, k.formationId);
+  if (level === 'CONFIRMED') return k;
+  if (level === 'IDENTIFIED') {
+    return { ...k, type: k.type, name: `Enemy ${FORMATION_DEFS[k.type ?? 'INFANTRY'].label}`, shortName: GENERIC_SHORT[k.type ?? 'INFANTRY'] };
+  }
+  if (level === 'CONTACT') {
+    return { ...k, type: undefined, name: 'Unknown enemy formation', shortName: '???' };
+  }
+  return null;
+}
+
+/**
  * Redact `state` down to what `viewer` is permitted to know:
  *  - all of the viewer's own formations, untouched
  *  - CONFIRMED enemy formations in full
@@ -154,6 +183,10 @@ export function filterStateForPlayer(state: GameState, viewer: PlayerId): GameSt
     contacts[c.formationId] = redactContact(c);
   });
 
+  const killFeed = state.killFeed
+    .map((k) => redactKillEvent(state, viewer, k))
+    .filter((k): k is KillEvent => k !== null);
+
   return {
     ...state,
     // The operations log narrates orders. Only entries addressed to this
@@ -161,6 +194,7 @@ export function filterStateForPlayer(state: GameState, viewer: PlayerId): GameSt
     // describe every enemy move in plain English regardless of detection.
     log: state.log.filter((e) => e.audience === 'ALL' || e.audience === viewer),
     formations,
+    killFeed,
     players: {
       ...state.players,
       [viewer]: { ...state.players[viewer], contacts },

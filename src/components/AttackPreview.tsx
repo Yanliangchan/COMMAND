@@ -95,6 +95,14 @@ export const AttackPreview: React.FC<{
             {p.attackerPower.toFixed(1)} v {p.defenderPower.toFixed(1)}
           </span>
         </div>
+        {p.suppressionApplied > 0 && (
+          <div className="ap-loss">
+            <span className="ap-loss-k">Suppression</span>
+            <span className="ap-loss-v" data-testid="attack-preview-suppression" style={{ color: '#b8a0d8' }}>
+              +{p.suppressionApplied}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="ap-bar" title="Your share of the total combat power">

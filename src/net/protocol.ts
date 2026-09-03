@@ -27,6 +27,7 @@ export type GameAction =
   | { type: 'ARTILLERY'; formationId: string; x: number; y: number }
   | { type: 'AIR'; x: number; y: number }
   | { type: 'SPECIAL_OP'; formationId: string; x: number; y: number }
+  | { type: 'REORGANIZE'; formationId: string }
   | { type: 'END_TURN' };
 
 export type ClientMsg =

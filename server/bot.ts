@@ -36,8 +36,8 @@
 import * as engine from '../src/game/engine';
 import { filterStateForPlayer } from '../src/game/fog';
 import { FORMATION_DEFS } from '../src/game/data';
-import { MANOEUVRE_TYPES, isSupportType, planGroupMove } from '../src/game/movement';
-import { currentDetectionRange } from '../src/game/detection';
+import { MANOEUVRE_TYPES, isSupportType, planGroupMove, zocTilesFor } from '../src/game/movement';
+import { currentDetectionRange, lineOfSight } from '../src/game/detection';
 import {
   ActionKind,
   AP_COSTS,
@@ -49,6 +49,7 @@ import {
   GameState,
   Objective,
   PlayerId,
+  REORGANIZE_COOLDOWN_ROUNDS,
 } from '../src/game/types';
 import { GameAction } from '../src/net/protocol';
 
@@ -213,6 +214,23 @@ function affordable(state: GameState, kind: ActionKind) {
   return state.players[state.activePlayer].ap >= AP_COSTS[kind];
 }
 
+/**
+ * How much a destination tile is threatened by an enemy formation already
+ * known (from the bot's OWN fog-of-war view — onAlert is redacted below
+ * CONFIRMED, exactly like a human player would see it) to be on alert. A
+ * cheap range-only approximation (no LOS simulation per candidate tile) —
+ * good enough to make the bot think twice about walking into a kill zone
+ * without the cost of a full spotting pass per candidate.
+ */
+function alertThreatPenalty(view: GameState, bot: PlayerId, x: number, y: number): number {
+  let penalty = 0;
+  for (const o of Object.values(view.formations)) {
+    if (o.owner === bot || !o.onAlert || o.type === 'ARTILLERY') continue;
+    if (dist(o.x, o.y, x, y) <= FORMATION_DEFS[o.type].attackRange) penalty += 1.5;
+  }
+  return penalty;
+}
+
 export function decideBotAction(state: GameState, bot: PlayerId, difficulty: BotDifficulty): GameAction | null {
   if (state.activePlayer !== bot || state.phase !== 'PLAYING') return null;
   const w = WEIGHTS[difficulty];
@@ -252,10 +270,17 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
       for (const e of visibleEnemies) {
         const d = dist(f.x, f.y, e.x, e.y);
         if (d === 0 || d > range) continue;
+        // Naval standoff fire needs line of sight, same as the human player's
+        // engine — reasons about exactly what it is legitimately allowed to hit.
+        if (def.isNaval && d > 1 && !lineOfSight(state.tiles, f.x, f.y, e.x, e.y).clear) continue;
         const ratio = predictRatio(view, f, e);
         const iso = isolationScore(view, e);
         let score = (ratio - 0.5) * 10 + iso * w.isolationBonus;
         if (ratio < w.attackThreshold && iso < 0.6) score -= 8; // a clearly bad attack into a supported, healthy position
+        // Standoff fire (artillery, naval at range) is safe and suppresses the
+        // target on top of the damage — worth using more readily than the raw
+        // damage ratio alone would suggest.
+        if (isArtillery || (def.isNaval && d > 1)) score += 1.2;
         if (isArtillery) {
           candidates.push({ action: { type: 'ARTILLERY', formationId: f.id, x: e.x, y: e.y }, score });
         } else {
@@ -303,12 +328,30 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
       candidates.push({ action: { type: 'FORTIFY', formationId: f.id }, score: 1.5 + w.objectiveWeight * 0.5 });
     }
 
+    // --- REORGANIZE: stand a damaged formation down when it is safe to do so.
+    // Only when it has not moved this round, is off cooldown, and no visible
+    // enemy is close enough to make standing still a bad idea.
+    const reorgReady =
+      majorAvailable &&
+      f.movesUsed === 0 &&
+      (!f.lastReorganizedRound || state.round - f.lastReorganizedRound >= REORGANIZE_COOLDOWN_ROUNDS) &&
+      affordable(state, 'REORGANIZE');
+    if (reorgReady) {
+      const damaged = f.strength < 75 || f.readiness < 65 || f.suppression > 25;
+      const threatened = visibleEnemies.some((e) => dist(e.x, e.y, f.x, f.y) <= 2);
+      if (damaged && !threatened) {
+        const need = (100 - f.strength) / 40 + (100 - f.readiness) / 50 + (f.suppression ?? 0) / 50;
+        candidates.push({ action: { type: 'REORGANIZE', formationId: f.id }, score: 0.8 + need });
+      }
+    }
+
     // --- MOVE: the main map driver — path toward the nearest uncontrolled objective,
     // or (Medium/Hard) toward a visible enemy when no objective is known.
     // Naval formations manoeuvre too — they contest anchorages and bring their
     // guns within range of the coast.
     if (boundsLeft > 0 && affordable(state, 'MOVE')) {
       const reachable = engine.computeReachable(state, f.id);
+      const zoc = zocTilesFor(state, f);
       if (reachable.size > 0) {
         let targetX = f.x;
         let targetY = f.y;
@@ -357,6 +400,13 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
           const improvement = haveTarget ? currentD - bestD : 1;
           let score = improvement * w.objectiveWeight * 0.4;
           score += clusterScore(state, bot, chosenTile.x, chosenTile.y) * w.clusterWeight;
+          // Respect enemy Zones of Control and known on-alert formations: a
+          // tile under enemy ZOC is a exposed place to stop (unless it IS the
+          // objective, which the improvement term already rewards enough to
+          // outweigh this), and a tile within a confirmed alert unit's reach
+          // risks a reaction shot for nothing.
+          if (!def.isNaval && zoc.has(`${chosenTile.x},${chosenTile.y}`)) score -= 1.2;
+          score -= alertThreatPenalty(view, bot, chosenTile.x, chosenTile.y);
           if (anchor) {
             // Reward closing on the supported formation, punish drifting away.
             const before = dist(f.x, f.y, anchor.x, anchor.y);

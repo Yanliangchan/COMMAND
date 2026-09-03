@@ -50,6 +50,12 @@ const TRUE_AT: Record<keyof Formation, DetectionLevel> = {
   hasActedThisTurn: 'CONFIRMED',
   fortified: 'CONFIRMED',
   lastOrder: 'CONFIRMED',
+  // Phase 7 additions — same tier as the other battlefield-condition fields.
+  onAlert: 'CONFIRMED',
+  reactionFired: 'CONFIRMED',
+  suppression: 'CONFIRMED',
+  lastSuppressedRound: 'CONFIRMED',
+  lastReorganizedRound: 'CONFIRMED',
 };
 
 const failures: string[] = [];
@@ -177,6 +183,40 @@ function apply(state: GameState, a: any) {
     case 'SPECIAL_OP': engine.specialOpAction(state, a.formationId, a.x, a.y); break;
     case 'ENGINEER_BRIDGE': engine.engineerBridgeAction(state, a.formationId, a.x, a.y); break;
     case 'ENGINEER_CLEAR': engine.engineerClearAction(state, a.formationId, a.x, a.y); break;
+    case 'REORGANIZE': engine.reorganizeAction(state, a.formationId); break;
+  }
+}
+
+/**
+ * killFeed redaction (phase 7): the same ladder a live formation gets. Your
+ * own losses are always full detail; an enemy loss is capped at what your
+ * side's contact record for that formation actually established; UNKNOWN is
+ * not represented on the wire at all.
+ */
+function auditKillFeed(state: GameState, viewer: PlayerId) {
+  const wire = filterStateForPlayer(state, viewer);
+  for (const k of wire.killFeed) {
+    if (k.owner === viewer) {
+      ok(k.name !== 'Unknown enemy formation', `own kill event ${k.formationId} was redacted`);
+      continue;
+    }
+    const level: DetectionLevel = state.players[viewer].contacts[k.formationId]?.level ?? 'UNKNOWN';
+    ok(level !== 'UNKNOWN', `killFeed leaked an event (${k.formationId}) the viewer never detected`);
+    if (level === 'CONTACT') {
+      ok(k.type === undefined, `CONTACT-level kill event leaked its arm (type=${k.type})`);
+      ok(k.name === 'Unknown enemy formation', `CONTACT-level kill event leaked identity (${k.name})`);
+    }
+    if (level === 'IDENTIFIED') {
+      ok(k.type !== undefined, `IDENTIFIED kill event should reveal the arm`);
+      ok(!k.name.startsWith(k.shortName) || k.name.startsWith('Enemy'), `IDENTIFIED kill event leaked the true designation (${k.name})`);
+    }
+  }
+  // Every UNKNOWN-to-viewer true kill must be absent from the wire entirely.
+  for (const truth of state.killFeed) {
+    if (truth.owner === viewer) continue;
+    const level: DetectionLevel = state.players[viewer].contacts[truth.formationId]?.level ?? 'UNKNOWN';
+    if (level !== 'UNKNOWN') continue;
+    ok(!wire.killFeed.some((k) => k.id === truth.id), `killFeed leaked a kill event (${truth.id}) at UNKNOWN detection`);
   }
 }
 
@@ -193,11 +233,15 @@ for (let g = 0; g < GAMES; g++) {
       // Audit after EVERY accepted action — the wire is pushed that often.
       auditSnapshot(state, 'SABRE');
       auditSnapshot(state, 'VANGUARD');
+      auditKillFeed(state, 'SABRE');
+      auditKillFeed(state, 'VANGUARD');
     }
     engine.endTurn(state);
     engine.beginPlayerTurn(state);
     auditSnapshot(state, 'SABRE');
     auditSnapshot(state, 'VANGUARD');
+    auditKillFeed(state, 'SABRE');
+    auditKillFeed(state, 'VANGUARD');
   }
 }
 

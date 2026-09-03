@@ -8,8 +8,9 @@
 // ============================================================================
 
 import { FORMATION_DEFS } from './data';
-import { distance, hasAmmo, maxAmmo, movesRemaining, computeReachable } from './engine';
-import { AP_COSTS, ActionKind, Formation, GameState, PlayerId, SPECIAL_OP_TYPES } from './types';
+import { canReorganize, distance, hasAmmo, maxAmmo, movesRemaining, computeReachable } from './engine';
+import { lineOfSight } from './detection';
+import { AP_COSTS, ActionKind, Formation, GameState, PlayerId, REORGANIZE_COOLDOWN_ROUNDS, SPECIAL_OP_TYPES } from './types';
 import { TargetMode } from '../App.types';
 
 /** Stable identifier for a UI action (1:1 with an engine ActionKind). */
@@ -101,6 +102,14 @@ export const ACTION_SPECS: ActionSpec[] = [
     mode: 'SPECIAL_OP',
     blurb: 'Commandos and Guards only. Raid a distant enemy or probe deep behind their lines.',
   },
+  {
+    id: 'REORGANIZE',
+    label: 'Reorganize',
+    shortcut: 'S',
+    apCost: AP_COSTS.REORGANIZE,
+    mode: null,
+    blurb: `Stand down to reconstitute: restores readiness, morale and a little strength immediately. Only if the formation has made no movement action this round, and not more than once every ${REORGANIZE_COOLDOWN_ROUNDS} rounds.`,
+  },
 ];
 
 export const ACTION_BY_SHORTCUT: Record<string, ActionSpec> = Object.fromEntries(
@@ -122,15 +131,34 @@ export interface ActionAvailability extends ActionSpec {
  * position, not a target.
  */
 function enemiesInRange(state: GameState, f: Formation): number {
-  const range = FORMATION_DEFS[f.type].attackRange;
-  return Object.values(state.formations).filter(
-    (e) => e.owner !== f.owner && distance(f.x, f.y, e.x, e.y) >= 1 && distance(f.x, f.y, e.x, e.y) <= range
-  ).length;
+  const def = FORMATION_DEFS[f.type];
+  const range = def.attackRange;
+  return Object.values(state.formations).filter((e) => {
+    if (e.owner === f.owner) return false;
+    const d = distance(f.x, f.y, e.x, e.y);
+    if (d < 1 || d > range) return false;
+    // Naval standoff fire (phase 7) needs line of sight, just like passive
+    // spotting — a target masked by intervening high ground is out of reach.
+    if (def.isNaval && d > 1 && !lineOfSight(state.tiles, f.x, f.y, e.x, e.y).clear) return false;
+    return true;
+  }).length;
 }
 
 /** Any enemy the player can currently see anywhere (needed for air strikes). */
 function visibleEnemies(state: GameState, owner: PlayerId): number {
   return Object.values(state.formations).filter((e) => e.owner !== owner).length;
+}
+
+/** True when an enemy is within weapon range but the only thing stopping the
+ *  shot is line of sight — lets the UI tell a naval player the difference
+ *  between "nothing out there" and "something's out there, but masked". */
+function anyEnemyInRangeIgnoringLOS(state: GameState, f: Formation): boolean {
+  const range = FORMATION_DEFS[f.type].attackRange;
+  return Object.values(state.formations).some((e) => {
+    if (e.owner === f.owner) return false;
+    const d = distance(f.x, f.y, e.x, e.y);
+    return d >= 1 && d <= range;
+  });
 }
 
 /**
@@ -173,7 +201,9 @@ export function actionAvailability(state: GameState, f: Formation, viewer: Playe
     else if (spec.id === 'ATTACK' && !hasAmmo(f))
       reason = `No ready rounds left (0 / ${maxAmmo(f)}). Hold fire for a round and one comes back.`;
     else if (spec.id === 'ATTACK' && enemiesInRange(state, f) === 0)
-      reason = `No identified enemy within attack range (${def.attackRange} tiles). Your formations spot nearby enemies automatically — close the distance, or use Recon (R) to identify a contact.`;
+      reason = def.isNaval && anyEnemyInRangeIgnoringLOS(state, f)
+        ? `Enemy within range but no line of sight — intervening terrain masks it from naval gunfire. Reposition for a clear shot.`
+        : `No identified enemy within attack range (${def.attackRange} tiles). Your formations spot nearby enemies automatically — close the distance, or use Recon (R) to identify a contact.`;
     else if (spec.id === 'ARTILLERY' && !hasAmmo(f))
       reason = `No ready rounds left (0 / ${maxAmmo(f)}). Hold fire for a round and one comes back.`;
     else if (spec.id === 'ARTILLERY' && enemiesInRange(state, f) === 0)
@@ -181,6 +211,10 @@ export function actionAvailability(state: GameState, f: Formation, viewer: Playe
     else if (spec.id === 'AIR' && state.players[viewer].airSorties < 1) reason = 'No air sorties left this turn.';
     else if (spec.id === 'AIR' && visibleEnemies(state, f.owner) === 0)
       reason = 'No identified enemy to strike — push a formation forward until it spots one, or Recon (R) an existing contact to identify it.';
+    else if (spec.id === 'REORGANIZE' && f.movesUsed > 0)
+      reason = 'Reorganize requires the formation to stand fast — it has already used a movement action this round.';
+    else if (spec.id === 'REORGANIZE' && !canReorganize(state, f))
+      reason = `Still recovering from its last reorganization — ready again in ${REORGANIZE_COOLDOWN_ROUNDS - (state.round - f.lastReorganizedRound)} round(s).`;
 
     return { ...spec, applicable, enabled: reason === '', reason };
   });

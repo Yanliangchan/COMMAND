@@ -156,6 +156,63 @@ const SECTIONS: Section[] = [
               <b>Only a close assault takes ground.</b> Long-range fire — guns and ships — hurts the enemy badly at almost no
               risk to itself, but it never occupies their tile.
             </li>
+            <li>
+              <b>A formation reduced to 0 strength is destroyed.</b> A brief cross-marker flashes at the spot for both sides
+              and the log names it — capped, for the side that did not own it, at whatever that side's own detection had
+              actually established.
+            </li>
+          </ul>
+        </>
+      );
+    },
+  },
+  {
+    id: 'overwatch',
+    nav: 'Overwatch & ZOC',
+    title: 'Overwatch, Zones of Control & suppression',
+    render: () => {
+      const markers: Marker[] = [
+        { x: 1, y: 1, kind: 'blue', text: 'IN' },
+        { x: 3, y: 1, kind: 'red', text: 'AR' },
+        { x: 2, y: 1, kind: 'attack' },
+        { x: 2, y: 2, kind: 'attack' },
+        { x: 4, y: 1, kind: 'attack' },
+        { x: 3, y: 0, kind: 'attack' },
+      ];
+      return (
+        <>
+          <p className="tut-lede">
+            Three related battlefield conditions, none of them costing you an order to benefit from: a formation you leave
+            idle can bite back, ground next to the enemy is dangerous to cross, and heavy fire leaves a unit rattled even
+            when it survives.
+          </p>
+          <TutorialDiagram
+            rows={['ggg.g.gg', 'gg.fgg.g', '.gg.gg.g', 'gg.gg.gg']}
+            markers={markers}
+            caption="The armour battalion's Zone of Control (red-hatched in the real game) covers the tiles around it — the infantry battalion two tiles off would have its move stopped the moment it entered one."
+          />
+          <ul className="tut-list">
+            <li>
+              <b>Overwatch.</b> End a formation's turn WITHOUT spending its major action (it may still have moved) and it
+              goes ON ALERT for the opponent's next turn — a pulsing red ring on the map, a badge on its unit card. If an
+              enemy formation moves into its weapons range and its detection range and line of sight, it fires ONE
+              reduced-power reaction shot at no AP cost — the reward for holding rather than acting. One shot per alert
+              formation per opponent turn; artillery never stands overwatch.
+            </li>
+            <li>
+              <b>Zones of Control.</b> Every land formation except artillery projects one into its four adjacent tiles,
+              shown automatically while Move is armed. An enemy MOVING THROUGH one of your ZOC tiles has its bound end
+              there — it can stop on the tile, but not use it as a step to somewhere further. Breaking contact by leaving
+              a ZOC tile you started in costs a full movement action's worth of points, and the movement preview itemises
+              the surcharge before you commit.
+            </li>
+            <li>
+              <b>Suppression.</b> Artillery, naval standoff fire and air strikes apply a heavy dose (30), a direct assault a
+              smaller amount too (12) — shown as its own purple bar, separate from strength, morale and readiness. It cuts
+              the suppressed formation's own attack power and movement range, up to -50% at maximum, and never causes
+              strength loss by itself. It decays 25 points a round left alone — faster in cover or dug in, slower in the
+              open — and the pre-attack preview shows how much an engagement will apply before you commit.
+            </li>
           </ul>
         </>
       );
@@ -268,6 +325,11 @@ const SECTIONS: Section[] = [
             </li>
             <li>
               <b>It costs you initiative.</b> Fortifying spends the formation's major action, and moving throws the position away.
+            </li>
+            <li>
+              <b>Reorganize (S) is the other stand-down order</b> — recovers readiness, morale and a little strength instead
+              of defence. It needs the formation to have made no movement action this round, and it cannot be used again for
+              three rounds, so it cannot be spammed to erase what combat cost you.
             </li>
           </ul>
         </>

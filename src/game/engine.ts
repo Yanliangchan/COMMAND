@@ -10,9 +10,11 @@ import {
   STANDOFF_RETURN_FIRE,
   attackPower,
   defencePower,
+  isCloseTerrain,
   lossFromDelta,
   lossesFromShare,
   predictEngagement,
+  suppressionHitFor,
 } from './combat';
 import { generateBattlefield } from './mapgen';
 import {
@@ -21,7 +23,7 @@ import {
   planGroupMove,
   planMove,
 } from './movement';
-import { deepProbe, reconSweep, refreshAllSpotting, refreshSpotting } from './detection';
+import { deepProbe, detectionRange, lineOfSight, reconSweep, refreshAllSpotting, refreshSpotting, sightDistance } from './detection';
 import {
   AMMO_REGEN_PER_ROUND,
   COHESION_RADIUS,
@@ -38,6 +40,14 @@ import {
   AP_PER_TURN,
   AIR_SORTIES_PER_TURN,
   MAX_ROUNDS,
+  REACTION_FIRE_POWER_MULT,
+  REORGANIZE_COOLDOWN_ROUNDS,
+  REORGANIZE_MORALE,
+  REORGANIZE_READINESS,
+  REORGANIZE_STRENGTH,
+  SUPPRESSION_DECAY_BASE,
+  SUPPRESSION_DECAY_COVER_MULT,
+  SUPPRESSION_DECAY_OPEN_MULT,
   VP_WIN_THRESHOLD,
   ActionKind,
   BattleFactor,
@@ -45,6 +55,7 @@ import {
   DetectionLevel,
   Formation,
   GameState,
+  KillEvent,
   PlayerId,
   SPECIAL_OP_RANGE,
   SPECIAL_OP_RANGE_BY_TYPE,
@@ -101,6 +112,11 @@ function makeFormation(owner: PlayerId, profileIndex: number, x: number, y: numb
     hasActedThisTurn: false,
     fortified: false,
     lastOrder: 'Deployed',
+    onAlert: false,
+    reactionFired: false,
+    suppression: 0,
+    lastSuppressedRound: 0,
+    lastReorganizedRound: 0,
   };
 }
 
@@ -147,6 +163,7 @@ export function initGame(seed = 1337): GameState {
     phase: 'PLAYING',
     winner: null,
     lastBattleReport: null,
+    killFeed: [],
   };
 
   refreshAllSpotting(state);
@@ -209,6 +226,76 @@ function log(state: GameState, msg: string, audience: PlayerId | 'ALL' = state.a
 }
 
 // ---------------------------------------------------------------------------
+// Overwatch / reaction fire (phase 7)
+//
+// A formation that ends its turn WITHOUT spending its major action (it may
+// still have moved) goes "on alert" — see endTurn/beginPlayerTurn below.
+// During the opponent's following turn, if an enemy formation moves into a
+// tile within an on-alert formation's detection range AND line of sight (the
+// exact model passive spotting uses — an alert unit only reacts to what it
+// could legitimately see), it fires ONE reduced-power shot, at no AP or
+// movement cost (that cost was already banked by not acting). Artillery is
+// excluded — indirect fire is not a reaction weapon.
+// ---------------------------------------------------------------------------
+
+/** On-alert enemy formations that could react to `mover` standing at its current (x, y). */
+function overwatchCandidates(state: GameState, mover: Formation): Formation[] {
+  const enemy = otherPlayer(mover.owner);
+  const tile = state.tiles[mover.y][mover.x];
+  const out: Formation[] = [];
+  for (const alert of Object.values(state.formations)) {
+    if (alert.owner !== enemy || !alert.onAlert || alert.reactionFired) continue;
+    if (alert.type === 'ARTILLERY') continue; // not a direct-fire weapon — no overwatch
+    const alertDef = FORMATION_DEFS[alert.type];
+    const d = distance(alert.x, alert.y, mover.x, mover.y);
+    if (d < 1 || d > alertDef.attackRange) continue; // must actually be able to reach it
+    const alertTile = state.tiles[alert.y][alert.x];
+    const range = detectionRange(alert, alertTile, tile, { fortifiedTarget: mover.fortified });
+    if (sightDistance(alert.x, alert.y, mover.x, mover.y) > range.effective) continue;
+    if (!lineOfSight(state.tiles, alert.x, alert.y, mover.x, mover.y).clear) continue;
+    out.push(alert);
+  }
+  return out;
+}
+
+/**
+ * Resolve every eligible reaction shot against `mover` at its CURRENT
+ * position, using the same combat chain a normal attack uses, scaled down to
+ * REACTION_FIRE_POWER_MULT. Returns true when `mover` was destroyed — the
+ * caller must stop moving it any further.
+ */
+function triggerOverwatch(state: GameState, mover: Formation): boolean {
+  for (const alert of overwatchCandidates(state, mover)) {
+    if (!state.formations[mover.id]) return true; // destroyed by an earlier shot this call
+    if (!state.formations[alert.id] || alert.reactionFired) continue;
+    const tile = state.tiles[mover.y][mover.x];
+    const atk = attackPower(state, alert, mover, tile, false);
+    const dfn = defencePower(state, mover, tile);
+    const roll = Math.round((Math.random() * 2 - 1) * COMBAT_ROLL_PCT);
+    const finalAttacker = atk.power * REACTION_FIRE_POWER_MULT * (1 + roll / 100);
+    const share = finalAttacker / (finalAttacker + dfn.power);
+    const res = lossesFromShare(share, false);
+    alert.strength = Math.max(0, Math.min(100, alert.strength + res.attacker));
+    mover.strength = Math.max(0, Math.min(100, mover.strength + res.defender));
+    alert.reactionFired = true;
+    alert.lastEngagedRound = state.round;
+    mover.lastEngagedRound = state.round;
+    applyMoraleShock(state, mover, casualtyShock(res.defender, 0.6), 'caught by reaction fire');
+    log(
+      state,
+      `${alert.shortName} opens reaction fire on ${mover.shortName} moving through grid ${gridRef(mover.x, mover.y)} — ${lossFromDelta(res.defender)} losses.`,
+      'ALL'
+    );
+    if (alert.strength <= 0) destroyFormation(state, alert);
+    if (mover.strength <= 0) {
+      destroyFormation(state, mover);
+      return true;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Movement
 // ---------------------------------------------------------------------------
 
@@ -225,11 +312,26 @@ export function moveFormation(state: GameState, formationId: string, x: number, 
 
   const advisory = cohesionAdvisory(state, f, x, y);
   state.players[state.activePlayer].ap -= plan.apCost;
-  f.x = x;
-  f.y = y;
   f.fortified = false;
   f.movesUsed += plan.actionsRequired;
-  const ref = gridRef(x, y);
+
+  // Walk the path tile by tile (not just jump to the destination) so overwatch
+  // can react anywhere along the route, not only at the final tile.
+  let destroyed = false;
+  for (const step of plan.path) {
+    f.x = step.x;
+    f.y = step.y;
+    if (triggerOverwatch(state, f)) {
+      destroyed = true;
+      break;
+    }
+  }
+  if (destroyed) {
+    refreshAllSpotting(state);
+    return state;
+  }
+
+  const ref = gridRef(f.x, f.y);
   f.lastOrder = `Moved to grid ${ref} — bound ${f.movesUsed}/${f.movesMax}`;
   log(state, `${f.shortName} moved to grid ${ref} [${f.movesUsed}/${f.movesMax} bounds].`);
   if (advisory) log(state, advisory.message);
@@ -258,6 +360,14 @@ export function moveGroup(state: GameState, formationIds: string[], x: number, y
     f.y = m.y;
     f.fortified = false;
     f.movesUsed += 1;
+    // Overwatch (phase 7): a grouped move checks only the final tile per
+    // member (the pacing model does not track an intermediate path per
+    // formation) — a real but deliberately smaller simplification than the
+    // tile-by-tile check single-unit movement gets.
+    if (triggerOverwatch(state, f)) {
+      names.push(`${m.shortName} (destroyed by reaction fire)`);
+      continue;
+    }
     f.lastOrder = `Moved with formation to grid ${m.gridRef} — bound ${f.movesUsed}/${f.movesMax}`;
     names.push(f.shortName);
   }
@@ -325,6 +435,59 @@ function mourn(state: GameState, lost: Formation) {
     if (f.id === lost.id) return;
     applyMoraleShock(state, f, MORALE_SHOCKS.KEY_FORMATION_LOST, `${lost.shortName} destroyed nearby`);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Destruction — visible to both sides (phase 7)
+//
+// A formation reduced to 0 strength is not just quietly removed: it goes onto
+// `killFeed` (a short, capped list fog.ts redacts per viewer exactly like a
+// live formation — the owner always sees the full record, the other side only
+// what its detection of that formation had actually established) and gets a
+// log line on BOTH sides, each capped at what that side legitimately knew.
+// ---------------------------------------------------------------------------
+
+function recordKill(state: GameState, f: Formation) {
+  const k: KillEvent = {
+    id: nextId('kill'),
+    formationId: f.id,
+    owner: f.owner,
+    type: f.type,
+    name: f.name,
+    shortName: f.shortName,
+    x: f.x,
+    y: f.y,
+    round: state.round,
+  };
+  state.killFeed.unshift(k);
+  if (state.killFeed.length > 12) state.killFeed.pop();
+}
+
+/** What the OTHER side may be told about a formation that just died, capped at
+ *  what their detection of it had actually established. */
+function destructionLabel(level: DetectionLevel, victim: Formation): string {
+  if (level === 'CONFIRMED') return victim.shortName;
+  if (level === 'IDENTIFIED') return `Enemy ${FORMATION_DEFS[victim.type].label}`;
+  return 'An unidentified enemy formation'; // CONTACT
+}
+
+function logDestruction(state: GameState, victim: Formation) {
+  const ref = gridRef(victim.x, victim.y);
+  log(state, `${victim.shortName} destroyed at grid ${ref}.`, victim.owner);
+  const enemy = otherPlayer(victim.owner);
+  const level: DetectionLevel = state.players[enemy].contacts[victim.id]?.level ?? 'UNKNOWN';
+  // UNKNOWN: the other side never legitimately detected this formation, so it
+  // is told nothing at all — not even that something died there.
+  if (level === 'UNKNOWN') return;
+  log(state, `${destructionLabel(level, victim)} destroyed at grid ${ref}.`, enemy);
+}
+
+/** Mourn, log (both sides, redaction-appropriate) and remove a destroyed formation. */
+function destroyFormation(state: GameState, f: Formation) {
+  mourn(state, f);
+  recordKill(state, f);
+  logDestruction(state, f);
+  delete state.formations[f.id];
 }
 
 /**
@@ -437,6 +600,44 @@ export function fortifyAction(state: GameState, formationId: string): GameState 
 }
 
 /**
+ * REORGANIZE (phase 7) — light restorative action, not a return of the phase-6
+ * supply/depot system. Any formation may stand down for a round to reconstitute:
+ * readiness and morale recover a real amount immediately, and a little strength
+ * comes back too (replacements, at the same %-of-strength abstraction the rest
+ * of the game uses). Gated twice so it cannot flatten combat losses:
+ *   - it costs the formation's major action AND requires it to have made no
+ *     movement action this round ("stand down to reorganize" — you cannot
+ *     manoeuvre and reconstitute in the same round), and
+ *   - it cannot be used again for REORGANIZE_COOLDOWN_ROUNDS rounds.
+ */
+export function canReorganize(state: GameState, f: Formation): boolean {
+  if (f.hasActedThisTurn || f.movesUsed > 0) return false;
+  if (f.lastReorganizedRound && state.round - f.lastReorganizedRound < REORGANIZE_COOLDOWN_ROUNDS) return false;
+  return true;
+}
+
+export function reorganizeAction(state: GameState, formationId: string): GameState {
+  const f = state.formations[formationId];
+  if (!f || f.owner !== state.activePlayer) return state;
+  if (!canReorganize(state, f)) return state;
+  if (!canAfford(state, 'REORGANIZE')) return state;
+  spendAP(state, 'REORGANIZE');
+  f.hasActedThisTurn = true;
+  f.lastReorganizedRound = state.round;
+  const beforeReadiness = f.readiness;
+  const beforeStrength = f.strength;
+  f.readiness = Math.min(100, f.readiness + REORGANIZE_READINESS);
+  f.strength = Math.min(100, f.strength + REORGANIZE_STRENGTH);
+  applyMoraleShock(state, f, REORGANIZE_MORALE, 'stood down to reorganize');
+  f.lastOrder = `Reorganized — readiness ${Math.round(beforeReadiness)}% → ${Math.round(f.readiness)}%, strength ${Math.round(beforeStrength)}% → ${Math.round(f.strength)}%`;
+  log(
+    state,
+    `${f.name} stood down to reorganize — readiness ${Math.round(beforeReadiness)}% → ${Math.round(f.readiness)}%, strength ${Math.round(beforeStrength)}% → ${Math.round(f.strength)}%.`
+  );
+  return state;
+}
+
+/**
  * AMMUNITION (phase 6). Artillery and naval formations carry a small number of
  * ready rounds; everything else has none and needs none. Spending one is the
  * only cost of a fire mission, and a formation that holds its fire for a round
@@ -528,6 +729,13 @@ export function previewAttack(state: GameState, attackerId: string, targetId: st
   const def = FORMATION_DEFS[attacker.type];
   const d = distance(attacker.x, attacker.y, target.x, target.y);
   if (d < 1 || d > def.attackRange) return null;
+  // Naval standoff fire (phase 7) needs line of sight, same as passive
+  // spotting — a target masked by intervening high ground is not attackable
+  // even though it is in range.
+  if (def.isNaval && d > 1) {
+    const sight = lineOfSight(state.tiles, attacker.x, attacker.y, target.x, target.y);
+    if (!sight.clear) return null;
+  }
   const closeAssault = d === 1 && !def.isNaval;
   // On the client this reads the fog-filtered state, so `intel` is derived from
   // the viewer's own contact table; on the server it is the true one.
@@ -550,6 +758,18 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   const range = attackerDef.attackRange;
   const d = distance(attacker.x, attacker.y, target.x, target.y);
   if (d < 1 || d > range) return state;
+  // Naval standoff fire (phase 7): same range it always had, but now gated by
+  // line of sight — a ship cannot shoot what intervening high ground masks
+  // from its own position, even at a target it is otherwise entitled to see
+  // (spotted by someone else). Ship-to-ship fire is essentially never blocked
+  // by this (open water), which is exactly the point.
+  if (attackerDef.isNaval && d > 1) {
+    const sight = lineOfSight(state.tiles, attacker.x, attacker.y, target.x, target.y);
+    if (!sight.clear) {
+      log(state, `${attacker.name} has no line of sight to ${target.name} from grid ${gridRef(attacker.x, attacker.y)} — intervening terrain masks the target from naval gunfire.`);
+      return state;
+    }
+  }
   // Only a close assault (range-1 engagement) can take ground; standoff fire
   // from a ship or a gun battalion damages but does not occupy.
   const closeAssault = d === 1 && !attackerDef.isNaval;
@@ -600,6 +820,12 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
 
   attacker.strength = Math.max(0, Math.min(100, attacker.strength + attackerDelta));
   target.strength = Math.max(0, Math.min(100, target.strength + defenderDelta));
+  // Suppression (phase 7): a secondary output of the SAME action, alongside
+  // damage — never a substitute for it. Indirect/standoff fire suppresses
+  // hard; a direct assault suppresses a little too.
+  const suppressionApplied = suppressionHitFor(closeAssault);
+  target.suppression = Math.min(100, target.suppression + suppressionApplied);
+  target.lastSuppressedRound = state.round;
   spendRound(state, attacker);
   // A fight costs readiness — that is what readiness now measures, with supply
   // gone: how fit this formation is to do it again right away.
@@ -627,8 +853,12 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   if (target.strength <= 0 || captured) {
     destroyedTarget = target.strength <= 0;
     if (captured || destroyedTarget) {
-      if (destroyedTarget) mourn(state, target);
-      delete state.formations[target.id];
+      // A formation reduced to 0 strength is DESTROYED — mourned, logged (both
+      // sides, redaction-appropriate) and put on the kill feed. One captured
+      // but not destroyed is displaced from the position, not killed: no kill
+      // event, same as before phase 7.
+      if (destroyedTarget) destroyFormation(state, target);
+      else delete state.formations[target.id];
       if (closeAssault) {
         attacker.x = target.x;
         attacker.y = target.y;
@@ -636,8 +866,7 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
     }
   }
   if (attacker.strength <= 0) {
-    mourn(state, attacker);
-    delete state.formations[attacker.id];
+    destroyFormation(state, attacker);
   }
 
   attacker.hasActedThisTurn = true;
@@ -660,6 +889,7 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
     defenderLoss,
     attackerStrengthDelta: attackerDelta,
     defenderStrengthDelta: defenderDelta,
+    suppressionApplied,
     captured,
     closeAssault,
     attackerX: attackerTile.x,
@@ -707,13 +937,21 @@ export function artilleryAction(state: GameState, formationId: string, x: number
   target.strength = Math.max(0, target.strength + delta);
   target.lastEngagedRound = state.round;
   target.readiness = Math.max(25, target.readiness - 6);
+  // Suppression (phase 7): a fire mission's second output, alongside damage —
+  // artillery is the primary source of it. Never causes strength loss itself.
+  const suppressionApplied = suppressionHitFor(false);
+  target.suppression = Math.min(100, target.suppression + suppressionApplied);
+  target.lastSuppressedRound = state.round;
   // Indirect fire is harassing: it carries half the morale weight of a
   // stand-up assault, and a light stonk carries none at all.
   applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'under artillery fire');
-  log(state, `${f.name} fire mission struck ${target.name} at grid ${gridRef(x, y)} — ${lossFromDelta(delta)} losses.`, 'ALL');
+  log(
+    state,
+    `${f.name} fire mission struck ${target.name} at grid ${gridRef(x, y)} — ${lossFromDelta(delta)} losses, suppression +${suppressionApplied}.`,
+    'ALL'
+  );
   if (target.strength <= 0) {
-    mourn(state, target);
-    delete state.formations[target.id];
+    destroyFormation(state, target);
   }
   refreshAllSpotting(state);
   return state;
@@ -729,11 +967,13 @@ export function airStrikeAction(state: GameState, x: number, y: number): GameSta
   const delta = -(15 + Math.random() * 20);
   target.strength = Math.max(0, target.strength + delta);
   target.lastEngagedRound = state.round;
+  // A strike from off-map is standoff fire too — suppresses like artillery.
+  target.suppression = Math.min(100, target.suppression + suppressionHitFor(false));
+  target.lastSuppressedRound = state.round;
   applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'under air attack');
   log(state, `Air strike (F-15SG/F-16 flight) hit ${target.name} at grid ${gridRef(x, y)} — ${lossFromDelta(delta)} losses.`, 'ALL');
   if (target.strength <= 0) {
-    mourn(state, target);
-    delete state.formations[target.id];
+    destroyFormation(state, target);
   }
   refreshAllSpotting(state);
   return state;
@@ -846,6 +1086,18 @@ function tickObjectives(state: GameState, scoringSide: PlayerId) {
  * AMMUNITION regenerates for the guns and the ships that held their fire. Both
  * numbers are on the unit card.
  */
+/**
+ * Suppression's per-round decay rate (phase 7): cover recovers it faster,
+ * open ground lets it linger — the same terrain-as-multiplier pattern already
+ * used for combat and detection.
+ */
+function suppressionDecayFor(f: Formation, tile: Tile): number {
+  let d = SUPPRESSION_DECAY_BASE;
+  if (isCloseTerrain(tile) || f.fortified) d *= SUPPRESSION_DECAY_COVER_MULT;
+  else if (tile.terrain === 'OPEN' || tile.terrain === 'BEACH') d *= SUPPRESSION_DECAY_OPEN_MULT;
+  return d;
+}
+
 function tickCondition(state: GameState, owner: PlayerId) {
   Object.values(state.formations).forEach((f) => {
     if (f.owner !== owner) return;
@@ -853,6 +1105,12 @@ function tickCondition(state: GameState, owner: PlayerId) {
     f.readiness = engaged ? Math.max(25, f.readiness - 4) : Math.min(100, f.readiness + 12);
     if (usesAmmo(f) && f.lastFiredRound !== state.round) {
       f.ammo = Math.min(maxAmmo(f), f.ammo + AMMO_REGEN_PER_ROUND);
+    }
+    // Suppression decays a round after it was last applied — a fresh hit this
+    // round is not also decayed the same round it landed.
+    if (f.suppression > 0 && f.lastSuppressedRound !== state.round) {
+      const tile = state.tiles[f.y][f.x];
+      f.suppression = Math.max(0, f.suppression - suppressionDecayFor(f, tile));
     }
   });
 }
@@ -890,6 +1148,15 @@ export function endTurn(state: GameState): GameState {
   tickMorale(state, finishing);
   const roundComplete = finishing === otherPlayer(state.initiative);
   if (roundComplete) state.round += 1;
+  // Overwatch (phase 7): a formation that did NOT spend its major action this
+  // round goes on alert for the opponent's following turn — read BEFORE the
+  // reset below clears hasActedThisTurn. Artillery never stands overwatch —
+  // it is not a direct-fire weapon.
+  Object.values(state.formations).forEach((f) => {
+    if (f.owner !== finishing) return;
+    f.onAlert = !f.hasActedThisTurn && f.type !== 'ARTILLERY';
+    f.reactionFired = false;
+  });
   // Reset the finishing side's per-round budgets so everything is fresh when
   // control comes back to them.
   Object.values(state.formations).forEach((f) => {
@@ -914,5 +1181,13 @@ export function beginPlayerTurn(state: GameState): GameState {
   // winner, and the server calls this immediately afterwards.
   if (state.phase === 'GAME_OVER') return state;
   state.phase = 'PLAYING';
+  // Overwatch (phase 7): the alert a formation went on when IT last ended its
+  // own turn has now served its purpose (the opponent's turn it covered is
+  // over) — clear it at the start of its own next turn.
+  Object.values(state.formations).forEach((f) => {
+    if (f.owner !== state.activePlayer) return;
+    f.onAlert = false;
+    f.reactionFired = false;
+  });
   return state;
 }

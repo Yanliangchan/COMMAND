@@ -53,6 +53,11 @@ export const MovementPreview: React.FC<{
               vs {plan.cost} by road.
             </div>
           )}
+          {plan.zocNote && (
+            <div className="mp-advisory warn" data-testid="mp-zoc-note">
+              ⚠ {plan.zocNote}
+            </div>
+          )}
         </>
       ) : (
         <div className="mp-reason" data-testid="mp-reason">

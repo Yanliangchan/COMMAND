@@ -12,9 +12,10 @@ import { EndGameScreen } from './components/EndGameScreen';
 import { Legend } from './components/Legend';
 import { HelpPanel } from './components/HelpPanel';
 import { Lobby } from './components/Lobby';
+import { OpsLog } from './components/OpsLog';
 import { GroupMovePreview, MovementPreview } from './components/MovementPreview';
 import { AttackPreview } from './components/AttackPreview';
-import { Camera, ContactPing, Overlays, PING_LIFETIME_MS } from './render/renderMap';
+import { Camera, ContactPing, KillMarker, Overlays, PING_LIFETIME_MS } from './render/renderMap';
 import { TargetMode } from './App.types';
 import { ActionAvailability, actionAvailability, ACTION_BY_SHORTCUT, formationsWithActions } from './game/actions';
 import { computeReachable, formationAt, previewAttack } from './game/engine';
@@ -71,10 +72,13 @@ export default function App() {
   const [legendOpen, setLegendOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [rosterCollapsed, setRosterCollapsed] = useState(false);
+  const [logCollapsed, setLogCollapsed] = useState(true);
   const [endTurnWarn, setEndTurnWarn] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [contactAlert, setContactAlert] = useState<ContactAlert | null>(null);
   const [pings, setPings] = useState<ContactPing[]>([]);
+  const [killMarkers, setKillMarkers] = useState<KillMarker[]>([]);
+  const knownKillIdsRef = useRef<Set<string>>(new Set());
   const knownContactsRef = useRef<Record<string, DetectionLevel> | null>(null);
   const alertTimer = useRef<number | undefined>(undefined);
   const alertSeq = useRef(0);
@@ -145,6 +149,19 @@ export default function App() {
     const added: ContactPing[] = [...fresh, ...upgraded].map((c) => ({ x: c.x, y: c.y, at: now, level: c.level }));
     setPings((ps) => [...ps.filter((p) => now - p.at < PING_LIFETIME_MS), ...added].slice(-24));
   }, [state, you]);
+
+  // ---- Kill markers (phase 7) ----------------------------------------------
+  // state.killFeed is already fog-redacted per viewer by the server; anything
+  // not yet seen this session becomes a brief wreck marker on the map.
+  useEffect(() => {
+    if (!state) return;
+    const fresh = state.killFeed.filter((k) => !knownKillIdsRef.current.has(k.id));
+    if (!fresh.length) return;
+    fresh.forEach((k) => knownKillIdsRef.current.add(k.id));
+    const now = performance.now();
+    const added: KillMarker[] = fresh.map((k) => ({ id: k.id, x: k.x, y: k.y, at: now, owner: k.owner, type: k.type }));
+    setKillMarkers((ks) => [...ks.filter((k) => now - k.at < 8000), ...added].slice(-16));
+  }, [state]);
 
   useEffect(() => {
     if (!state || !you) return;
@@ -217,7 +234,10 @@ export default function App() {
   // state the client holds — so an unconfirmed target is predicted from the
   // very assumptions the player is being asked to make.
   const attackTarget = useMemo(
-    () => (state && selected && targetMode === 'ATTACK' && hoverTile ? formationAt(state, hoverTile.x, hoverTile.y) ?? null : null),
+    () =>
+      state && selected && (targetMode === 'ATTACK' || targetMode === 'ARTILLERY') && hoverTile
+        ? formationAt(state, hoverTile.x, hoverTile.y) ?? null
+        : null,
     [state, selected, targetMode, hoverTile?.x, hoverTile?.y]
   );
   const attackPrediction = useMemo(
@@ -273,6 +293,9 @@ export default function App() {
           break;
         case 'FORTIFY':
           net.sendAction({ type: 'FORTIFY', formationId: selected.id });
+          break;
+        case 'REORGANIZE':
+          net.sendAction({ type: 'REORGANIZE', formationId: selected.id });
           break;
         default:
           break;
@@ -530,6 +553,7 @@ export default function App() {
         pathInvalid={targetMode === 'MOVE' ? movePlan?.ok === false : false}
         onHoverTile={setHoverTile}
         pings={pings}
+        kills={killMarkers}
       />
 
       <TopBar state={state} you={you} objectivesHeld={objectivesHeld} objectivesTotal={state.objectives.length} />
@@ -563,7 +587,9 @@ export default function App() {
         <UnitDetailPanel state={state} formation={selected} onCentre={() => centreOn(selected)} onClose={() => setSelectedId(null)} />
       )}
 
-      {targetMode === 'ATTACK' && attackPrediction && attackTarget && selected && (
+      <OpsLog state={state} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
+
+      {(targetMode === 'ATTACK' || targetMode === 'ARTILLERY') && attackPrediction && attackTarget && selected && (
         <div className="move-preview-wrap">
           <AttackPreview
             prediction={attackPrediction}

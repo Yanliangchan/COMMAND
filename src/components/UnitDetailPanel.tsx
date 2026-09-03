@@ -3,7 +3,7 @@ import { FORMATION_DEFS } from '../game/data';
 import { maxAmmo, movesRemaining, usesAmmo } from '../game/engine';
 import { movementProfile, supportedFormation } from '../game/movement';
 import { currentDetectionRange, detectionModifiers } from '../game/detection';
-import { COHESION_RADIUS, DETECTION, Formation, GameState, gridRef } from '../game/types';
+import { COHESION_RADIUS, DETECTION, Formation, GameState, REORGANIZE_COOLDOWN_ROUNDS, gridRef } from '../game/types';
 
 const MORALE_COLOR: Record<string, string> = {
   Elite: 'var(--olive-bright)',
@@ -77,6 +77,11 @@ export const UnitDetailPanel: React.FC<{
           {f.hasActedThisTurn ? 'major action used' : 'major action ready'}
         </span>
         {f.fortified && <span className="mini-chip chip-amber">fortified</span>}
+        {f.onAlert && (
+          <span className="mini-chip chip-alert" title="No reaction shot fired yet this alert period — reacts once to an enemy that moves into range and line of sight." data-testid="alert-chip">
+            ⚠ on alert
+          </span>
+        )}
       </div>
 
       <div className="unit-move-block" data-testid="unit-movement">
@@ -109,6 +114,12 @@ export const UnitDetailPanel: React.FC<{
 
       <Bar label="Strength" value={f.strength} color="var(--olive)" />
       <Bar label="Readiness" value={f.readiness} color="var(--blue)" />
+      {/* Suppression (phase 7) — a distinct bar, never folded into readiness or
+          morale. 0 unless the formation has actually been suppressed, and
+          redacted (-1) for an enemy known only to IDENTIFIED. */}
+      {f.suppression >= 0 && (
+        <Bar label="Suppression" value={f.suppression} color="#8a6fae" />
+      )}
       {/* Ammunition (phase 6) — whole rounds, drawn as pips, and shown ONLY for
           the guns and the ships that actually use them. Everything else has no
           ammunition line at all, which is one fewer number to read. */}
@@ -172,6 +183,13 @@ export const UnitDetailPanel: React.FC<{
           </div>
         ))}
       </div>
+
+      {f.lastReorganizedRound > 0 && state.round - f.lastReorganizedRound < REORGANIZE_COOLDOWN_ROUNDS && (
+        <div className="unit-move-note warn" data-testid="reorganize-cooldown">
+          Reorganize on cooldown — ready again in {REORGANIZE_COOLDOWN_ROUNDS - (state.round - f.lastReorganizedRound)} round
+          {REORGANIZE_COOLDOWN_ROUNDS - (state.round - f.lastReorganizedRound) === 1 ? '' : 's'}.
+        </div>
+      )}
 
       <div className="unit-card-order">
         <span className="k">Current orders</span> {f.lastOrder}

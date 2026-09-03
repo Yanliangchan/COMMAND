@@ -103,6 +103,10 @@ const markersFor = (viewer: PlayerId): Entry[] => [
   { symbol: '▨', color: '#cf9a44', label: 'Movement range', note: 'Amber wash — tiles reachable with this move.' },
   { symbol: '◇', color: '#c1524a', label: 'Attack range', note: 'Dashed red diamond around the selected unit.' },
   { symbol: '⌂', color: '#93a35f', label: 'Fortified', note: 'Amber arc under a dug-in formation.' },
+  { symbol: '⚠', color: '#e6786a', label: 'On alert', note: 'Pulsing red-amber ring and a "!" badge. Did not act last round — will fire one reaction shot at an enemy that moves into its range and line of sight this opponent turn.' },
+  { symbol: '▦', color: '#c1524a', label: 'Zone of Control', note: 'Red hatched tiles shown while a move order is armed. An enemy formation moving through one has its bound stopped there; leaving one you started in costs a full movement action.' },
+  { symbol: '▬', color: '#8a6fae', label: 'Suppression', note: 'Purple bar under the strength bar. Cuts attack power and movement range up to 50% at maximum; decays each round it is not refreshed, faster in cover, slower in the open.' },
+  { symbol: '✕', color: '#e6b665', label: 'Wreck marker', note: 'A brief cross-marker where a formation was just destroyed, held a few seconds on the map for both sides (redaction still applies).' },
 ];
 
 /** Pick a symbol colour that stays legible on its own swatch. */

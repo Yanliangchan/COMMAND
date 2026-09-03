@@ -300,6 +300,9 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
     case 'SPECIAL_OP':
       engine.specialOpAction(state, action.formationId, action.x, action.y);
       break;
+    case 'REORGANIZE':
+      engine.reorganizeAction(state, action.formationId);
+      break;
     case 'END_TURN':
       engine.endTurn(state);
       // Skip the (now meaningless, single-tab-only) TURN_HANDOFF phase —

@@ -59,8 +59,16 @@ import {
   FormationType,
   GameState,
   LossLevel,
+  SUPPRESSION_HIT_DIRECT,
+  SUPPRESSION_HIT_INDIRECT,
   Tile,
+  suppressionMultiplier,
 } from './types';
+
+/** How much suppression a given kind of engagement inflicts on the defender. */
+export function suppressionHitFor(closeAssault: boolean): number {
+  return closeAssault ? SUPPRESSION_HIT_DIRECT : SUPPRESSION_HIT_INDIRECT;
+}
 
 // ---------------------------------------------------------------------------
 // Tunables — every one of them is quoted to the player somewhere.
@@ -274,6 +282,14 @@ export function attackPower(
   power *= mm;
   if (mm !== 1) factors.push({ label: `Morale (${attacker.morale})`, positive: mm > 1, magnitude: Math.abs(mm - 1) * 100 });
 
+  // Suppression (phase 7): a suppressed formation hits softer, up to -50% at
+  // maximum suppression. Purely an attack-power effect — it never causes
+  // casualties by itself, and it never touches the DEFENDER's resistance.
+  const sm = suppressionMultiplier(attacker.suppression ?? 0);
+  power *= sm;
+  if (sm < 0.995)
+    factors.push({ label: `Suppressed (${Math.round(attacker.suppression ?? 0)}%)`, positive: false, magnitude: (1 - sm) * 100 });
+
   const match = MATCHUP[ac][dc][close ? 'close' : 'open'];
   power *= match;
   factors.push({
@@ -468,6 +484,8 @@ export interface Prediction {
   bestOutcome: Outcome;
   closeAssault: boolean;
   canCapture: boolean;
+  /** Suppression this engagement will apply to the defender (phase 7), 0..100. */
+  suppressionApplied: number;
   intel: DetectionLevel;
   /** True when the band is wide because the target is not confirmed. */
   uncertain: boolean;
@@ -536,6 +554,7 @@ export function predictEngagement(
     bestOutcome: high.outcome,
     closeAssault,
     canCapture: closeAssault,
+    suppressionApplied: suppressionHitFor(closeAssault),
     intel,
     uncertain: (INTEL_UNCERTAINTY[intel] ?? 0) > 0,
     factors: [
