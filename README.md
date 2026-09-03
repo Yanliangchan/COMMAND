@@ -323,6 +323,7 @@ hold, rather than asserting that blue always means friendly.
 | 5th Battalion, Singapore Infantry Regiment | 5 SIR | Battalion | Infantry |
 | 1st Commando Battalion | 1 CDO BN | Battalion | Commandos |
 | 40th Battalion, Singapore Armoured Regiment | 40 SAR | Battalion | Armour |
+| 48th Battalion, Singapore Armoured Regiment | 48 SAR | Battalion | Armour |
 | 21st Battalion, Singapore Artillery | 21 SA | Battalion | Artillery |
 | 35th Battalion, Singapore Combat Engineers | 35 SCE | Battalion | Combat Engineers |
 | 10th Command, Control, Communications, Computers and Intelligence Battalion | 10 C4I Bn | Battalion | C4I / Signals & ISR |
@@ -336,6 +337,7 @@ hold, rather than asserting that blue always means friendly.
 | 9th Battalion, Singapore Infantry Regiment | 9 SIR | Battalion | Infantry |
 | 1st Battalion, Singapore Guards | 1 GDS | Battalion | Guards |
 | 41st Battalion, Singapore Armoured Regiment | 41 SAR | Battalion | Armour |
+| 42nd Battalion, Singapore Armoured Regiment | 42 SAR | Battalion | Armour |
 | 20th Battalion, Singapore Artillery | 20 SA | Battalion | Artillery |
 | 30th Battalion, Singapore Combat Engineers | 30 SCE | Battalion | Combat Engineers |
 | 11th Command, Control, Communications, Computers and Intelligence Battalion | 11 C4I Bn | Battalion | C4I / Signals & ISR |
@@ -343,9 +345,20 @@ hold, rather than asserting that blue always means friendly.
 | 189 Squadron, Republic of Singapore Navy | 189 SQN | Squadron | RSN |
 
 The two ORBATs are deliberately **equivalent in weight**: three rifle
-battalions, one elite manoeuvre battalion, one armoured battalion, one
+battalions, one elite manoeuvre battalion, two armoured battalions, one
 artillery battalion, one combat-engineer battalion, one C4I battalion and two
-RSN squadrons each.
+RSN squadrons each — eleven formations a side.
+
+**Phase 8** added the second armoured battalion to each side: 48 SAR to SABRE
+and 42 SAR to VANGUARD. Both are real, publicly documented SAF armour
+battalions (the SAF fields four active armour battalions — 40, 41, 42 and
+48 SAR — so all four now appear in the game, two per task force), verified by
+search before being added; see "Formation naming — what was checked" below.
+Which of the two goes to which task force, like every other ORBAT slotting
+here, is a fictional exercise arrangement. Adding an eleventh formation a side
+meant re-checking everything that assumed exactly ten: the AP budget, the
+deployment-zone capacity on the 72×72 map, and the side-balance simulation —
+see "Movement actions and the AP economy" and the balance-sim notes below.
 
 ### Formation naming — what was checked
 
@@ -384,6 +397,14 @@ RSN squadrons each.
     for anti-submarine work. It fills VANGUARD's littoral slot opposite
     188 SQN.
   No squadron number here was invented.
+- **42 SAR** and **48 SAR** (phase 8) are both real, publicly documented
+  active battalions of the Singapore Armoured Regiment, alongside 40 and
+  41 SAR already in the roster — the SAF names four active armour battalions
+  in total (40th, 41st, 42nd and 48th), so this roster now fields all four,
+  two per task force. 42 SAR (formed 1971, Sungei Gedong Camp) is an
+  armoured-infantry battalion; 48 SAR (formed 2008) is a tank battalion
+  fielding the Leopard 2SG, matching the equipment flavour already used for
+  40/41 SAR. Checked by web search against public sources before being added.
 
 > **Which battalion or squadron is assigned to which exercise task force is a
 > FICTIONAL gameplay arrangement**, as are all stats, costs, AP values, VP
@@ -433,7 +454,10 @@ The old build gave every formation exactly one "major action" a round, which
 made manoeuvre glacial and left players ending turns with unspent AP. That is
 replaced by a **two-budget** model:
 
-- **A global AP pool** — 26 AP per turn, rolling over up to a 34 AP cap. Every
+- **A global AP pool** — 28 AP per turn (26 through phase 7; bumped +2 in
+  phase 8 to absorb the eleventh formation's action appetite — see the
+  comment on `AP_PER_TURN` in `src/game/types.ts`), rolling over up to a
+  36 AP cap. Every
   action still costs AP exactly as before (Move 1, Attack 2, Recon 1, Fortify
   1, Artillery 2, Engineer bridge 2 / clear 1, Special Op 3, Air
   strike 3).
@@ -1162,6 +1186,41 @@ and the initiative holder wins exactly half its games. The individual HARD
 batches are noisier than the MEDIUM ones (17/23, 21/19, 13/27) — 40 games is a
 small sample against a ±15% per-batch spread — but they no longer favour a
 fixed side.
+
+### Side balance re-verified after the 11th formation (phase 8)
+
+Adding 48 SAR / 42 SAR meant re-running the side-balance check from scratch
+rather than assuming it still held. Method: a throwaway bot-vs-bot script
+(not committed) calling `decideBotAction` directly against `engine.initGame`,
+mirroring exactly how `server/index.ts` actually drives its bot — the real
+server hands the bot the **raw, unfiltered** `GameState`, not the
+fog-filtered view a human player gets, so this sim reproduces that faithfully
+rather than a more "realistic" fogged bot. 120 seeded games per cell, same
+seed bases (5000+i MEDIUM, 9000+i HARD) run against both trees so the
+comparison isolates the roster/AP change:
+
+| | Before (e89f6b2, 10 formations/side, AP 26/34) | After (phase 8, 11 formations/side, AP 28/36) |
+| --- | --- | --- |
+| MEDIUM vs MEDIUM | SABRE 60.0% / VANGUARD 40.0% | SABRE 59.2% / VANGUARD 40.8% |
+| HARD vs HARD | SABRE 55.8% / VANGUARD 44.2% | **SABRE 49.2% / VANGUARD 50.8%** |
+| Avg. rounds / actions per game | 12.8–13.8 rounds, 320–336 actions | 12.9–13.6 rounds, 334–350 actions |
+
+Two things worth being direct about. First, this methodology's own "before"
+numbers do not match the ~54/46 MEDIUM, ~47/53 HARD figures quoted from the
+phase-7 pass — that earlier soak was a different throwaway script, most
+likely one that fed the bot a fog-filtered view rather than raw state, and it
+was not committed to the repo, so it could not be re-run bit-for-bit. What
+*can* be said cleanly is the paired comparison above, both cells of which
+used the identical harness against the identical seeds — that is the
+apples-to-apples measurement the task calls for. Second, given that
+comparison: the eleventh formation and the AP bump did **not** introduce or
+worsen a side lean. HARD balance actually improved (55.8/44.2 → 49.2/50.8,
+essentially even). MEDIUM is unchanged within noise (60.0/40.0 → 59.2/40.8)
+— a persistent SABRE lean at MEDIUM difficulty that predates phase 8 and
+survives it identically, so it is a property of the MEDIUM bot's heuristics
+against this map/scenario, not something the roster change caused. Game
+length and action volume per game are essentially unchanged, so the larger
+rosters have not made games meaningfully longer or slower to resolve.
 
 ### Validation — a broken map can never reach a room
 

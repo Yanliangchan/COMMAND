@@ -15,9 +15,9 @@
 
 import * as engine from '../src/game/engine';
 import { attackPower, defencePower, lossesFromShare, predictEngagement } from '../src/game/combat';
-import { FORMATION_DEFS } from '../src/game/data';
+import { FORMATION_DEFS, ORDERS_OF_BATTLE } from '../src/game/data';
 import { movementProfile, planMove } from '../src/game/movement';
-import { AP_COSTS, Formation, FormationType, GameState, GRID_SIZE, PlayerId, Tile, moraleBandFor } from '../src/game/types';
+import { AP_CAP, AP_COSTS, AP_PER_TURN, Formation, FormationType, GameState, GRID_SIZE, PlayerId, Tile, moraleBandFor } from '../src/game/types';
 
 let failures = 0;
 const check = (c: boolean, m: string) => {
@@ -377,6 +377,34 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
     s.log.some((l) => l.text.includes('destroyed at grid') && l.audience === 'SABRE'),
     'the other side gets a destruction log line too (redaction-capped)'
   );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8: roster/AP-economy regression guard. 48 SAR / 42 SAR brought each
+// side from 10 to 11 formations (8 -> 9 land, 2 naval unchanged) and the AP
+// budget was bumped 26 -> 28 (cap 34 -> 36) to absorb the extra formation's
+// action appetite. This is not a combat-formula assertion like the rest of
+// the file, but it belongs here for the same reason as the ammunition and
+// destruction checks above: a future roster or AP edit that silently drifts
+// the two out of sync again should fail loudly rather than only be caught by
+// eyeballing the balance sim.
+// ---------------------------------------------------------------------------
+{
+  (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
+    const oob = ORDERS_OF_BATTLE[side] as { type: FormationType; shortName: string }[];
+    check(oob.length === 11, `${side} fields 11 formations (has ${oob.length})`);
+    const armour = oob.filter((p) => p.type === 'ARMOUR');
+    check(armour.length === 2, `${side} fields exactly two armoured battalions (has ${armour.length}: ${armour.map((p) => p.shortName).join(', ')})`);
+  });
+  check(
+    ORDERS_OF_BATTLE.SABRE.some((p: { shortName: string }) => p.shortName === '48 SAR'),
+    'SABRE roster includes 48 SAR'
+  );
+  check(
+    ORDERS_OF_BATTLE.VANGUARD.some((p: { shortName: string }) => p.shortName === '42 SAR'),
+    'VANGUARD roster includes 42 SAR'
+  );
+  check(AP_PER_TURN === 28 && AP_CAP === 36, `AP economy matches the phase-8 bump (AP_PER_TURN=${AP_PER_TURN}, AP_CAP=${AP_CAP})`);
 }
 
 console.log(failures ? `\nFAIL: ${failures} combat-model assertion(s)` : '\nPASS: combat model holds.');

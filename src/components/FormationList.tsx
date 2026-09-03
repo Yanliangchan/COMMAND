@@ -1,6 +1,7 @@
 import React from 'react';
 import { FORMATION_DEFS } from '../game/data';
 import { formationActivity } from '../game/actions';
+import { canReorganize } from '../game/engine';
 import { Formation, GameState, PlayerId } from '../game/types';
 import { formationGlyph } from '../render/renderMap';
 
@@ -47,7 +48,23 @@ export const FormationList: React.FC<{
                 title={`${f.name} — ${FORMATION_DEFS[f.type].label}`}
               >
                 <span className="roster-glyph">{formationGlyph(f.type)}</span>
-                <span className="roster-name">{f.shortName}</span>
+                <span className="roster-name">
+                  {f.shortName}
+                  {/* At-a-glance condition dots — alert / suppressed / reorganize-ready.
+                      Absent entirely when none apply, so a healthy formation's row
+                      stays uncluttered. */}
+                  <span className="roster-status">
+                    {f.onAlert && (
+                      <i className="status-dot status-alert" title="On alert — will fire a reaction shot at an enemy that moves into range and line of sight." />
+                    )}
+                    {f.suppression > 0 && (
+                      <i className="status-dot status-suppressed" title={`Suppressed (${Math.round(f.suppression)}) — attack power and movement range reduced until it decays.`} />
+                    )}
+                    {a.majorFree && canReorganize(state, f) && (
+                      <i className="status-dot status-reorg" title="Reorganize is available this round (S) — no move made yet, off cooldown." />
+                    )}
+                  </span>
+                </span>
                 <span className="roster-str">{Math.round(f.strength)}%</span>
                 <span className="roster-badges">
                   {Array.from({ length: f.movesMax }).map((_, i) => (

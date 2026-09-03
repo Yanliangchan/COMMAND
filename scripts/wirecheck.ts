@@ -61,6 +61,18 @@ const TRUE_AT: Record<keyof Formation, DetectionLevel> = {
 const failures: string[] = [];
 let checks = 0;
 const seen: Record<DetectionLevel, number> = { UNKNOWN: 0, CONTACT: 0, IDENTIFIED: 0, CONFIRMED: 0 };
+// Phase 8: the renderer picks its arm silhouette straight off `f.type` (see
+// render/icons.ts) — CONTACT-level enemies must never be sent a `type` at
+// all (asserted below via `contact.type === undefined`), or the client would
+// have the arm to draw an icon from at a rung the design deliberately
+// withholds it. This table confirms that rule is actually EXERCISED for
+// every arm — including the two new armour formations (48 SAR / 42 SAR) —
+// not just asserted for whichever arm happens to reach each rung first.
+const seenByTypeAndLevel: Record<string, Record<DetectionLevel, number>> = {};
+function trackTypeLevel(type: string, level: DetectionLevel) {
+  seenByTypeAndLevel[type] ??= { UNKNOWN: 0, CONTACT: 0, IDENTIFIED: 0, CONFIRMED: 0 };
+  seenByTypeAndLevel[type][level]++;
+}
 
 function fail(msg: string) {
   failures.push(msg);
@@ -89,6 +101,7 @@ function auditSnapshot(state: GameState, viewer: PlayerId) {
     auditFormationShape(truth);
     const level: DetectionLevel = state.players[viewer].contacts[truth.id]?.level ?? 'UNKNOWN';
     seen[level]++;
+    trackTypeLevel(truth.type, level);
     const sent = wire.formations[truth.id];
     const contact = wire.players[viewer].contacts[truth.id];
 
@@ -102,7 +115,11 @@ function auditSnapshot(state: GameState, viewer: PlayerId) {
         ok(!sent, `CONTACT enemy ${truth.id} leaked a formation object (position only is allowed)`);
         ok(!!contact, `CONTACT enemy ${truth.id} has no contact record`);
         if (contact) {
-          ok(contact.type === undefined, `CONTACT ${truth.id} leaked its arm (type=${contact.type})`);
+          // The client's icon renderer has nothing to draw an arm silhouette
+          // from unless `type` is present — this is the redaction rule that
+          // keeps a CONTACT-level blip generic ("?") rather than showing the
+          // real arm's icon.
+          ok(contact.type === undefined, `CONTACT ${truth.id} leaked its arm (type=${contact.type}) — icon renderer could draw the wrong-rung silhouette from this`);
           ok(
             !JSON.stringify(contact).includes(truth.shortName),
             `CONTACT ${truth.id} leaked its designation in the contact record`
@@ -114,6 +131,10 @@ function auditSnapshot(state: GameState, viewer: PlayerId) {
         ok(!!sent, `IDENTIFIED enemy ${truth.id} missing from the wire`);
         if (!sent) break;
         ok(sent.redacted === true, `IDENTIFIED ${truth.id} not flagged redacted`);
+        // This IS the arm-icon reveal rule: IDENTIFIED is the lowest rung the
+        // client may render a specific arm silhouette at (see render/icons.ts
+        // + render/renderMap.ts drawFormation) because it is the lowest rung
+        // fog.ts sends a real `type` at all.
         ok(sent.type === truth.type, `IDENTIFIED ${truth.id} should reveal its arm`);
         ok(sent.x === truth.x && sent.y === truth.y, `IDENTIFIED ${truth.id} should reveal its position`);
         // Every CONFIRMED-only field must NOT equal the truth (or must be a sentinel).
@@ -250,6 +271,20 @@ console.log(`rungs exercised — UNKNOWN ${seen.UNKNOWN}, CONTACT ${seen.CONTACT
 const rungsMissing = (Object.keys(seen) as DetectionLevel[]).filter((k) => seen[k] === 0);
 if (rungsMissing.length) {
   console.error(`FAIL: these detection rungs were never exercised: ${rungsMissing.join(', ')}`);
+  process.exit(1);
+}
+
+// Phase 8 icon-redaction coverage: every arm — ARMOUR included, now fielded
+// twice a side via 48 SAR / 42 SAR — must have actually been exercised at
+// both CONTACT (icon must NOT appear) and IDENTIFIED (icon MUST appear) at
+// least once, or the assertions above proved nothing about this arm.
+const armTypesMissingCoverage: string[] = [];
+for (const [type, byLevel] of Object.entries(seenByTypeAndLevel)) {
+  if (byLevel.CONTACT === 0 || byLevel.IDENTIFIED === 0) armTypesMissingCoverage.push(`${type} (CONTACT=${byLevel.CONTACT}, IDENTIFIED=${byLevel.IDENTIFIED})`);
+}
+console.log('per-arm rung coverage — ' + Object.entries(seenByTypeAndLevel).map(([t, l]) => `${t}[C=${l.CONTACT},I=${l.IDENTIFIED},X=${l.CONFIRMED}]`).join(' '));
+if (armTypesMissingCoverage.length) {
+  console.error(`FAIL: these arms never had both CONTACT and IDENTIFIED exercised, so the icon-reveal rule is unproven for them: ${armTypesMissingCoverage.join(', ')}`);
   process.exit(1);
 }
 if (failures.length) {

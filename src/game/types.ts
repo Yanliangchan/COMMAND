@@ -679,9 +679,17 @@ export function suppressionMultiplier(suppression: number): number {
  * movement actions plus one major action, is roughly a 26-32 AP appetite per
  * round. 26 AP/turn keeps the budget slightly *under* the appetite so choices
  * matter, while making it very hard to sit on unspent AP.
+ *
+ * Phase 8: an eleventh formation (the second armour battalion, 48 SAR /
+ * 42 SAR) adds roughly one more 2-move-plus-major-action appetite (~3-4 AP)
+ * on top of that. Bumped 26 -> 28 (and the carry cap 34 -> 36, same +2
+ * margin) to absorb it — a small, proportional lift that keeps the budget
+ * under the new appetite rather than erasing the scarcity the AP pool is
+ * for. Re-verified against the side-balance sim (see README) rather than
+ * assumed.
  */
-export const AP_PER_TURN = 26;
-export const AP_CAP = 34;
+export const AP_PER_TURN = 28;
+export const AP_CAP = 36;
 export const AIR_SORTIES_PER_TURN = 2;
 /**
  * Victory-point threshold. Raised 200 -> 280 in phase 5: objectives on the

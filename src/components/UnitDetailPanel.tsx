@@ -1,6 +1,6 @@
 import React from 'react';
 import { FORMATION_DEFS } from '../game/data';
-import { maxAmmo, movesRemaining, usesAmmo } from '../game/engine';
+import { canReorganize, maxAmmo, movesRemaining, usesAmmo } from '../game/engine';
 import { movementProfile, supportedFormation } from '../game/movement';
 import { currentDetectionRange, detectionModifiers } from '../game/detection';
 import { COHESION_RADIUS, DETECTION, Formation, GameState, REORGANIZE_COOLDOWN_ROUNDS, gridRef } from '../game/types';
@@ -80,6 +80,11 @@ export const UnitDetailPanel: React.FC<{
         {f.onAlert && (
           <span className="mini-chip chip-alert" title="No reaction shot fired yet this alert period — reacts once to an enemy that moves into range and line of sight." data-testid="alert-chip">
             ⚠ on alert
+          </span>
+        )}
+        {canReorganize(state, f) && f.owner === state.activePlayer && (
+          <span className="mini-chip chip-reorg" title="No move made this round and off cooldown — press S to stand down and reconstitute." data-testid="reorg-ready-chip">
+            ● reorganize ready
           </span>
         )}
       </div>

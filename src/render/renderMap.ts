@@ -14,6 +14,7 @@
 import { FORMATION_DEFS } from '../game/data';
 import { Contact, DetectionLevel, Formation, GameState, GRID_SIZE, Objective, PlayerId, Tile, gridRef } from '../game/types';
 import { PLAYER_COLORS, TERRAIN_COLORS, UI } from './colors';
+import { getIconBitmap } from './icons';
 
 /** Contour interval, as a fraction of the full 0..1 height range. */
 const CONTOUR_BANDS = 20;
@@ -1672,12 +1673,16 @@ function drawFormation(rc: RenderContext, f: Formation) {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  if (s >= 8) {
-    ctx.fillStyle = pc.light;
-    ctx.font = `bold ${Math.max(8, r * 0.85)}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(formationGlyph(f.type), sx, sy);
+  // Arm silhouette — colour still says whose side (pc.light), the shape says
+  // what it is. Cached per (type, size, colour); see icons.ts. IDENTIFIED
+  // enemies reach this function with a real f.type — that IS what
+  // "identified" means (fog.ts sends the arm at that rung) — while CONTACT
+  // enemies never get a Formation object at all and are drawn by
+  // drawContactMarker below with a generic '?', never an arm icon.
+  {
+    const iconSize = r * 1.5;
+    const bmp = getIconBitmap(f.type, iconSize, pc.light);
+    ctx.drawImage(bmp, sx - iconSize / 2, sy - iconSize / 2, iconSize, iconSize);
   }
 
   if (f.fortified) {

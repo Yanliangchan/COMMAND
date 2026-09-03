@@ -48,7 +48,7 @@ const UNITS: Topic[] = [
 const CONCEPTS: Topic[] = [
   {
     title: 'The exercise',
-    body: 'COMMAND is a fictional large-scale SAF force-on-force exercise. Two task forces drawn from the same armed forces fight each other over a fictional training area: TASK FORCE SABRE (1 SIR, 2 SIR, 5 SIR, 1 CDO BN, 40 SAR, 21 SA, 35 SCE, 10 C4I Bn, 185 SQN, 188 SQN) and TASK FORCE VANGUARD (3 SIR, 8 SIR, 9 SIR, 1 GDS, 41 SAR, 20 SA, 30 SCE, 11 C4I Bn, 191 SQN, 189 SQN). Both fight with the same weight of force: three rifle battalions, one elite manoeuvre battalion, armour, guns, engineers, a C4I battalion and two RSN squadrons each. The formation names and their real-world character are drawn from public sources; which battalion is on which side, and every number in the game, are fictional.',
+    body: 'COMMAND is a fictional large-scale SAF force-on-force exercise. Two task forces drawn from the same armed forces fight each other over a fictional training area: TASK FORCE SABRE (1 SIR, 2 SIR, 5 SIR, 1 CDO BN, 40 SAR, 48 SAR, 21 SA, 35 SCE, 10 C4I Bn, 185 SQN, 188 SQN) and TASK FORCE VANGUARD (3 SIR, 8 SIR, 9 SIR, 1 GDS, 41 SAR, 42 SAR, 20 SA, 30 SCE, 11 C4I Bn, 191 SQN, 189 SQN). Both fight with the same weight of force: three rifle battalions, one elite manoeuvre battalion, two armoured battalions, guns, engineers, a C4I battalion and two RSN squadrons each — eleven formations a side. The formation names and their real-world character are drawn from public sources; which battalion is on which side, and every number in the game, are fictional.',
   },
   {
     title: 'Initiative',

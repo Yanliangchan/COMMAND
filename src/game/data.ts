@@ -270,6 +270,19 @@ const SABRE_OOB: FormationProfile[] = [
     equipment: 'Leopard 2SG main battle tanks with Hunter AFV and Bionix IFV in support.',
   },
   {
+    // 48 SAR is the SAF's fourth active armour battalion (formed 2008,
+    // Keat Hong / Sungei Gedong Camp) alongside 40/41/42 SAR — a tank
+    // battalion fielding Leopard 2SG, consistent with the existing armour
+    // formations' equipment line. Verified against public sources; see
+    // README "Real-World Reference vs Fictional Game Mechanics".
+    type: 'ARMOUR',
+    name: '48th Battalion, Singapore Armoured Regiment',
+    shortName: '48 SAR',
+    echelon: 'Battalion',
+    arm: 'Armour',
+    equipment: 'Leopard 2SG main battle tanks with Hunter AFV and Bionix IFV in support.',
+  },
+  {
     type: 'ARTILLERY',
     name: '21st Battalion, Singapore Artillery',
     shortName: '21 SA',
@@ -348,6 +361,18 @@ const VANGUARD_OOB: FormationProfile[] = [
     type: 'ARMOUR',
     name: '41st Battalion, Singapore Armoured Regiment',
     shortName: '41 SAR',
+    echelon: 'Battalion',
+    arm: 'Armour',
+    equipment: 'Leopard 2SG main battle tanks with Hunter AFV and Bionix IFV in support.',
+  },
+  {
+    // 42 SAR is the SAF's third active armour battalion (formed 1971,
+    // Sungei Gedong Camp), an armoured infantry battalion alongside
+    // 40/41/48 SAR. Verified against public sources; see README
+    // "Real-World Reference vs Fictional Game Mechanics".
+    type: 'ARMOUR',
+    name: '42nd Battalion, Singapore Armoured Regiment',
+    shortName: '42 SAR',
     echelon: 'Battalion',
     arm: 'Armour',
     equipment: 'Leopard 2SG main battle tanks with Hunter AFV and Bionix IFV in support.',

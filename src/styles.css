@@ -216,7 +216,12 @@ canvas { display: block; touch-action: none; }
   text-align: center;
   padding: 2px 0;
 }
-.roster-name { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.03em; }
+.roster-name { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.03em; display: inline-flex; align-items: center; gap: 4px; }
+.roster-status { display: inline-flex; align-items: center; gap: 3px; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.status-dot.status-alert { background: #e6786a; box-shadow: 0 0 3px rgba(230, 120, 106, 0.8); }
+.status-dot.status-suppressed { background: #8a6fae; box-shadow: 0 0 3px rgba(138, 111, 174, 0.8); }
+.status-dot.status-reorg { background: var(--olive-bright); box-shadow: 0 0 3px rgba(147, 163, 95, 0.8); }
 .roster-str { font-family: var(--font-display); color: var(--olive-bright); font-size: 11px; }
 .roster-badges { grid-column: 2 / span 2; display: flex; align-items: center; gap: 3px; }
 .pip { width: 12px; height: 4px; border-radius: 1px; background: #333c45; display: inline-block; }
@@ -491,7 +496,7 @@ canvas { display: block; touch-action: none; }
   flex-direction: column;
   max-height: calc(100vh - 180px);
 }
-.legend-panel { right: 12px; top: 96px; width: 560px; }
+.legend-panel { right: 12px; top: 96px; width: 700px; }
 .help-panel { right: 12px; top: 96px; width: 380px; }
 .floating-head {
   display: flex;
@@ -506,7 +511,7 @@ canvas { display: block; touch-action: none; }
   color: var(--olive-bright);
 }
 .floating-body { overflow-y: auto; padding: 10px 12px 12px; }
-.legend-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.legend-cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
 .legend-sub { font-family: var(--font-display); font-size: 10px; letter-spacing: 0.16em; color: var(--amber); margin-bottom: 6px; }
 .legend-row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 5px; }
 .legend-swatch {
@@ -520,6 +525,8 @@ canvas { display: block; touch-action: none; }
   flex-shrink: 0;
 }
 .legend-symbol { font-size: 11px; color: #14181c; font-weight: 700; text-shadow: 0 0 2px rgba(255, 255, 255, 0.5); }
+.legend-swatch--icon { background: rgba(9, 12, 16, 0.75); }
+.legend-icon-canvas { width: 20px; height: 20px; display: block; }
 .legend-text { display: flex; flex-direction: column; font-size: 11px; line-height: 1.35; }
 .legend-text b { font-family: var(--font-display); color: var(--text); font-weight: 600; letter-spacing: 0.02em; }
 .legend-text i { color: var(--text-faint); font-style: normal; }
@@ -1072,7 +1079,7 @@ canvas { display: block; touch-action: none; }
 }
 
 @media (max-width: 1100px) {
-  .legend-panel { width: min(560px, calc(100vw - 24px)); }
+  .legend-panel { width: min(700px, calc(100vw - 24px)); }
   .action-bar { max-width: calc(100vw - 24px); }
 }
 
@@ -1302,3 +1309,10 @@ canvas { display: block; touch-action: none; }
  * ------------------------------------------------------------------------ */
 .mini-chip.chip-alert { border-color: var(--danger); color: #e8a08f; background: rgba(193, 82, 74, 0.16); }
 .stat-fill.suppression { background: #8a6fae; }
+/* Phase 8 polish pass: previously Reorganize had a warning chip for "on
+   cooldown" but no positive chip for "available right now" — a player had to
+   infer availability from the absence of the warning plus reading the moves
+   chip. This answers the "what can I do with this unit right now" question
+   the alert chip already answers, without duplicating the suppression bar
+   directly below (which already states that condition on its own row). */
+.mini-chip.chip-reorg { border-color: var(--olive-bright); color: var(--olive-bright); background: rgba(147, 163, 95, 0.16); }

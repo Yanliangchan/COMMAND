@@ -94,10 +94,30 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 2600);
   }, []);
 
+  const frameTimeRef = useRef(0);
+  const onFrameTime = useCallback((ms: number) => {
+    frameTimeRef.current = ms;
+  }, []);
+
   useEffect(() => {
     // Dev/QA hook only — lets automated smoke tests inspect connection + game
-    // state without clicking through pixel-exact canvas coordinates.
-    (window as any).__COMMAND_DEBUG__ = { net, state, you, setSelectedId, setCamera, computeReachable, selectedId, targetMode };
+    // state without clicking through pixel-exact canvas coordinates. frameTimeMs
+    // is the render loop's own smoothed self-measurement (MapCanvas onFrameTime),
+    // sampled here so a perf check can read `window.__COMMAND_DEBUG__.frameTimeMs`
+    // without adding any UI chrome.
+    (window as any).__COMMAND_DEBUG__ = {
+      net,
+      state,
+      you,
+      setSelectedId,
+      setCamera,
+      computeReachable,
+      selectedId,
+      targetMode,
+      get frameTimeMs() {
+        return frameTimeRef.current;
+      },
+    };
   });
 
   useEffect(() => {
@@ -551,6 +571,7 @@ export default function App() {
         groupIds={groupIds}
         pathPreview={targetMode === 'MOVE' ? movePlan?.path : undefined}
         pathInvalid={targetMode === 'MOVE' ? movePlan?.ok === false : false}
+        onFrameTime={onFrameTime}
         onHoverTile={setHoverTile}
         pings={pings}
         kills={killMarkers}

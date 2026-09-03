@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { PLAYER_COLORS, TERRAIN_COLORS } from '../render/colors';
-import { FACTION_SHORT } from '../game/data';
-import { PlayerId, otherPlayer } from '../game/types';
+import { FACTION_SHORT, FORMATION_DEFS } from '../game/data';
+import { FormationType, PlayerId, otherPlayer } from '../game/types';
+import { paintArmIcon } from '../render/icons';
 
 /**
  * Every legend entry pairs a colour swatch with a distinct symbol, so the map
@@ -85,13 +86,13 @@ const markersFor = (viewer: PlayerId): Entry[] => [
     symbol: 'IN',
     color: PLAYER_COLORS[viewer].main,
     label: `Friendly formation (${FACTION_SHORT[viewer]})`,
-    note: 'Your own counters. Two letters give the arm.',
+    note: 'Your own counters. A silhouette gives the arm — see ARM SILHOUETTES below.',
   },
   {
     symbol: 'IN',
     color: PLAYER_COLORS[otherPlayer(viewer)].main,
     label: `Enemy formation (${FACTION_SHORT[otherPlayer(viewer)]})`,
-    note: 'Currently detected. The badge says how well you know it.',
+    note: 'Currently detected. The badge says how well you know it; the silhouette only appears once you have identified the arm — a bare Contact blip stays a generic "?".',
   },
   { symbol: '★', color: '#cf9a44', label: 'Objective', note: 'Pays Victory Points each round you are still holding it after the enemy has replied. The ones between the two deployment areas are worth two to three times a rear-area objective.' },
   { symbol: '⚓', color: '#cf9a44', label: 'Anchorage', note: 'Maritime objective — only ships can hold it.' },
@@ -107,6 +108,9 @@ const markersFor = (viewer: PlayerId): Entry[] => [
   { symbol: '▦', color: '#c1524a', label: 'Zone of Control', note: 'Red hatched tiles shown while a move order is armed. An enemy formation moving through one has its bound stopped there; leaving one you started in costs a full movement action.' },
   { symbol: '▬', color: '#8a6fae', label: 'Suppression', note: 'Purple bar under the strength bar. Cuts attack power and movement range up to 50% at maximum; decays each round it is not refreshed, faster in cover, slower in the open.' },
   { symbol: '✕', color: '#e6b665', label: 'Wreck marker', note: 'A brief cross-marker where a formation was just destroyed, held a few seconds on the map for both sides (redaction still applies).' },
+  { symbol: '●', color: '#e6786a', label: 'Roster: on alert', note: 'A small dot next to a formation’s name in the FORMATIONS list — same meaning as the pulsing ring on the map, readable without selecting the unit.' },
+  { symbol: '●', color: '#8a6fae', label: 'Roster: suppressed', note: 'A small dot next to a formation’s name in the FORMATIONS list when its suppression is above zero.' },
+  { symbol: '●', color: '#93a35f', label: 'Roster: Reorganize ready', note: 'A small dot next to a formation’s name in the FORMATIONS list — it has not moved this round, its major action is free, and it is off cooldown.' },
 ];
 
 /** Pick a symbol colour that stays legible on its own swatch. */
@@ -114,6 +118,37 @@ function inkFor(hex: string) {
   const n = parseInt(hex.slice(1), 16);
   const lum = (((n >> 16) & 255) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114) / 255;
   return lum > 0.55 ? '#14181c' : '#f2f6f4';
+}
+
+const ARM_ORDER: FormationType[] = ['INFANTRY', 'COMMANDO', 'GUARDS', 'ARMOUR', 'ARTILLERY', 'ENGINEER', 'RECON', 'FRIGATE', 'CORVETTE'];
+
+/** Small canvas swatch painting the actual silhouette used on the map. */
+const IconSwatch: React.FC<{ type: FormationType; color: string }> = ({ type, color }) => {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, c.width, c.height);
+    paintArmIcon(ctx, type, c.width / 2, c.height / 2, c.width * 0.86, color);
+  }, [type, color]);
+  return <canvas ref={ref} width={28} height={28} className="legend-icon-canvas" />;
+};
+
+function IconRow({ type, color }: { type: FormationType; color: string }) {
+  const def = FORMATION_DEFS[type];
+  return (
+    <div className="legend-row">
+      <span className="legend-swatch legend-swatch--icon">
+        <IconSwatch type={type} color={color} />
+      </span>
+      <span className="legend-text">
+        <b>{def.label}</b>
+        <i>{def.branch === 'Navy' ? 'Naval hull silhouette.' : 'Arm silhouette shown once identified or better.'}</i>
+      </span>
+    </div>
+  );
 }
 
 function Row({ e }: { e: Entry }) {
@@ -155,6 +190,12 @@ export const Legend: React.FC<{ viewer: PlayerId; onClose: () => void }> = ({ vi
         <div className="legend-sub">MARKERS</div>
         {markersFor(viewer).map((e) => (
           <Row key={e.label} e={e} />
+        ))}
+      </div>
+      <div>
+        <div className="legend-sub">ARM SILHOUETTES</div>
+        {ARM_ORDER.map((t) => (
+          <IconRow key={t} type={t} color={PLAYER_COLORS[viewer].light} />
         ))}
       </div>
     </div>
