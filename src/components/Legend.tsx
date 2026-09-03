@@ -111,6 +111,7 @@ const markersFor = (viewer: PlayerId): Entry[] => [
   { symbol: '●', color: '#e6786a', label: 'Roster: on alert', note: 'A small dot next to a formation’s name in the FORMATIONS list — same meaning as the pulsing ring on the map, readable without selecting the unit.' },
   { symbol: '●', color: '#8a6fae', label: 'Roster: suppressed', note: 'A small dot next to a formation’s name in the FORMATIONS list when its suppression is above zero.' },
   { symbol: '●', color: '#93a35f', label: 'Roster: Reorganize ready', note: 'A small dot next to a formation’s name in the FORMATIONS list — it has not moved this round, its major action is free, and it is off cooldown.' },
+  { symbol: '◌', color: '#93a35f', label: 'Concealed', note: 'Chip on your own unit card once a formation has held its ground (no move) for a round or more — the enemy’s detection range against it is reduced, up to about a quarter shorter, capped there. Shown only for your own formations; moving clears it instantly.' },
 ];
 
 /** Pick a symbol colour that stays legible on its own swatch. */

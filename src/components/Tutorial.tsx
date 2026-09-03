@@ -331,6 +331,17 @@ const SECTIONS: Section[] = [
               of defence. It needs the formation to have made no movement action this round, and it cannot be used again for
               three rounds, so it cannot be spammed to erase what combat cost you.
             </li>
+            <li>
+              <b>Withdraw (W) is for when it goes wrong.</b> Adjacent to a detected enemy, inside its Zone of Control, or badly
+              hurt, Withdraw falls back automatically away from the nearest threat for a flat, cheap 1 AP — cheaper than an
+              ordinary Move disengaging the same Zone of Control, which pays a surcharge that usually costs 2 AP for the same
+              ground. It still spends a movement action and it still risks overwatch fire along the way; it is an honest way
+              out of a bad fight, not a free reset.
+            </li>
+            <li>
+              <b>Holding still has a quiet reward, too.</b> A formation that goes a round or more without moving becomes
+              somewhat harder to spot — watch for the small "concealed" chip on its own card.
+            </li>
           </ul>
         </>
       );

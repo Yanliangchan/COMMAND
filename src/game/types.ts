@@ -428,6 +428,18 @@ export interface Formation {
   intel?: DetectionLevel;
   /** True when this object was redacted for the viewer (intel below CONFIRMED). */
   redacted?: boolean;
+  /**
+   * CONCEALMENT FROM STASIS (phase 12 §3). Consecutive ROUNDS this formation
+   * has ended without spending a movement action — ticked in engine.ts
+   * `endTurn` for the side finishing its turn, reset to 0 the instant the
+   * formation actually moves (moveFormation / moveGroup / verticalInsert /
+   * withdraw). detection.ts turns this into a further concealment multiplier
+   * on top of terrain (see STATIONARY_CONCEALMENT_*) — a unit that has held
+   * still is meaningfully harder to spot, never invisible. Intelligence like
+   * everything else on this interface: redacted on an enemy formation below
+   * CONFIRMED (see fog.ts), so the opponent never sees this number.
+   */
+  roundsStationary: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -672,7 +684,8 @@ export type ActionKind =
   | 'SPECIAL_OP'
   | 'REORGANIZE'
   | 'VERTICAL_INSERT'
-  | 'UAV_RECON';
+  | 'UAV_RECON'
+  | 'WITHDRAW';
 
 export const AP_COSTS: Record<ActionKind, number> = {
   MOVE: 1,
@@ -695,7 +708,70 @@ export const AP_COSTS: Record<ActionKind, number> = {
   // the same weight class as calling in an air sortie, not a routine order
   // like RECON (1).
   UAV_RECON: 3,
+  // Phase 12 §1. Deliberately the CHEAPEST movement-family order — see
+  // "RETREAT / WITHDRAW" below for the full cost comparison against an
+  // ordinary ZOC-disengaging Move.
+  WITHDRAW: 1,
 };
+
+// ---------------------------------------------------------------------------
+// RETREAT / WITHDRAW (phase 12 §1) — a real, honest way to pull a threatened
+// formation out of a bad fight, distinct from ordinary Move.
+//
+// THE COST COMPARISON THE WHOLE ORDER EXISTS FOR:
+//
+// An ordinary Move that starts inside an enemy Zone of Control pays a
+// "disengagement surcharge" on its very first step: that first step alone
+// costs the formation's ENTIRE single-action movement budget
+// (movement.ts `search`'s `disengageCost = movementProfile(f).effectiveRange`).
+// Since one movement action buys exactly `effectiveRange` points, spending all
+// of them on the first step leaves 0 points for that action to go any further
+// — any actual repositioning beyond the immediate tile therefore needs a
+// SECOND movement action, i.e. 2 x AP_COSTS.MOVE = 2 AP, to go anywhere at
+// all. A formation with only one movement action left (movesMax 1, or none
+// left this round) can be left unable to disengage by more than the
+// surcharge-tile itself — trapped, exactly the trap this order exists to fix.
+//
+// WITHDRAW instead costs a single flat AP_COSTS.WITHDRAW (1 AP — cheaper than
+// the 2 AP a ZOC-disengaging Move typically needs for the same repositioning)
+// for a bounded retreat of up to WITHDRAW_RANGE_FRACTION of the formation's
+// normal single-action range: shorter than a free move (this is breaking
+// contact, not manoeuvring at will), but it explicitly does NOT pay the ZOC
+// disengagement surcharge — see movement.ts `planWithdraw`. It still consumes
+// one of the formation's movement actions for the round (movesUsed += 1,
+// gated by movesRemaining exactly like Move) and it still walks the path
+// tile by tile through `triggerOverwatch`, so a covering enemy formation gets
+// its reaction shot regardless — this is a costed disengagement, not a free
+// teleport out of danger.
+// ---------------------------------------------------------------------------
+
+/** Fraction of a formation's normal single-action movement range a Withdraw may use. */
+export const WITHDRAW_RANGE_FRACTION = 0.6;
+/** Strength below which a formation counts as "in a threatening situation" even with no enemy adjacent. */
+export const WITHDRAW_STRENGTH_THRESHOLD = 35;
+/** Morale bands that alone justify a Withdraw. */
+export const WITHDRAW_MORALE_BANDS: readonly Morale[] = ['Shaken', 'Broken'];
+
+// ---------------------------------------------------------------------------
+// CONCEALMENT FROM STASIS (phase 12 §3) — a formation that has held its
+// ground gets progressively harder to spot, layered into detection.ts as a
+// further multiplier on TARGET_CONCEALMENT alongside terrain. Capped so a
+// dug-in unit is meaningfully harder to find, never invisible.
+// ---------------------------------------------------------------------------
+
+/** Concealment bonus per consecutive round stationary (fraction of detection range cut). */
+export const STATIONARY_CONCEALMENT_PER_ROUND = 0.06;
+/** Rounds stationary at which the bonus caps — 4 rounds x 6% = 24% range reduction, floor 0.76. */
+export const STATIONARY_CONCEALMENT_MAX_ROUNDS = 4;
+/** Rounds a formation must have held still before the concealment bonus starts applying at all. */
+export const STATIONARY_CONCEALMENT_MIN_ROUNDS = 1;
+
+/** Detection-range multiplier from a target having held still for `rounds` consecutive rounds. */
+export function stationaryConcealmentMultiplier(rounds: number): number {
+  if (rounds < STATIONARY_CONCEALMENT_MIN_ROUNDS) return 1;
+  const capped = Math.min(rounds, STATIONARY_CONCEALMENT_MAX_ROUNDS);
+  return 1 - capped * STATIONARY_CONCEALMENT_PER_ROUND;
+}
 
 // ---------------------------------------------------------------------------
 // REORGANIZE (phase 7) — a light restorative action, distinct from the
@@ -964,6 +1040,33 @@ export interface ReplayRound {
   entries: ReplaySnapshotEntry[];
 }
 
+/**
+ * COMBAT EVENTS (phase 12 §5) — a short, capped record of resolved
+ * engagements, on GameState the same way killFeed is: enough for the client
+ * to render a brief on-map effect (tracer/muzzle-flash for direct fire,
+ * shell-burst for standoff/overwatch fire) timed with the existing combat
+ * sound cue, WITHOUT the client having to peek at anything beyond what fog.ts
+ * hands it. `attackerId`/`defenderId` let fog.ts decide, per viewer, whether
+ * the OTHER participant's position may be included — see fog.ts
+ * `redactCombatEvent`: a viewer's own formation is always at its true
+ * position, but the opposing participant's position is included only if that
+ * viewer's side has actually detected it, exactly the same "have you
+ * legitimately earned this" gate used everywhere else in fog.ts.
+ */
+export interface CombatEvent {
+  id: string;
+  kind: 'direct' | 'standoff' | 'overwatch';
+  attackerId: string;
+  attackerOwner: PlayerId;
+  attackerX: number;
+  attackerY: number;
+  defenderId: string;
+  defenderOwner: PlayerId;
+  defenderX: number;
+  defenderY: number;
+  round: number;
+}
+
 export interface GameState {
   round: number;
   activePlayer: PlayerId;
@@ -984,6 +1087,8 @@ export interface GameState {
   lastBattleReport: BattleReport | null;
   /** Recent destructions, newest first, capped short — see KillEvent. */
   killFeed: KillEvent[];
+  /** Recent resolved engagements, newest first, capped short — see CombatEvent. */
+  combatEvents: CombatEvent[];
   /** Positions snapshot at the start of every round, for the post-game replay view. */
   replay: ReplayRound[];
   /** Effective AP/VP/round-limit for this match — see MatchRules. */

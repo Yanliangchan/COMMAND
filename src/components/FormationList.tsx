@@ -2,7 +2,7 @@ import React from 'react';
 import { FORMATION_DEFS } from '../game/data';
 import { formationActivity } from '../game/actions';
 import { canReorganize } from '../game/engine';
-import { Formation, GameState, isLastStandActive, PlayerId } from '../game/types';
+import { Formation, GameState, isLastStandActive, PlayerId, STATIONARY_CONCEALMENT_MIN_ROUNDS } from '../game/types';
 import { formationGlyph } from '../render/renderMap';
 
 /**
@@ -65,6 +65,9 @@ export const FormationList: React.FC<{
                     )}
                     {isLastStandActive(f, state.round) && (
                       <i className="status-dot status-laststand" title={`Last stand — cornered and fighting harder through round ${f.lastStandUntilRound}.`} />
+                    )}
+                    {(f.roundsStationary ?? 0) >= STATIONARY_CONCEALMENT_MIN_ROUNDS && (
+                      <i className="status-dot status-concealed" title={`Concealed — held this ground for ${f.roundsStationary} round${f.roundsStationary === 1 ? '' : 's'} without moving, harder for the enemy to spot.`} />
                     )}
                   </span>
                 </span>

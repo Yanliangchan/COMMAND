@@ -42,6 +42,7 @@ import {
   TerrainType,
   detectionLevelFor,
   otherPlayer,
+  stationaryConcealmentMultiplier,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -233,13 +234,18 @@ export function detectionRange(
   observer: Formation,
   observerTile: Tile,
   targetTile: Tile,
-  opts: { recon?: boolean; fortifiedTarget?: boolean } = {}
+  opts: { recon?: boolean; fortifiedTarget?: boolean; targetStationaryRounds?: number } = {}
 ): RangeBreakdown {
   const prof = DETECTION[observer.type];
   const base = opts.recon ? prof.reconRange : prof.baseRange;
   const obs = OBSERVER_TERRAIN[observerTile.terrain];
   let conceal = TARGET_CONCEALMENT[targetTile.terrain];
   if (opts.fortifiedTarget) conceal *= FORTIFIED_CONCEALMENT;
+  // Concealment from stasis (phase 12 §3): a target that has held its ground
+  // for consecutive rounds is progressively harder to spot, layered on top of
+  // terrain concealment exactly like the fortified multiplier above — capped
+  // in stationaryConcealmentMultiplier so it is never total invisibility.
+  if (opts.targetStationaryRounds) conceal *= stationaryConcealmentMultiplier(opts.targetStationaryRounds);
   // Height advantage: looking DOWN on someone extends the picture, looking up
   // into higher ground shortens it. Standing high is worth something by itself.
   const drop = observerTile.height - targetTile.height;
@@ -365,7 +371,7 @@ export function refreshSpotting(state: GameState, player: PlayerId): SpottingRes
       }
       // 2. situational range.
       const eTile = state.tiles[e.y][e.x];
-      const range = detectionRange(o, oTile, eTile, { fortifiedTarget: e.fortified });
+      const range = detectionRange(o, oTile, eTile, { fortifiedTarget: e.fortified, targetStationaryRounds: e.roundsStationary });
       if (d > range.effective) {
         spottingStats.rangeRejects++;
         continue;
@@ -516,7 +522,14 @@ export function reconSweep(state: GameState, observer: Formation): ReconSweepRes
   for (const e of Object.values(state.formations)) {
     if (e.owner !== enemy) continue;
     const eTile = state.tiles[e.y][e.x];
+    // A deliberate Recon sweep pushes through cover and, likewise, through a
+    // target's having held still — sensors and cueing beat a static picture.
+    // Half the stasis bonus survives rather than none, so digging in still
+    // helps even against a dedicated sweep, just less than against passive
+    // spotting.
+    const stationaryMult = 1 - (1 - stationaryConcealmentMultiplier(e.roundsStationary)) * 0.5;
     const range = detectionRange(observer, oTile, eTile, { recon: true, fortifiedTarget: e.fortified });
+    range.effective *= stationaryMult;
     maxRange = Math.max(maxRange, range.effective);
     const d = sightDistance(observer.x, observer.y, e.x, e.y);
     if (d > range.effective) continue;

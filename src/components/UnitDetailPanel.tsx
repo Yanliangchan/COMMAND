@@ -13,8 +13,10 @@ import {
   LAST_STAND_THRESHOLD,
   REORGANIZE_COOLDOWN_ROUNDS,
   SPECIAL_OP_TYPES,
+  STATIONARY_CONCEALMENT_MIN_ROUNDS,
   VERTICAL_INSERT_MAX_USES,
   gridRef,
+  stationaryConcealmentMultiplier,
 } from '../game/types';
 
 const MORALE_COLOR: Record<string, string> = {
@@ -110,6 +112,15 @@ export const UnitDetailPanel: React.FC<{
             data-testid="last-stand-chip"
           >
             ★ last stand
+          </span>
+        )}
+        {f.owner === state.activePlayer && (f.roundsStationary ?? 0) >= STATIONARY_CONCEALMENT_MIN_ROUNDS && (
+          <span
+            className="mini-chip"
+            title={`Held this ground for ${f.roundsStationary} round${f.roundsStationary === 1 ? '' : 's'} without moving — harder for the enemy to spot (detection range ×${stationaryConcealmentMultiplier(f.roundsStationary).toFixed(2)} against it). Moving resets this.`}
+            data-testid="concealed-chip"
+          >
+            ◌ concealed
           </span>
         )}
         {canReorganize(state, f) && f.owner === state.activePlayer && (

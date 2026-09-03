@@ -22,7 +22,11 @@ import {
   GRID_SIZE,
   MOBILITY,
   Tile,
+  WITHDRAW_MORALE_BANDS,
+  WITHDRAW_RANGE_FRACTION,
+  WITHDRAW_STRENGTH_THRESHOLD,
   gridRef,
+  moraleBandFor,
   suppressionMultiplier,
 } from './types';
 
@@ -201,7 +205,12 @@ interface SearchResult {
  * Leaving a ZOC tile the formation started this search in (disengaging) costs
  * a full movement action's worth of points on its very first step.
  */
-function search(state: GameState, f: Formation, budget: number, opts: { ignoreZoc?: boolean } = {}): SearchResult {
+function search(
+  state: GameState,
+  f: Formation,
+  budget: number,
+  opts: { ignoreZoc?: boolean; noDisengageSurcharge?: boolean } = {}
+): SearchResult {
   const cost = new Map<string, number>();
   const parent = new Map<string, string>();
   const start = `${f.x},${f.y}`;
@@ -230,7 +239,7 @@ function search(state: GameState, f: Formation, budget: number, opts: { ignoreZo
       const occ = occupantAt(state, nx, ny);
       if (occ && occ.owner !== f.owner) continue; // never move through or onto an enemy
       let stepC = stepCost(f, curTile, tile);
-      if (curKey === start && startInZoc) stepC = Math.max(stepC, disengageCost);
+      if (curKey === start && startInZoc && !opts.noDisengageSurcharge) stepC = Math.max(stepC, disengageCost);
       const next = cur.cost + stepC;
       if (next > budget + 1e-9) continue;
       const key = `${nx},${ny}`;
@@ -777,4 +786,115 @@ export function planGroupMove(state: GameState, ids: string[], x: number, y: num
     }
   }
   return base;
+}
+
+// ---------------------------------------------------------------------------
+// RETREAT / WITHDRAW (phase 12 §1) — see the AP-cost comment block on
+// WITHDRAW_RANGE_FRACTION in types.ts for the full comparison against an
+// ordinary ZOC-disengaging Move.
+// ---------------------------------------------------------------------------
+
+/**
+ * True when `f` reads as "disengaging from contact" rather than just
+ * repositioning: adjacent to an enemy this side has actually DETECTED (its
+ * own contact table — fog-of-war correct), standing inside an enemy Zone of
+ * Control, or badly enough hurt (strength or morale) that pulling back is the
+ * honest move regardless of what is nearby right now.
+ */
+export function isThreatened(state: GameState, f: Formation): boolean {
+  if (zocTilesFor(state, f).has(`${f.x},${f.y}`)) return true;
+  const contacts = state.players[f.owner]?.contacts ?? {};
+  for (const c of Object.values(contacts)) {
+    if (c.level === 'UNKNOWN') continue;
+    if (manhattan(c.x, c.y, f.x, f.y) <= 1) return true;
+  }
+  if (f.strength < WITHDRAW_STRENGTH_THRESHOLD) return true;
+  if ((WITHDRAW_MORALE_BANDS as readonly string[]).includes(moraleBandFor(f.moraleValue))) return true;
+  return false;
+}
+
+/** Positions to retreat AWAY from — this side's own detected contacts near `f`, falling back to any truly-adjacent enemy (the ZOC case). */
+function threatPositions(state: GameState, f: Formation): { x: number; y: number }[] {
+  const contacts = state.players[f.owner]?.contacts ?? {};
+  const near = Object.values(contacts)
+    .filter((c) => c.level !== 'UNKNOWN')
+    .filter((c) => manhattan(c.x, c.y, f.x, f.y) <= Math.max(6, MOBILITY[f.type].moveRange * 2))
+    .map((c) => ({ x: c.x, y: c.y }));
+  if (near.length) return near;
+  // Fallback (e.g. a ZOC tile from an enemy this side has somehow not put in
+  // its own contact table yet, which should be rare — adjacency all but
+  // guarantees passive detection): use the true adjacent enemy positions, the
+  // same ground truth the ZOC check itself already reads.
+  return Object.values(state.formations)
+    .filter((o) => o.owner !== f.owner && manhattan(o.x, o.y, f.x, f.y) <= 1)
+    .map((o) => ({ x: o.x, y: o.y }));
+}
+
+export interface WithdrawPlan {
+  ok: boolean;
+  reason: string;
+  path: { x: number; y: number }[];
+  destX: number;
+  destY: number;
+  cost: number;
+  distance: number;
+}
+
+/**
+ * Plan a Withdraw: a short bound, AWAY from the nearest threat direction,
+ * that does NOT pay the ZOC disengagement surcharge (see `search`'s
+ * `noDisengageSurcharge`) but otherwise obeys every normal movement rule —
+ * impassable terrain, friendly/enemy occupancy, a ZOC tile still being a
+ * dead end to expand past. Picks the reachable tile that maximises distance
+ * from the nearest threat, tie-broken by the cheapest path.
+ */
+export function planWithdraw(state: GameState, f: Formation): WithdrawPlan {
+  const fail = (reason: string): WithdrawPlan => ({ ok: false, reason, path: [], destX: f.x, destY: f.y, cost: 0, distance: 0 });
+  if (!isThreatened(state, f)) return fail('Not in a threatening situation — nothing to withdraw from.');
+  const movesLeft = Math.max(0, f.movesMax - f.movesUsed);
+  if (movesLeft <= 0) return fail('No movement actions left this round.');
+  const threats = threatPositions(state, f);
+  if (!threats.length) return fail('No detected threat to withdraw from.');
+
+  const prof = movementProfile(f);
+  const budget = prof.effectiveRange * WITHDRAW_RANGE_FRACTION;
+  const { cost, parent } = search(state, f, budget, { noDisengageSurcharge: true });
+  const start = `${f.x},${f.y}`;
+
+  let bestKey: string | null = null;
+  let bestScore = -Infinity;
+  cost.forEach((c, key) => {
+    if (key === start) return;
+    const [x, y] = key.split(',').map(Number);
+    const occ = occupantAt(state, x, y);
+    if (occ) return; // never stack, even on a friendly
+    const minD = Math.min(...threats.map((t) => manhattan(x, y, t.x, t.y)));
+    const score = minD * 1000 - c; // maximise distance from the nearest threat, cheapest path breaks ties
+    if (score > bestScore) {
+      bestScore = score;
+      bestKey = key;
+    }
+  });
+  if (!bestKey) return fail('No tile to fall back to within withdrawal range.');
+  const destKey: string = bestKey;
+
+  const path: { x: number; y: number }[] = [];
+  let cur: string = destKey;
+  while (cur !== start) {
+    const [px, py] = cur.split(',').map(Number);
+    path.unshift({ x: px, y: py });
+    const p = parent.get(cur);
+    if (!p) break;
+    cur = p;
+  }
+  const [dx, dy] = destKey.split(',').map(Number);
+  return {
+    ok: true,
+    reason: '',
+    path,
+    destX: dx,
+    destY: dy,
+    cost: Math.round(cost.get(destKey)! * 10) / 10,
+    distance: manhattan(f.x, f.y, dx, dy),
+  };
 }

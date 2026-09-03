@@ -428,6 +428,9 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
     case 'UAV_RECON':
       engine.uavReconAction(state, action.x, action.y);
       break;
+    case 'WITHDRAW':
+      engine.withdrawAction(state, action.formationId);
+      break;
     case 'END_TURN':
       engine.endTurn(state);
       // Skip the (now meaningless, single-tab-only) TURN_HANDOFF phase —

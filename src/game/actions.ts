@@ -9,6 +9,7 @@
 
 import { FORMATION_DEFS } from './data';
 import { canReorganize, distance, hasAmmo, hasVerticalInsertLandingZone, maxAmmo, movesRemaining, computeReachable } from './engine';
+import { isThreatened, planWithdraw } from './movement';
 import { lineOfSight } from './detection';
 import {
   AP_COSTS,
@@ -120,6 +121,14 @@ export const ACTION_SPECS: ActionSpec[] = [
     blurb: `Commandos and Guards only. Redeploy anywhere within reach in one leap — over rivers, over the enemy's Zones of Control, landing zone permitting. Cannot land adjacent to a formation this side has detected. Only ${VERTICAL_INSERT_MAX_USES} insertions per formation, for the whole operation.`,
   },
   {
+    id: 'WITHDRAW',
+    label: 'Withdraw',
+    shortcut: 'W',
+    apCost: AP_COSTS.WITHDRAW,
+    mode: null,
+    blurb: 'Disengage from a bad fight — pulls back automatically, away from the nearest detected threat, without paying the Zone-of-Control disengagement surcharge an ordinary Move would. Only available adjacent to a detected enemy, inside an enemy Zone of Control, or once the formation is badly hurt (low strength or Shaken/Broken morale). Costs a movement action and still risks reaction fire along the route.',
+  },
+  {
     id: 'REORGANIZE',
     label: 'Reorganize',
     shortcut: 'S',
@@ -214,10 +223,16 @@ export function actionAvailability(state: GameState, f: Formation, viewer: Playe
     let reason = '';
     if (!isMine) reason = 'This formation belongs to the other side.';
     else if (!myTurn) reason = 'Not your turn.';
-    else if (spec.id === 'MOVE' && moves <= 0) reason = `No movement actions left this round (${f.movesMax}/${f.movesMax} used).`;
-    else if (spec.id !== 'MOVE' && spec.id !== 'AIR' && !majorFree) reason = 'This formation has already taken its major action this round.';
+    else if ((spec.id === 'MOVE' || spec.id === 'WITHDRAW') && moves <= 0)
+      reason = `No movement actions left this round (${f.movesMax}/${f.movesMax} used).`;
+    else if (spec.id !== 'MOVE' && spec.id !== 'WITHDRAW' && spec.id !== 'AIR' && !majorFree)
+      reason = 'This formation has already taken its major action this round.';
     else if (ap < spec.apCost) reason = `Not enough AP — needs ${spec.apCost}, you have ${ap}.`;
     else if (spec.id === 'MOVE' && computeReachable(state, f.id).size === 0) reason = 'No reachable tile from here.';
+    else if (spec.id === 'WITHDRAW' && !isThreatened(state, f))
+      reason = 'Not in a threatening situation — not adjacent to a detected enemy, not in an enemy Zone of Control, and not badly hurt. Use Move instead.';
+    else if (spec.id === 'WITHDRAW' && !planWithdraw(state, f).ok)
+      reason = 'No tile to fall back to within withdrawal range.';
     else if (spec.id === 'ATTACK' && !hasAmmo(f))
       reason = `No ready rounds left (0 / ${maxAmmo(f)}). Hold fire for a round and one comes back.`;
     else if (spec.id === 'ATTACK' && enemiesInRange(state, f) === 0)

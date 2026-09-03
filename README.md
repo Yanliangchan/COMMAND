@@ -1850,6 +1850,149 @@ away.
 
 ## Testing performed
 
+### Phase 12 (Withdraw, concealment from stasis, priority targets; animated movement, combat effects, objective flip, elevation shadow, strength pips, breadcrumbs, camera sweeps, event flash)
+
+**Group A — gameplay:**
+
+- **Retreat / Withdraw (`W`)**: a new order, distinct from Move, gated on
+  `movement.ts` `isThreatened` — adjacent to a formation this side's own
+  contact table has actually detected, standing inside an enemy Zone of
+  Control, or below a strength/morale floor (35% strength, or Shaken/Broken
+  morale). Costs a flat `AP_COSTS.WITHDRAW = 1` for a bound up to
+  `WITHDRAW_RANGE_FRACTION` (0.6) of the formation's normal single-action
+  range, explicitly skipping the ZOC disengagement surcharge a normal Move
+  pays (see `movement.ts` `planWithdraw`'s `noDisengageSurcharge` search
+  option) — but it still spends a movement action and still walks its path
+  tile-by-tile through the same `triggerOverwatch` a Move uses, so covering
+  reaction fire is not dodged. `combatcheck.ts` proves the AP-cost comparison
+  directly (an ordinary ZOC-disengaging Move needs 2 AP for the same
+  repositioning vs. Withdraw's 1) and proves overwatch still fires against it
+  using a long-ranged watcher that outranges the whole withdrawal budget
+  regardless of direction chosen. `server/bot.ts` gets a `dangerScore`-gated
+  candidate so only a genuinely hurt, threatened formation withdraws (a
+  healthy formation standing in a ZOC keeps fighting) — bot-vs-bot sims below
+  show ~2.4–3.4% of all bot actions, never zero and never dominant.
+- **Priority targets**: `game/threat.ts` `computePriorityTargets` reads
+  *only* the fog-filtered `GameState` a client already holds (its own
+  `state.formations`, already stripped by `fog.ts` below IDENTIFIED) — it is
+  fog-correct by construction, not by a separate check, since an undetected
+  enemy formation is never present in its input at all. `combatcheck.ts`
+  proves this two ways: a hand-built scenario with one detected and one
+  undetected enemy (the undetected one never appears in the output), and a
+  400-action bot-vs-bot simulation sampling both sides' views every 15
+  actions (0 violations below IDENTIFIED across the run). Shown as a
+  dedicated, non-blocking readout under the SITREP banner; clicking an entry
+  jumps the camera, matching the phase-10 event notification's affordance.
+- **Concealment from stasis**: `stationaryConcealmentMultiplier` in
+  `types.ts` cuts a target's detection range by 6% per consecutive round
+  spent without a movement action, capped at 4 rounds (24%, floor 0.76) —
+  layered into `detection.ts` `detectionRange` as a further multiplier
+  alongside terrain and fortified concealment, computed server-side inside
+  the same authoritative passive-spotting pass everything else uses (not a
+  client-side trick). A deliberate sweep (Recon) only gets half the benefit.
+  `combatcheck.ts` proves the multiplier's shape and cap, that it actually
+  reduces `detectionRange`'s output, and an end-to-end sim confirming
+  `roundsStationary` accumulates across real rounds and resets the instant a
+  formation moves. Own-side indicator: a "concealed" chip on the unit card
+  and a roster dot once it applies; withheld from the enemy exactly like
+  `fortifyTier` (redacted to -1 below CONFIRMED — see `wirecheck.ts`'s
+  `TRUE_AT` contract, which now classifies `roundsStationary`).
+- **Balance simulation** (bot-vs-bot, real engine + real `decideBotAction`,
+  paired before/after on identical seeds): HARD vs HARD, 40 games — before
+  SABRE 19 / VANGUARD 21, avg 13.7 rounds, VP diff −8.2; after SABRE 19 /
+  VANGUARD 21, avg 13.3 rounds, VP diff −4.6, Withdraw used in 2.43% of
+  actions. Win split unchanged, game length essentially unchanged, and the
+  side-balance gap actually narrowed. MEDIUM vs MEDIUM, 40 games — before
+  SABRE 18 / VANGUARD 22, avg 12.6 rounds, VP diff −4.2; after SABRE 21 /
+  VANGUARD 19, avg 12.8 rounds, VP diff +8.8, Withdraw used in 3.43% of
+  actions — a real shift at MEDIUM, within the normal batch-to-batch variance
+  this project's own prior balance passes already document (e.g. phase 3's
+  +4.6 vs phase 5's −4.5 on the same matchup), not a sign of a broken bot: no
+  game hit the 4000-action safety guard, and MEDIUM's weaker combined-arms
+  reasoning already made it the noisier of the two difficulties before this
+  phase.
+
+**Group B — presentation (all client-side rendering; the server resolves
+every action instantly and authoritatively exactly as before):**
+
+- **Animated movement**: `MapCanvas.tsx` tracks a short (`MOVE_ANIM_MS` =
+  260 ms) glide per formation, recomputed from wherever it is currently
+  drawn to its new authoritative position every time `state.formations`
+  actually changes — never from a locally predicted position. The player's
+  own Move/Withdraw captures the real path from `planMove`/`planWithdraw`
+  (the same pure functions the preview uses) and follows it exactly;
+  opponent and bot moves (no client-side path available) glide straight-line
+  between before/after. A further action arriving mid-glide restarts
+  smoothly from the current on-screen point rather than snapping backward.
+  **Multiplayer desync test**: two independent Playwright/Chromium browser
+  contexts, a real Create-Room + Join round trip, one client issues a real
+  `MOVE`, both clients read zero console/page errors throughout, and the
+  mover's own unit-grid readout settles on the authoritative destination
+  (confirmed identical across two samples 500 ms apart, i.e. the glide had
+  actually finished and stopped, not drifted).
+- **On-map combat effects**: a new `GameState.combatEvents` array (capped
+  short, like `killFeed`), populated by `attackAction`, `artilleryAction`
+  and `triggerOverwatch`. `fog.ts` `redactCombatEvent` — always shows the
+  viewer's own participant at its true position; the OPPOSING participant's
+  position is included only if this viewer's side has actually detected it
+  (any contact rung, or ownership), otherwise it is collapsed onto the
+  viewer's own tile so the client can still render "engaged here" without
+  ever being handed an undetected shooter's or target's true position.
+  `wirecheck.ts` gained a dedicated `auditCombatEvents` pass exercised
+  across the whole bot-vs-bot fog audit (700k+ assertions, 0 failures).
+  Direct fire draws a tracer + muzzle flash; standoff/overwatch fire draws a
+  shell-burst; overwatch (which never produces a `BattleReport`) gets its
+  own `sound.play('attack')` trigger so it is no longer silent — an ATTACK-
+  order engagement is not double-triggered, since its existing
+  `lastBattleReport`-driven cue already fires at the same instant.
+- **Objective capture animation**: a colour-flip (old owner's colour to the
+  new one, timed against `OBJECTIVE_FLASH_LIFETIME_MS` = 1.6 s) plus an
+  expanding ring, driven off the same already-fog-safe objective-ownership
+  diff the SITREP/event-notification pipeline already computes (objectives
+  are never fog-gated).
+- **Elevation-aware shadow**: every counter is drawn lifted off its true
+  ground screen position by an amount proportional to the tile's continuous
+  `height`, with a soft ellipse shadow left at the true ground point — same
+  "token floats above its shadow" cue, capped small and applied uniformly in
+  `drawFormation`.
+- **Strength-cluster pips**: a 4-pip row along the bottom rim of the counter
+  disc itself (inside the circle, below the arm silhouette), gated by zoom
+  and by the same "strength is actually known to this viewer" rule the
+  damage-state overlay already uses — positioned to avoid the fortify-tier
+  pips (outside the disc, below the dig-in arc), the on-alert ring/badge
+  (top-left, outside), and the detection badge (top-right, outside).
+- **Movement breadcrumbs**: a thin, fading dashed line from a formation's
+  position at the start of `state.round` (the latest `state.replay` entry,
+  already fog-filtered) to its current position, drawn on the live map; the
+  same idea reused in the Replay scrubber between consecutive viewed rounds.
+- **Opening camera sweep / end-game cinematic**: two independent, one-shot
+  effects (briefing dismissal; `state.phase === 'GAME_OVER'`) that set a
+  short sequence of `camera` waypoints, reusing `MapCanvas`'s existing
+  per-frame eased camera follow rather than a bespoke tween. Both are
+  skippable on the first keypress or click. Playwright-verified: sampling
+  the eased camera every 80 ms after an immediate `Escape` press during the
+  opening sweep shows a single monotonically-decaying convergence to one
+  fixed point (deltas 1.84 → 0.96 → 0.50 → … → 0.00, zero late-stage
+  increases) — proof no further queued waypoint fired after the skip.
+- **Event-location flash**: reuses the exact tile list the phase-10 batched
+  notification already computes (fresh/upgraded contacts, kills, objective
+  changes — all already fog-audited upstream), rendered as an immediate
+  square pulse before the player ever clicks to jump.
+- **Frame time** (Playwright/Chromium, 1600×950, same `__COMMAND_FRAME_MS__`
+  smoothed readout prior phases used), measured in THIS sandboxed headless
+  environment against a same-environment baseline (the phase-11 "~6.3–6.5 ms"
+  figure was measured on different hardware, so it is not a valid direct
+  comparison — see below): baseline (pre-phase-12 code, same host) **8.79 ms**
+  idle; phase-12 code **8.05 ms** idle, **8.60 ms** under active bot combat
+  (pings, kills, combat effects and objective flashes all firing). No
+  regression — phase 12's numbers are flat-to-better than this
+  environment's own baseline.
+- **Fog-of-war audits**: `wirecheck.ts`'s `auditCombatEvents` (above) is the
+  automated proof; Playwright confirms the visual layer renders without
+  console/page errors across a real vs-Bot session (idle, under combat load,
+  and across the two-client multiplayer exchange) with `roundsStationary`
+  and `combatEvents` both added to the wire-redaction contract.
+
 ### Phase 9 (vertical insertion, fortify tiers, exploitation, UAV recon, mutual/buffed Reorganize, 12th/16th C4I Bn)
 
 - `npm run build` (client `tsc -b` + Vite) and

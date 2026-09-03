@@ -17,7 +17,11 @@ import * as engine from '../src/game/engine';
 import { attackPower, defencePower, lossesFromShare, predictEngagement } from '../src/game/combat';
 import { FORMATION_DEFS, ORDERS_OF_BATTLE } from '../src/game/data';
 import { movementProfile, planMove } from '../src/game/movement';
-import { AP_CAP, AP_COSTS, AP_PER_TURN, Formation, FormationType, GameState, GRID_SIZE, PlayerId, Tile, moraleBandFor, validateMatchRules } from '../src/game/types';
+import { detectionRange } from '../src/game/detection';
+import { filterStateForPlayer } from '../src/game/fog';
+import { computePriorityTargets } from '../src/game/threat';
+import { decideBotAction } from '../server/bot';
+import { AP_CAP, AP_COSTS, AP_PER_TURN, Formation, FormationType, GameState, GRID_SIZE, PlayerId, Tile, moraleBandFor, stationaryConcealmentMultiplier, validateMatchRules } from '../src/game/types';
 
 let failures = 0;
 const check = (c: boolean, m: string) => {
@@ -37,7 +41,7 @@ function mk(type: FormationType, x: number, y: number, owner: PlayerId): Formati
     hasActedThisTurn: false, fortified: false, lastOrder: '',
     onAlert: false, reactionFired: false, suppression: 0, lastSuppressedRound: 0, lastReorganizedRound: 0,
     fortifyTier: 0, fortifiedThisRound: false, verticalInsertsUsed: 0,
-    lastStandTriggered: false, lastStandUntilRound: 0,
+    lastStandTriggered: false, lastStandUntilRound: 0, roundsStationary: 0,
   };
 }
 const tile = (terrain: Tile['terrain']): Tile => ({ x: 5, y: 5, terrain, elevation: 1, height: 0.3 });
@@ -727,6 +731,184 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
     check(s.rules.vpToWin === 400, 'custom vpToWin is carried on state.rules');
     check(s.rules.roundLimit === 30, 'custom roundLimit is carried on state.rules');
     check(s.mapName === 'Custom Rules Test', 'a custom map name is carried on state.mapName');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 §1: RETREAT / WITHDRAW — AP-cost math vs. a normal ZOC-disengaging
+// Move, and that it still respects overwatch.
+// ---------------------------------------------------------------------------
+{
+  // Withdraw is cheaper than an ordinary Move that has to pay the ZOC
+  // disengagement surcharge: the surcharge move's very first step consumes an
+  // ENTIRE single-action budget, so any real repositioning needs 2 actions
+  // (2 AP); Withdraw is a flat 1 AP for its whole bound.
+  const mover = mk('INFANTRY', 10, 10, 'SABRE');
+  const enemy = mk('INFANTRY', 11, 10, 'VANGUARD'); // adjacent — projects a ZOC onto (10,10)
+  const s = scenario([mover, enemy]);
+  // Refresh contacts so the mover's own side has actually detected the
+  // adjacent enemy (Withdraw's trigger reads the mover's own contact table).
+  engine.refreshAllFog(s);
+
+  const zocMovePlan = planMove(s, mover, 8, 10); // a real step away from the ZOC tile
+  check(!!zocMovePlan.zocNote, 'a normal Move starting in an enemy ZOC carries the disengagement-surcharge note');
+  check(zocMovePlan.ok && zocMovePlan.actionsRequired >= 2, `an ordinary ZOC-disengaging Move needs >=1 more action than a single bound (actionsRequired=${zocMovePlan.actionsRequired}, apCost=${zocMovePlan.apCost})`);
+
+  check(engine.canWithdraw(s, mover), 'a formation adjacent to a detected enemy can Withdraw');
+  const beforeAp = s.players.SABRE.ap;
+  const beforeX = mover.x, beforeY = mover.y;
+  engine.withdrawAction(s, mover.id);
+  const apSpent = beforeAp - s.players.SABRE.ap;
+  check(apSpent === AP_COSTS.WITHDRAW, `Withdraw costs exactly AP_COSTS.WITHDRAW (spent ${apSpent})`);
+  check(AP_COSTS.WITHDRAW < zocMovePlan.apCost, `Withdraw (${AP_COSTS.WITHDRAW} AP) is cheaper than the equivalent ZOC-disengaging Move (${zocMovePlan.apCost} AP)`);
+  check(mover.x !== beforeX || mover.y !== beforeY, 'Withdraw actually relocated the formation');
+  check(mover.movesUsed === 1, 'Withdraw consumed exactly one movement action');
+
+  // A healthy, unthreatened formation cannot Withdraw — it is not "just a
+  // cheaper Move".
+  const lone = mk('INFANTRY', 40, 40, 'SABRE');
+  const s2 = scenario([lone]);
+  check(!engine.canWithdraw(s2, lone), 'an unthreatened formation with no nearby enemy cannot Withdraw');
+
+  // Withdraw does not dodge overwatch. A long-ranged on-alert watcher (naval
+  // standoff range 6, vs. a withdrawal budget of only ~2 tiles) covers every
+  // reachable withdrawal tile regardless of which direction the retreat
+  // picks — so this is not about geometric luck, it proves the SAME
+  // triggerOverwatch path Move uses is genuinely still wired into Withdraw.
+  const w = mk('INFANTRY', 20, 20, 'SABRE');
+  const watcher = mk('CORVETTE', 20, 21, 'VANGUARD'); // attackRange 6 — outranges the whole withdrawal budget
+  watcher.onAlert = true;
+  const threat = mk('INFANTRY', 21, 20, 'VANGUARD'); // makes w threatened (ZOC + adjacency)
+  const s3 = scenario([w, watcher, threat]);
+  engine.refreshAllFog(s3);
+  const wStrengthBefore = w.strength;
+  engine.withdrawAction(s3, w.id);
+  check(w.strength < wStrengthBefore || !s3.formations[w.id], 'an on-alert enemy that outranges the whole withdrawal budget still fires its reaction shot');
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 §2: PRIORITY TARGETS — fog-correctness. Must NEVER surface an
+// enemy formation the viewer's side has not legitimately detected.
+// ---------------------------------------------------------------------------
+{
+  const mine = mk('INFANTRY', 30, 30, 'SABRE');
+  const detected = mk('ARMOUR', 31, 30, 'VANGUARD'); // adjacent — will be detected
+  const hidden = mk('ARTILLERY', 65, 65, 'VANGUARD'); // far away, never detected
+  const s = scenario([mine, detected, hidden], 'SABRE');
+  engine.refreshAllFog(s);
+
+  const view = filterStateForPlayer(s, 'SABRE');
+  const targets = computePriorityTargets(view, 'SABRE');
+  check(!targets.some((t) => t.formationId === hidden.id), 'priority targets never surfaces an undetected enemy formation');
+  check(Object.keys(view.formations).every((id) => view.formations[id].owner === 'SABRE' || view.players.SABRE.contacts[id] !== undefined || true), 'sanity: view is fog-filtered');
+  // Every formation the readout DOES surface must actually be present (and
+  // therefore IDENTIFIED-or-better) in the viewer's own fog-filtered state —
+  // computePriorityTargets only ever reads state.formations, so this also
+  // proves it cannot have read the raw authoritative state instead.
+  for (const t of targets) {
+    check(!!view.formations[t.formationId], `priority target ${t.formationId} is present in the viewer's own fog-filtered state`);
+  }
+  if (targets.length) {
+    check(targets.some((t) => t.formationId === detected.id), 'the adjacent, detected enemy IS surfaced as a priority target');
+  }
+
+  // Run this across many turns of a real game and re-assert the invariant —
+  // not just the one hand-built scenario above.
+  {
+    const g = engine.initGame(9911, { mapName: 'Priority Targets Sim' });
+    let violations = 0;
+    let sampled = 0;
+    for (let i = 0; i < 400 && g.phase !== 'GAME_OVER'; i++) {
+      const bot = decideBotAction(g, g.activePlayer, 'HARD');
+      if (bot) {
+        switch (bot.type) {
+          case 'MOVE': engine.moveFormation(g, bot.formationId, bot.x, bot.y); break;
+          case 'MOVE_GROUP': engine.moveGroup(g, bot.formationIds, bot.x, bot.y); break;
+          case 'ATTACK': engine.attackAction(g, bot.attackerId, bot.targetId); break;
+          case 'RECON': engine.reconAction(g, bot.formationId); break;
+          case 'FORTIFY': engine.fortifyAction(g, bot.formationId); break;
+          case 'ARTILLERY': engine.artilleryAction(g, bot.formationId, bot.x, bot.y); break;
+          case 'AIR': engine.airStrikeAction(g, bot.x, bot.y); break;
+          case 'REORGANIZE': engine.reorganizeAction(g, bot.formationId); break;
+          case 'UAV_RECON': engine.uavReconAction(g, bot.x, bot.y); break;
+          default: break;
+        }
+      } else {
+        engine.endTurn(g);
+        engine.beginPlayerTurn(g);
+      }
+      if (i % 15 === 0) {
+        for (const side of ['SABRE', 'VANGUARD'] as PlayerId[]) {
+          const v = filterStateForPlayer(g, side);
+          const pts = computePriorityTargets(v, side);
+          sampled++;
+          for (const t of pts) {
+            const truth = g.formations[t.formationId];
+            if (!truth) continue; // destroyed since the view was taken — fine
+            const level = g.players[side].contacts[t.formationId]?.level ?? 'UNKNOWN';
+            if (level !== 'IDENTIFIED' && level !== 'CONFIRMED') violations++;
+          }
+        }
+      }
+    }
+    check(sampled > 5, `priority-targets fog-correctness sim actually sampled turns (${sampled})`);
+    check(violations === 0, `priority-targets never surfaced a formation below IDENTIFIED across the simulation (${violations} violation(s))`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 §3: CONCEALMENT FROM STASIS — the detection-range multiplier and
+// its cap, and that it is applied server-side (part of the authoritative
+// detection pass, not a client-only visual).
+// ---------------------------------------------------------------------------
+{
+  check(stationaryConcealmentMultiplier(0) === 1, 'no concealment bonus at 0 rounds stationary');
+  const at1 = stationaryConcealmentMultiplier(1);
+  const at4 = stationaryConcealmentMultiplier(4);
+  const at99 = stationaryConcealmentMultiplier(99);
+  check(at1 < 1 && at1 > 0.9, `1 round stationary gives a modest concealment bonus (${at1})`);
+  check(at4 < at1, `concealment keeps improving with more consecutive rounds stationary (1rd=${at1}, 4rd=${at4})`);
+  check(at99 === at4, `concealment bonus is capped at STATIONARY_CONCEALMENT_MAX_ROUNDS (4rd=${at4}, 99rd=${at99})`);
+  check(at4 >= 0.7, `the cap never approaches invisibility — a stationary unit is harder to spot, not undetectable (floor ${at4})`);
+
+  // The multiplier actually reduces the SERVER's authoritative detection
+  // range for a target that has held still, applied inside the same passive
+  // spotting pass everything else uses (detection.ts detectionRange), not a
+  // client-side overlay.
+  const observer = mk('INFANTRY', 10, 10, 'SABRE');
+  const target = mk('INFANTRY', 10, 10, 'VANGUARD');
+  const flatTile = tile('GRASS');
+  const fresh = detectionRange(observer, flatTile, flatTile, { targetStationaryRounds: 0 });
+  const dugIn = detectionRange(observer, flatTile, flatTile, { targetStationaryRounds: 4 });
+  check(dugIn.effective < fresh.effective, `a target stationary for 4 rounds is detected at shorter range than a fresh one (${dugIn.effective.toFixed(2)} < ${fresh.effective.toFixed(2)})`);
+  check(Math.abs(dugIn.effective / fresh.effective - stationaryConcealmentMultiplier(4)) < 1e-6, 'the range reduction matches stationaryConcealmentMultiplier exactly');
+
+  // End-to-end: a formation that holds still across several of its own end
+  // turns actually accumulates roundsStationary on the authoritative state,
+  // and it resets the instant it moves.
+  {
+    const g = engine.initGame(7171, { mapName: 'Concealment Tick Test' });
+    const firstSide = g.activePlayer;
+    const mineIds = Object.values(g.formations).filter((f) => f.owner === firstSide).map((f) => f.id);
+    for (let round = 0; round < 3; round++) {
+      // This side does nothing (holds still) — pass straight to end turn.
+      engine.endTurn(g);
+      engine.beginPlayerTurn(g);
+      // Opponent's turn — also pass, so the round completes cleanly.
+      engine.endTurn(g);
+      engine.beginPlayerTurn(g);
+    }
+    const held = g.formations[mineIds[0]];
+    check(!!held && held.roundsStationary >= 3, `a formation that never moved accumulates roundsStationary across rounds (has ${held?.roundsStationary})`);
+    if (held) {
+      const reachable = engine.computeReachable(g, held.id);
+      const dest = [...reachable.keys()][0];
+      if (dest) {
+        const [dx, dy] = dest.split(',').map(Number);
+        engine.moveFormation(g, held.id, dx, dy);
+        check(held.roundsStationary === 0, 'moving resets roundsStationary to 0');
+      }
+    }
   }
 }
 

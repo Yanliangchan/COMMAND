@@ -63,6 +63,7 @@ const TRUE_AT: Record<keyof Formation, DetectionLevel> = {
   // Phase 11 §5 additions — last stand is intelligence too, same tier.
   lastStandTriggered: 'CONFIRMED',
   lastStandUntilRound: 'CONFIRMED',
+  roundsStationary: 'CONFIRMED',
 };
 
 const failures: string[] = [];
@@ -214,6 +215,7 @@ function apply(state: GameState, a: any) {
     case 'REORGANIZE': engine.reorganizeAction(state, a.formationId); break;
     case 'VERTICAL_INSERT': engine.verticalInsertAction(state, a.formationId, a.x, a.y); break;
     case 'UAV_RECON': engine.uavReconAction(state, a.x, a.y); break;
+    case 'WITHDRAW': engine.withdrawAction(state, a.formationId); break;
   }
 }
 
@@ -247,6 +249,36 @@ function auditKillFeed(state: GameState, viewer: PlayerId) {
     const level: DetectionLevel = state.players[viewer].contacts[truth.formationId]?.level ?? 'UNKNOWN';
     if (level !== 'UNKNOWN') continue;
     ok(!wire.killFeed.some((k) => k.id === truth.id), `killFeed leaked a kill event (${truth.id}) at UNKNOWN detection`);
+  }
+}
+
+/**
+ * Combat-event redaction (phase 12 §5) — the on-map combat-effect readout's
+ * only data source. Own-side participant always at its true position;
+ * opposing participant's position included only if this viewer's side has
+ * actually detected it (see fog.ts `redactCombatEvent`).
+ */
+function auditCombatEvents(state: GameState, viewer: PlayerId) {
+  const wire = filterStateForPlayer(state, viewer);
+  for (const ev of wire.combatEvents) {
+    const isMineAttacker = ev.attackerOwner === viewer;
+    const isMineDefender = ev.defenderOwner === viewer;
+    ok(isMineAttacker || isMineDefender, `combat event ${ev.id} sent to a viewer with no stake in it`);
+    const truth = state.combatEvents.find((t) => t.id === ev.id);
+    if (!truth) continue;
+    if (isMineAttacker) {
+      ok(ev.attackerX === truth.attackerX && ev.attackerY === truth.attackerY, `own attacker position was redacted on combat event ${ev.id}`);
+      const level = state.players[viewer].contacts[truth.defenderId]?.level ?? (state.formations[truth.defenderId]?.owner === viewer ? 'CONFIRMED' : 'UNKNOWN');
+      if (level === 'UNKNOWN') {
+        ok(ev.defenderX === ev.attackerX && ev.defenderY === ev.attackerY, `combat event ${ev.id} leaked an undetected defender's true position`);
+      }
+    } else {
+      ok(ev.defenderX === truth.defenderX && ev.defenderY === truth.defenderY, `own defender position was redacted on combat event ${ev.id}`);
+      const level = state.players[viewer].contacts[truth.attackerId]?.level ?? (state.formations[truth.attackerId]?.owner === viewer ? 'CONFIRMED' : 'UNKNOWN');
+      if (level === 'UNKNOWN') {
+        ok(ev.attackerX === ev.defenderX && ev.attackerY === ev.defenderY, `combat event ${ev.id} leaked an undetected attacker's true position`);
+      }
+    }
   }
 }
 
@@ -295,6 +327,8 @@ for (let g = 0; g < GAMES; g++) {
       auditSnapshot(state, 'VANGUARD');
       auditKillFeed(state, 'SABRE');
       auditKillFeed(state, 'VANGUARD');
+      auditCombatEvents(state, 'SABRE');
+      auditCombatEvents(state, 'VANGUARD');
     }
     engine.endTurn(state);
     engine.beginPlayerTurn(state);

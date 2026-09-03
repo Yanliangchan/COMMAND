@@ -69,6 +69,7 @@ export type GameAction =
   | { type: 'REORGANIZE'; formationId: string }
   | { type: 'VERTICAL_INSERT'; formationId: string; x: number; y: number }
   | { type: 'UAV_RECON'; x: number; y: number }
+  | { type: 'WITHDRAW'; formationId: string }
   | { type: 'END_TURN' };
 
 export type ClientMsg =

@@ -11,6 +11,8 @@ import { BattleReportModal } from './components/BattleReportModal';
 import { EndGameScreen } from './components/EndGameScreen';
 import { Briefing } from './components/Briefing';
 import { TurnSummaryBanner } from './components/TurnSummaryBanner';
+import { PriorityTargets } from './components/PriorityTargets';
+import { computePriorityTargets } from './game/threat';
 import { Legend } from './components/Legend';
 import { HelpPanel } from './components/HelpPanel';
 import { Lobby } from './components/Lobby';
@@ -19,11 +21,23 @@ import { ReplayLinkView } from './components/ReplayLinkView';
 import { OpsLog } from './components/OpsLog';
 import { GroupMovePreview, MovementPreview } from './components/MovementPreview';
 import { AttackPreview } from './components/AttackPreview';
-import { Camera, ContactPing, KillMarker, Overlays, PING_LIFETIME_MS } from './render/renderMap';
+import {
+  Camera,
+  CombatEffect,
+  COMBAT_EFFECT_LIFETIME_MS,
+  ContactPing,
+  EventFlash,
+  EVENT_FLASH_LIFETIME_MS,
+  KillMarker,
+  ObjectiveFlash,
+  OBJECTIVE_FLASH_LIFETIME_MS,
+  Overlays,
+  PING_LIFETIME_MS,
+} from './render/renderMap';
 import { TargetMode } from './App.types';
 import { ActionAvailability, actionAvailability, ACTION_BY_SHORTCUT, formationsWithActions } from './game/actions';
 import { computeReachable, formationAt, previewAttack } from './game/engine';
-import { cohesionAdvisory, planGroupMove, planMove } from './game/movement';
+import { cohesionAdvisory, planGroupMove, planMove, planWithdraw } from './game/movement';
 import { AP_COSTS, Contact, DetectionLevel, Formation, GRID_SIZE, PlayerId, gridRef } from './game/types';
 import { sound } from './audio/sound';
 
@@ -87,6 +101,15 @@ export default function App() {
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [hoverTile, setHoverTile] = useState<{ x: number; y: number } | null>(null);
   const [camera, setCamera] = useState<Camera>({ x: GRID_SIZE / 2, y: GRID_SIZE / 2, scale: 11 });
+  // Opening camera sweep / end-game cinematic (phase 12 §10) — see the two
+  // effects below. `sweeping` gates a skip listener; the timers themselves
+  // are cleared on skip so a stray late setCamera can never fight the
+  // player's own subsequent panning.
+  const [sweeping, setSweeping] = useState(false);
+  const sweepTimersRef = useRef<number[]>([]);
+  const sweepFinalCamRef = useRef<Camera | null>(null);
+  const openingSweepDoneRef = useRef(false);
+  const endgameSweepDoneRef = useRef(false);
   const [overlays, setOverlays] = useState<Overlays>({ movement: true, intel: true, objectives: true });
   const [showReportId, setShowReportId] = useState<string | null>(null);
   const [legendOpen, setLegendOpen] = useState(false);
@@ -101,6 +124,20 @@ export default function App() {
   const knownKillIdsRef = useRef<Set<string>>(new Set());
   const knownContactsRef = useRef<Record<string, DetectionLevel> | null>(null);
   const prevObjectivesRef = useRef<Record<string, PlayerId | null> | null>(null);
+  // Phase 12 §5/§6/§11 — on-map combat effects, objective-capture flashes and
+  // event-location flashes, all derived from the SAME already-fog-audited
+  // diff pass as the pings/kills above (state.combatEvents and
+  // state.killFeed are fog.ts-redacted per viewer; objectives are never
+  // fog-gated) — never a separate, uncoordinated visual system.
+  const [combatEffects, setCombatEffects] = useState<CombatEffect[]>([]);
+  const [objectiveFlashes, setObjectiveFlashes] = useState<ObjectiveFlash[]>([]);
+  const [eventFlashes, setEventFlashes] = useState<EventFlash[]>([]);
+  const knownCombatIdsRef = useRef<Set<string>>(new Set());
+  // Real per-formation paths captured at the moment Move/Withdraw is issued,
+  // for animated movement (phase 12 §4) to follow exactly rather than glide
+  // straight-line — see MapCanvas's animation effect, which consumes and
+  // clears each entry the instant that formation's position actually changes.
+  const moveHintsRef = useRef<Map<string, { x: number; y: number }[]>>(new Map());
   const alertTimer = useRef<number | undefined>(undefined);
   const alertSeq = useRef(0);
   const shownRef = useRef<string | null>(null);
@@ -124,6 +161,8 @@ export default function App() {
   // second vs-Bot game in the same tab would never show it again.
   useEffect(() => {
     setBriefingDismissed(false);
+    openingSweepDoneRef.current = false;
+    endgameSweepDoneRef.current = false;
   }, [net.roomCode]);
 
   const briefingOpen = !!state && !!you && state.round === 1 && !briefingDismissed;
@@ -228,6 +267,34 @@ export default function App() {
     const freshKills = state.killFeed.filter((k) => !knownKillIdsRef.current.has(k.id));
     freshKills.forEach((k) => knownKillIdsRef.current.add(k.id));
 
+    // Combat effects (phase 12 §5) — state.combatEvents is already
+    // fog-redacted per viewer by fog.ts (see `redactCombatEvent`): an
+    // undetected participant's position has already been collapsed onto the
+    // viewer's own formation before it ever reaches this component, so this
+    // diff needs no detection logic of its own, exactly like kills above.
+    const freshCombat = state.combatEvents.filter((e) => !knownCombatIdsRef.current.has(e.id));
+    freshCombat.forEach((e) => knownCombatIdsRef.current.add(e.id));
+    if (freshCombat.length) {
+      const added: CombatEffect[] = freshCombat.map((e) => ({
+        id: e.id,
+        kind: e.kind,
+        attackerX: e.attackerX,
+        attackerY: e.attackerY,
+        defenderX: e.defenderX,
+        defenderY: e.defenderY,
+        at: now,
+      }));
+      setCombatEffects((cs) => [...cs.filter((c) => now - c.at < COMBAT_EFFECT_LIFETIME_MS), ...added].slice(-24));
+      // Overwatch reaction fire never produces a lastBattleReport (it is not
+      // a player-issued order), so it has no sound cue yet — this is the one
+      // unambiguous case where combatEvents themselves should raise it. An
+      // ATTACK-order engagement (direct or standoff) already gets 'attack'
+      // from the lastBattleReport effect below at essentially the same
+      // instant, so it is deliberately NOT re-triggered here to avoid a
+      // doubled cue.
+      if (freshCombat.some((e) => e.kind === 'overwatch')) sound.play('attack');
+    }
+
     // Objectives — never fog-gated, so a straight ownership diff is safe.
     const prevObjectives = prevObjectivesRef.current;
     const objSnapshot: Record<string, PlayerId | null> = {};
@@ -238,6 +305,17 @@ export default function App() {
     const objectiveChanges = prevObjectives
       ? state.objectives.filter((o) => prevObjectives[o.id] !== undefined && prevObjectives[o.id] !== o.controlledBy)
       : [];
+    if (objectiveChanges.length) {
+      const added: ObjectiveFlash[] = objectiveChanges.map((o) => ({
+        id: o.id,
+        x: o.x,
+        y: o.y,
+        fromOwner: prevObjectives![o.id] ?? null,
+        toOwner: o.controlledBy,
+        at: now,
+      }));
+      setObjectiveFlashes((fs) => [...fs.filter((f) => now - f.at < OBJECTIVE_FLASH_LIFETIME_MS), ...added].slice(-12));
+    }
 
     // Map-side visuals: pings for contacts, wreck markers for kills.
     if (freshContacts.length || upgradedContacts.length) {
@@ -282,6 +360,16 @@ export default function App() {
         nearest = { x: c.x, y: c.y };
       }
     });
+
+    // Event-location flash (phase 12 §11) — the same tile coordinates the
+    // notification banner's "click to jump" already carries, rendered as an
+    // immediate highlight pulse so the eye can catch it before the player
+    // even clicks. All of `candidates` (kills, objective changes, fresh/
+    // upgraded contacts), not just the nearest one.
+    const flashesAdded: EventFlash[] = candidates.map((c) => ({ x: c.x, y: c.y, at: now }));
+    if (flashesAdded.length) {
+      setEventFlashes((fs) => [...fs.filter((f) => now - f.at < EVENT_FLASH_LIFETIME_MS), ...flashesAdded].slice(-24));
+    }
 
     alertSeq.current += 1;
     setEventAlert({ id: alertSeq.current, parts, nearest });
@@ -355,7 +443,82 @@ export default function App() {
       const avgY = mine.reduce((s, f) => s + f.y, 0) / mine.length;
       setCamera((c) => ({ ...c, x: avgX, y: avgY }));
     }
-  }, [state, you]);
+  }, [state?.round, you]);
+
+  // ---- Opening camera sweep (phase 12 §10) ---------------------------------
+  // Fires once, the instant the pre-battle briefing dismisses: a brief pan
+  // across the battlefield before settling on the player's own deployment
+  // zone, instead of cutting straight to the HUD. Reuses MapCanvas's own
+  // per-frame camera easing (it glides toward whatever `camera` is set to)
+  // rather than a bespoke tween — each waypoint below just becomes the next
+  // easing target. Skippable: any keypress or click cuts straight to the
+  // final settle position (see the skip-listener effect below).
+  useEffect(() => {
+    if (!state || !you) return;
+    if (!briefingDismissed || openingSweepDoneRef.current) return;
+    openingSweepDoneRef.current = true;
+    const mine = Object.values(state.formations).filter((f) => f.owner === you);
+    const avgX = mine.length ? mine.reduce((s, f) => s + f.x, 0) / mine.length : GRID_SIZE / 2;
+    const avgY = mine.length ? mine.reduce((s, f) => s + f.y, 0) / mine.length : GRID_SIZE / 2;
+    const finalCam: Camera = { x: avgX, y: avgY, scale: 11 };
+    sweepFinalCamRef.current = finalCam;
+    setSweeping(true);
+    setCamera({ x: GRID_SIZE / 2, y: GRID_SIZE / 2, scale: 4.5 });
+    const t1 = window.setTimeout(() => setCamera({ x: GRID_SIZE - avgX, y: GRID_SIZE - avgY, scale: 6.5 }), 450);
+    const t2 = window.setTimeout(() => setCamera(finalCam), 950);
+    const t3 = window.setTimeout(() => setSweeping(false), 1500);
+    sweepTimersRef.current = [t1, t2, t3];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [briefingDismissed]);
+
+  // ---- End-game cinematic (phase 12 §10) -----------------------------------
+  // Fires once when the match reaches GAME_OVER: a brief pan across the final
+  // board, touching a couple of objectives, before settling on a wide
+  // overview — alongside the end-game screen, which is already showing the
+  // result on top of it. Same skip mechanics as the opening sweep.
+  useEffect(() => {
+    if (!state || state.phase !== 'GAME_OVER' || endgameSweepDoneRef.current) return;
+    endgameSweepDoneRef.current = true;
+    const finalCam: Camera = { x: GRID_SIZE / 2, y: GRID_SIZE / 2, scale: 6 };
+    sweepFinalCamRef.current = finalCam;
+    const objs = state.objectives;
+    if (!objs.length) {
+      setCamera(finalCam);
+      return;
+    }
+    setSweeping(true);
+    const first = objs[Math.floor(objs.length * 0.3)] ?? objs[0];
+    const second = objs[Math.floor(objs.length * 0.7)] ?? objs[objs.length - 1];
+    setCamera({ x: first.x, y: first.y, scale: 10 });
+    const t1 = window.setTimeout(() => setCamera({ x: second.x, y: second.y, scale: 10 }), 500);
+    const t2 = window.setTimeout(() => setCamera(finalCam), 1050);
+    const t3 = window.setTimeout(() => setSweeping(false), 1600);
+    sweepTimersRef.current = [t1, t2, t3];
+  }, [state?.phase]);
+
+  // Skip either sweep on the player's first keypress or click while one is
+  // running — never force them to sit through it.
+  useEffect(() => {
+    if (!sweeping) return;
+    const skip = () => {
+      sweepTimersRef.current.forEach((id) => window.clearTimeout(id));
+      sweepTimersRef.current = [];
+      setSweeping(false);
+      if (sweepFinalCamRef.current) setCamera(sweepFinalCamRef.current);
+    };
+    window.addEventListener('keydown', skip);
+    window.addEventListener('pointerdown', skip);
+    return () => {
+      window.removeEventListener('keydown', skip);
+      window.removeEventListener('pointerdown', skip);
+    };
+  }, [sweeping]);
+
+  useEffect(() => {
+    return () => {
+      sweepTimersRef.current.forEach((id) => window.clearTimeout(id));
+    };
+  }, []);
 
   useEffect(() => {
     setTargetMode(null);
@@ -386,6 +549,15 @@ export default function App() {
   );
 
   const readyFormations = useMemo(() => (state && you ? formationsWithActions(state, you) : []), [state, you]);
+
+  // Priority targets (phase 12 §2) — recomputed from the viewer's own
+  // already-fog-filtered `state`, so it is fog-correct by construction: see
+  // game/threat.ts. Live for the whole turn, not just at turn start, so it
+  // stays honest as the player's own detection picture improves mid-turn.
+  const priorityTargets = useMemo(
+    () => (state && you && myTurn ? computePriorityTargets(state, you) : []),
+    [state, you, myTurn]
+  );
 
   // The first thing a new player sees should be a unit already selected with
   // its orders on screen, not an empty bar telling them to go and click one.
@@ -483,6 +655,15 @@ export default function App() {
           break;
         case 'REORGANIZE':
           net.sendAction({ type: 'REORGANIZE', formationId: selected.id });
+          break;
+        case 'WITHDRAW':
+          // Animated movement (phase 12 §4): same path-capture as Move, from
+          // the pure planWithdraw the engine itself resolves with.
+          {
+            const wPlan = planWithdraw(state, selected);
+            if (wPlan.ok) moveHintsRef.current.set(selected.id, wPlan.path);
+          }
+          net.sendAction({ type: 'WITHDRAW', formationId: selected.id });
           break;
         default:
           break;
@@ -741,6 +922,11 @@ export default function App() {
           flash(plan.reason);
           return;
         }
+        // Animated movement (phase 12 §4): capture the real path this exact
+        // move will take, from the same pure planMove the preview already
+        // used, so the client can glide the icon along it once the server
+        // confirms — see MapCanvas's animation effect.
+        moveHintsRef.current.set(selected.id, plan.path);
         net.sendAction({ type: 'MOVE', formationId: selected.id, x, y });
         sound.play('move');
         clearMode();
@@ -810,6 +996,10 @@ export default function App() {
         onHoverTile={setHoverTile}
         pings={pings}
         kills={killMarkers}
+        moveHints={moveHintsRef}
+        combatEffects={combatEffects}
+        objectiveFlashes={objectiveFlashes}
+        eventFlashes={eventFlashes}
       />
 
       <TopBar
@@ -982,6 +1172,9 @@ export default function App() {
       )}
       {turnSummary && (
         <TurnSummaryBanner id={turnSummary.id} text={turnSummary.text} onDone={() => setTurnSummary(null)} />
+      )}
+      {myTurn && priorityTargets.length > 0 && (
+        <PriorityTargets targets={priorityTargets} onJump={(x, y) => centreOn({ x, y })} />
       )}
       {toast && <div className="toast">{toast}</div>}
       {legendOpen && you && <Legend viewer={you} onClose={() => setLegendOpen(false)} />}

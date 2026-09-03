@@ -27,7 +27,7 @@
 // ============================================================================
 
 import { FORMATION_DEFS } from './data';
-import { Contact, DetectionLevel, Formation, GameState, KillEvent, PlayerId, ReplayRound, otherPlayer } from './types';
+import { CombatEvent, Contact, DetectionLevel, Formation, GameState, KillEvent, PlayerId, ReplayRound, otherPlayer } from './types';
 
 /** Two-letter designation shown on a redacted counter, by arm. */
 const GENERIC_SHORT: Record<Formation['type'], string> = {
@@ -91,6 +91,10 @@ function redactIdentified(f: Formation): Formation {
     // Last stand (phase 11 §5) — same tier as fortifyTier: withheld until CONFIRMED.
     lastStandTriggered: false,
     lastStandUntilRound: REDACTED_NUMBER,
+    // Concealment-from-stasis (phase 12 §3) is intelligence like everything
+    // else here — whether an enemy has been sitting still is withheld until
+    // CONFIRMED, same as fortifyTier.
+    roundsStationary: REDACTED_NUMBER,
     intel: 'IDENTIFIED',
     redacted: true,
   };
@@ -152,6 +156,31 @@ function redactKillEvent(state: GameState, viewer: PlayerId, k: KillEvent): Kill
     return { ...k, type: undefined, name: 'Unknown enemy formation', shortName: '???' };
   }
   return null;
+}
+
+/**
+ * Redact one resolved-engagement record (phase 12 §5) for `viewer` — the
+ * on-map combat-effect readout's ONLY data source, so this is the whole of
+ * its fog-of-war audit. In a 2-player game every engagement necessarily
+ * involves both sides (there is no third party), so `viewer` is always
+ * either the attacker's or the defender's owner — but that alone does not
+ * license including the OTHER participant's position: the viewer's own
+ * formation is always at its true position (they are obviously present at
+ * their own tile), while the opposing participant's position is included
+ * only if this viewer's side has actually detected it — otherwise it is
+ * collapsed onto the viewer's own tile, so the client can still render an
+ * "engaged here" impact effect without ever being handed an undetected
+ * shooter's or target's true position.
+ */
+function redactCombatEvent(state: GameState, viewer: PlayerId, ev: CombatEvent): CombatEvent {
+  const isMineAttacker = ev.attackerOwner === viewer;
+  const otherId = isMineAttacker ? ev.defenderId : ev.attackerId;
+  const otherOwnFormation = state.formations[otherId]?.owner === viewer;
+  const otherDetected = otherOwnFormation || contactLevel(state, viewer, otherId) !== 'UNKNOWN';
+  if (otherDetected) return ev;
+  return isMineAttacker
+    ? { ...ev, defenderX: ev.attackerX, defenderY: ev.attackerY }
+    : { ...ev, attackerX: ev.defenderX, attackerY: ev.defenderY };
 }
 
 /**
@@ -223,6 +252,8 @@ export function filterStateForPlayer(state: GameState, viewer: PlayerId): GameSt
     .map((k) => redactKillEvent(state, viewer, k))
     .filter((k): k is KillEvent => k !== null);
 
+  const combatEvents = state.combatEvents.map((ev) => redactCombatEvent(state, viewer, ev));
+
   return {
     ...state,
     // The operations log narrates orders. Only entries addressed to this
@@ -231,6 +262,7 @@ export function filterStateForPlayer(state: GameState, viewer: PlayerId): GameSt
     log: state.log.filter((e) => e.audience === 'ALL' || e.audience === viewer),
     formations,
     killFeed,
+    combatEvents,
     replay: redactReplay(state, viewer),
     players: {
       ...state.players,

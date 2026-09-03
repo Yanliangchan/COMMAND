@@ -106,6 +106,31 @@ export const Replay: React.FC<{ state: ReplayViewState; onClose: () => void }> =
       ctx.arc((o.x + 0.5) * cell, (o.y + 0.5) * cell, Math.max(2, cell * 0.4), 0, Math.PI * 2);
       ctx.fill();
     });
+    // Movement breadcrumbs (phase 12 §9) — a thin fading trail from where
+    // each formation started THE ROUND BEING VIEWED (the previous round's
+    // snapshot) to where it ended up (this round's snapshot). Subtle by
+    // design: a dim dashed line, never competing with the terrain or the
+    // counters themselves.
+    if (idx > 0) {
+      const prevRound = rounds[idx - 1];
+      const prevById = new Map(prevRound.entries.map((e) => [e.id, e]));
+      ctx.save();
+      ctx.setLineDash([Math.max(2, cell * 0.3), Math.max(2, cell * 0.25)]);
+      round.entries.forEach((e) => {
+        const before = prevById.get(e.id);
+        if (!before || (before.x === e.x && before.y === e.y)) return;
+        const color = PLAYER_COLORS[e.owner]?.main ?? '#ccc';
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = Math.max(1, cell * 0.08);
+        ctx.beginPath();
+        ctx.moveTo((before.x + 0.5) * cell, (before.y + 0.5) * cell);
+        ctx.lineTo((e.x + 0.5) * cell, (e.y + 0.5) * cell);
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+
     // Both task forces, together, on the one board — the operation is over,
     // so there is nothing left to hide from a review of it. Owner colour
     // still distinguishes the two sides; every counter gets the same dark
@@ -120,7 +145,7 @@ export const Replay: React.FC<{ state: ReplayViewState; onClose: () => void }> =
       ctx.lineWidth = 1;
       ctx.stroke();
     });
-  }, [round, state.objectives, state.tiles]);
+  }, [round, idx, rounds, state.objectives, state.tiles]);
 
   return (
     <div className="modal-backdrop">

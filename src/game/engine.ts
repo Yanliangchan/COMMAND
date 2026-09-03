@@ -21,8 +21,10 @@ import {
   computeReachable as computeReachableTiles,
   cohesionAdvisory,
   crossable,
+  isThreatened,
   planGroupMove,
   planMove,
+  planWithdraw,
 } from './movement';
 import { deepProbe, detectionRange, lineOfSight, reconSweep, refreshAllSpotting, refreshSpotting, sightDistance } from './detection';
 import {
@@ -65,6 +67,7 @@ import {
   ActionKind,
   BattleFactor,
   BattleReport,
+  CombatEvent,
   DetectionLevel,
   Formation,
   GameState,
@@ -157,6 +160,7 @@ function makeFormation(owner: PlayerId, profileIndex: number, x: number, y: numb
     verticalInsertsUsed: 0,
     lastStandTriggered: false,
     lastStandUntilRound: 0,
+    roundsStationary: 0,
   };
 }
 
@@ -208,6 +212,7 @@ export function initGame(
     winner: null,
     lastBattleReport: null,
     killFeed: [],
+    combatEvents: [],
     replay: [],
     rules,
     mapName: opts.mapName ?? 'Unnamed Sector',
@@ -314,7 +319,7 @@ function overwatchCandidates(state: GameState, mover: Formation): Formation[] {
     const d = distance(alert.x, alert.y, mover.x, mover.y);
     if (d < 1 || d > alertDef.attackRange) continue; // must actually be able to reach it
     const alertTile = state.tiles[alert.y][alert.x];
-    const range = detectionRange(alert, alertTile, tile, { fortifiedTarget: mover.fortified });
+    const range = detectionRange(alert, alertTile, tile, { fortifiedTarget: mover.fortified, targetStationaryRounds: mover.roundsStationary });
     if (sightDistance(alert.x, alert.y, mover.x, mover.y) > range.effective) continue;
     if (!lineOfSight(state.tiles, alert.x, alert.y, mover.x, mover.y).clear) continue;
     out.push(alert);
@@ -346,6 +351,7 @@ function triggerOverwatch(state: GameState, mover: Formation): boolean {
     alert.reactionFired = true;
     alert.lastEngagedRound = state.round;
     mover.lastEngagedRound = state.round;
+    recordCombatEvent(state, 'overwatch', alert, alert, mover, tile);
     applyMoraleShock(state, mover, casualtyShock(res.defender, 0.6), 'caught by reaction fire');
     log(
       state,
@@ -381,6 +387,7 @@ export function moveFormation(state: GameState, formationId: string, x: number, 
   f.fortified = false;
   f.fortifyTier = 0;
   f.movesUsed += plan.actionsRequired;
+  f.roundsStationary = 0;
 
   // Walk the path tile by tile (not just jump to the destination) so overwatch
   // can react anywhere along the route, not only at the final tile.
@@ -428,6 +435,7 @@ export function moveGroup(state: GameState, formationIds: string[], x: number, y
     f.fortified = false;
     f.fortifyTier = 0;
     f.movesUsed += 1;
+    f.roundsStationary = 0;
     // Overwatch (phase 7): a grouped move checks only the final tile per
     // member (the pacing model does not track an intermediate path per
     // formation) — a real but deliberately smaller simplification than the
@@ -445,6 +453,55 @@ export function moveGroup(state: GameState, formationIds: string[], x: number, y
   );
   plan.advisories.forEach((a) => log(state, a));
   plan.excluded.forEach((e) => log(state, `${e.shortName} could not join the formation move — ${e.reason}.`));
+  refreshAllSpotting(state);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
+// RETREAT / WITHDRAW (phase 12 §1) — see types.ts's WITHDRAW_RANGE_FRACTION
+// comment for the full AP-cost comparison against an ordinary
+// ZOC-disengaging Move. Distinct order, distinct engine function, but it
+// still walks its path tile by tile through the SAME triggerOverwatch as a
+// normal move — it does not dodge reaction fire already covering the ground.
+// ---------------------------------------------------------------------------
+
+export function canWithdraw(state: GameState, f: Formation): boolean {
+  if (f.owner !== state.activePlayer) return false;
+  if (movesRemaining(f) <= 0) return false;
+  if ((state.players[f.owner]?.ap ?? 0) < AP_COSTS.WITHDRAW) return false;
+  return isThreatened(state, f);
+}
+
+export function withdrawAction(state: GameState, formationId: string): GameState {
+  const f = state.formations[formationId];
+  if (!f || f.owner !== state.activePlayer) return state;
+  if (!canWithdraw(state, f)) return state;
+  const plan = planWithdraw(state, f);
+  if (!plan.ok) return state;
+
+  state.players[state.activePlayer].ap -= AP_COSTS.WITHDRAW;
+  f.fortified = false;
+  f.fortifyTier = 0;
+  f.movesUsed += 1;
+  f.roundsStationary = 0;
+
+  let destroyed = false;
+  for (const step of plan.path) {
+    f.x = step.x;
+    f.y = step.y;
+    if (triggerOverwatch(state, f)) {
+      destroyed = true;
+      break;
+    }
+  }
+  if (destroyed) {
+    refreshAllSpotting(state);
+    return state;
+  }
+
+  const ref = gridRef(f.x, f.y);
+  f.lastOrder = `Withdrew from contact to grid ${ref} (${AP_COSTS.WITHDRAW} AP)`;
+  log(state, `${f.shortName} withdrew from contact to grid ${ref}, breaking off before the enemy could close.`);
   refreshAllSpotting(state);
   return state;
 }
@@ -514,6 +571,36 @@ function mourn(state: GameState, lost: Formation) {
 // what its detection of that formation had actually established) and gets a
 // log line on BOTH sides, each capped at what that side legitimately knew.
 // ---------------------------------------------------------------------------
+
+/**
+ * Record a resolved engagement for the on-map combat-effect readout (phase
+ * 12 §5) — see types.ts CombatEvent. Capped short, newest first, exactly
+ * like recordKill below.
+ */
+function recordCombatEvent(
+  state: GameState,
+  kind: CombatEvent['kind'],
+  attacker: Formation,
+  attackerTile: { x: number; y: number },
+  defender: Formation,
+  defenderTile: { x: number; y: number }
+) {
+  const ev: CombatEvent = {
+    id: nextId('combat'),
+    kind,
+    attackerId: attacker.id,
+    attackerOwner: attacker.owner,
+    attackerX: attackerTile.x,
+    attackerY: attackerTile.y,
+    defenderId: defender.id,
+    defenderOwner: defender.owner,
+    defenderX: defenderTile.x,
+    defenderY: defenderTile.y,
+    round: state.round,
+  };
+  state.combatEvents.unshift(ev);
+  if (state.combatEvents.length > 20) state.combatEvents.pop();
+}
 
 function recordKill(state: GameState, f: Formation) {
   const k: KillEvent = {
@@ -919,6 +1006,7 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   const finalAttacker = atk.power * (1 + roll / 100);
   const share = finalAttacker / (finalAttacker + dfn.power);
   const res = lossesFromShare(share, closeAssault);
+  recordCombatEvent(state, closeAssault ? 'direct' : 'standoff', attacker, attackerTile, target, defenderTile);
 
   const factors: BattleFactor[] = [
     ...atk.factors.map((f) => ({ ...f, side: 'attacker' as const })),
@@ -1075,6 +1163,7 @@ export function artilleryAction(state: GameState, formationId: string, x: number
   const roll = Math.round((Math.random() * 2 - 1) * COMBAT_ROLL_PCT);
   const share = (atk.power * (1 + roll / 100)) / (atk.power * (1 + roll / 100) + dfn.power);
   const res = lossesFromShare(share, false);
+  recordCombatEvent(state, 'standoff', f, f, target, defenderTile);
   const delta = res.defender;
   target.strength = Math.max(0, target.strength + delta);
   checkLastStand(state, target);
@@ -1221,6 +1310,7 @@ export function verticalInsertAction(state: GameState, formationId: string, x: n
   f.y = y;
   f.fortified = false;
   f.fortifyTier = 0;
+  f.roundsStationary = 0;
   f.hasActedThisTurn = true;
   f.verticalInsertsUsed = (f.verticalInsertsUsed ?? 0) + 1;
   const remaining = VERTICAL_INSERT_MAX_USES - f.verticalInsertsUsed;
@@ -1430,6 +1520,15 @@ export function endTurn(state: GameState): GameState {
     if (f.owner !== finishing) return;
     f.onAlert = !f.hasActedThisTurn && f.type !== 'ARTILLERY';
     f.reactionFired = false;
+  });
+  // Concealment from stasis (phase 12 §3): tick BEFORE movesUsed resets below
+  // — a formation that spent no movement action this round just held its
+  // ground for another round, so the streak climbs; anything that moved (even
+  // partially) had its streak already zeroed the instant it moved (see
+  // moveFormation / moveGroup / withdrawAction / verticalInsertAction).
+  Object.values(state.formations).forEach((f) => {
+    if (f.owner !== finishing) return;
+    if (f.movesUsed === 0) f.roundsStationary = (f.roundsStationary ?? 0) + 1;
   });
   // Reset the finishing side's per-round budgets so everything is fresh when
   // control comes back to them.

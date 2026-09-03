@@ -83,6 +83,10 @@ const CONCEPTS: Topic[] = [
     body: 'Every land formation except artillery projects a Zone of Control into its four adjacent tiles — shown as red hatching automatically while Move is armed. An enemy formation MOVING THROUGH one of your ZOC tiles has its bound end there: it may still enter and stop on the tile, it just cannot use it as a step to somewhere further, so a move that needs to pass beyond it is refused with the reason spelled out, or has to route around. Leaving a ZOC tile your formation STARTED its move standing in — disengaging from contact — costs a full movement action’s worth of points on the spot, itemised in the movement preview as soon as you hover a destination. Naval formations neither project nor are affected by ZOC.',
   },
   {
+    title: 'Withdraw (retreat)',
+    body: 'Press W with a formation that is genuinely in trouble — adjacent to a detected enemy, standing inside an enemy Zone of Control, or badly hurt (low strength or Shaken/Broken morale) — to disengage automatically, falling back away from the nearest detected threat. It is deliberately cheaper than an ordinary Move that has to pay the ZOC disengagement surcharge: that surcharge alone costs a Move its entire single-action budget on the first step, usually forcing a second action (2 AP) just to actually get clear, where Withdraw is a flat 1 AP for a shorter bound. It still spends one of the formation’s movement actions and it does NOT dodge overwatch — an alert enemy covering the ground it crosses fires exactly as it would on a normal move. A healthy formation with nothing threatening it cannot Withdraw; that is what Move is for.',
+  },
+  {
     title: 'Suppression',
     body: 'A battlefield condition separate from strength, morale and readiness — shown as its own purple bar on the unit card, never folded into another stat. Artillery, naval standoff fire and air strikes apply a heavy dose (30); a direct assault applies a smaller amount too (12). Suppression cuts the SUPPRESSED formation’s own attack power and movement range, up to -50% at maximum — it never causes strength loss by itself, that is what the damage numbers are for. It decays 25 points a round it is not refreshed, faster in forest, built-up ground or while dug in (cover lets a unit recover its composure), slower in the open (there is nowhere to get out of the beaten zone). The pre-attack preview and the battle report both show how much suppression an engagement will apply, right alongside the expected losses.',
   },
@@ -153,6 +157,14 @@ const CONCEPTS: Topic[] = [
   {
     title: 'Detection states',
     body: 'What you know about an enemy is a four-rung ladder. UNKNOWN — nothing; the game does not even tell your client it exists. CONTACT — a hollow dashed "?" blip: something is at that grid, and that is all, e.g. "CONTACT · Unknown Enemy · Grid F-42 · Confidence 58%". IDENTIFIED — a dashed counter with the arm and a "?" badge: enemy infantry, say, but not which battalion and not how strong. CONFIRMED — a solid counter with a "✓" badge and the real designation. Confidence rises with closer, clearer and repeated observation (once per round), and with recon assets; it decays every round once you lose sight, sliding a Confirmed formation back down to a stale last-known-position marker. Identification does NOT change how hard you hit — if you can see a target well enough to engage it, you fight just as well. What it changes is how well you can PREDICT the engagement before committing to it.',
+  },
+  {
+    title: 'Concealment from stasis',
+    body: 'A formation that holds its ground — no movement action for a whole round or more — gets progressively harder to spot, on top of whatever terrain and fortification concealment it already had. It is a real reduction in the enemy’s detection range against it (up to about a quarter shorter after four rounds stationary, capped there — never invisible), computed server-side as part of the same authoritative spotting pass as everything else, so it holds up in multiplayer exactly like any other detection rule. A small "concealed" chip appears on your OWN unit card once it applies; you learn nothing new about how well an ENEMY formation is concealed beyond what your detection of it already tells you. Moving resets the streak to zero immediately.',
+  },
+  {
+    title: 'Priority targets',
+    body: 'While it is your turn, a small readout under the SITREP banner names the one or two enemy formations that most threaten your position right now, based only on what your own side has actually detected — an enemy you have merely spotted as a CONTACT blip never appears here, since the readout needs to know the arm to estimate its reach. Click an entry to jump the camera to it, the same as the event notification’s jump-to-tile. It updates live through your turn as your detection picture improves — it is not just a one-shot snapshot at turn start.',
   },
   {
     title: 'Briefing, SITREP and sound',

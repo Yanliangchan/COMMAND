@@ -105,7 +105,53 @@ export interface RenderContext {
   pathInvalid?: boolean;
   /** 0..1 animation phase for pulsing selection / flash effects. */
   pulse?: number;
+  /**
+   * Animated (phase 12 §4) on-screen tile position for a formation currently
+   * gliding toward its authoritative position — see MapCanvas's animation
+   * ref. A formation with no entry here draws at its true state.x/y, exactly
+   * as before this phase. Purely a rendering interpolation: the game-logic
+   * position (used for reachable/attackable/ZOC highlighting, hit-testing,
+   * everything else) is always the real one.
+   */
+  animPositions?: Map<string, { x: number; y: number }>;
+  /** Transient on-map combat effects (phase 12 §5) — tracers/muzzle-flash/shell-bursts. */
+  combatEffects?: CombatEffect[];
+  /** Transient objective-capture flag-flip animations (phase 12 §6). */
+  objectiveFlashes?: ObjectiveFlash[];
+  /** Transient event-location highlight pulses (phase 12 §11). */
+  eventFlashes?: EventFlash[];
 }
+
+/** A brief on-map combat effect, timed with the existing combat sound cue (phase 12 §5). */
+export interface CombatEffect {
+  id: string;
+  kind: 'direct' | 'standoff' | 'overwatch';
+  attackerX: number;
+  attackerY: number;
+  defenderX: number;
+  defenderY: number;
+  at: number;
+}
+export const COMBAT_EFFECT_LIFETIME_MS = 900;
+
+/** A brief objective-capture flag-flip animation (phase 12 §6). */
+export interface ObjectiveFlash {
+  id: string;
+  x: number;
+  y: number;
+  fromOwner: PlayerId | null;
+  toOwner: PlayerId | null;
+  at: number;
+}
+export const OBJECTIVE_FLASH_LIFETIME_MS = 1600;
+
+/** A brief highlight pulse at an event's tile (phase 12 §11), independent of ContactPing's ripple style. */
+export interface EventFlash {
+  x: number;
+  y: number;
+  at: number;
+}
+export const EVENT_FLASH_LIFETIME_MS = 2200;
 
 function worldToScreen(camera: Camera, width: number, height: number, x: number, y: number) {
   return {
@@ -951,8 +997,35 @@ export function render(rc: RenderContext) {
     for (const o of state.objectives) {
       if (o.x < x0 - 1 || o.x > x1 + 1 || o.y < y0 - 1 || o.y > y1 + 1) continue;
       const { sx, sy } = worldToScreen(camera, width, height, o.x, o.y);
-      const color = o.controlledBy ? PLAYER_COLORS[o.controlledBy].main : UI.amber;
+      let color = o.controlledBy ? PLAYER_COLORS[o.controlledBy].main : UI.amber;
+      let fill = o.controlledBy ? PLAYER_COLORS[o.controlledBy].glow : 'rgba(207,154,68,0.42)';
       const r = Math.max(5, s * 0.34);
+
+      // Capture-flip animation (phase 12 §6): a brief colour transition to
+      // the new owner plus an expanding ring, instead of the marker just
+      // silently updating. Colour-only for the first half (reads as the old
+      // flag still flying), flips to the new owner for the second half.
+      const flash = rc.objectiveFlashes?.find((fl) => fl.id === o.id);
+      if (flash) {
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        const age = now - flash.at;
+        if (age >= 0 && age < OBJECTIVE_FLASH_LIFETIME_MS) {
+          const t = age / OBJECTIVE_FLASH_LIFETIME_MS;
+          const fromColor = flash.fromOwner ? PLAYER_COLORS[flash.fromOwner].main : UI.amber;
+          const toColor = flash.toOwner ? PLAYER_COLORS[flash.toOwner].main : UI.amber;
+          const fromFill = flash.fromOwner ? PLAYER_COLORS[flash.fromOwner].glow : 'rgba(207,154,68,0.42)';
+          const toFill = flash.toOwner ? PLAYER_COLORS[flash.toOwner].glow : 'rgba(207,154,68,0.42)';
+          color = t < 0.5 ? fromColor : toColor;
+          fill = t < 0.5 ? fromFill : toFill;
+          const ringR = r * (1 + t * 2.2);
+          ctx.beginPath();
+          ctx.arc(sx, sy, ringR, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(230,182,101,${((1 - t) * 0.85).toFixed(2)})`;
+          ctx.lineWidth = Math.max(1.4, 2.4 * (1 - t));
+          ctx.stroke();
+        }
+      }
+
       // Dark casing first: an objective must never get lost in forest, urban
       // fabric or a hillshade shadow.
       ctx.beginPath();
@@ -961,7 +1034,7 @@ export function render(rc: RenderContext) {
       ctx.fill();
       ctx.beginPath();
       ctx.arc(sx, sy, r, 0, Math.PI * 2);
-      ctx.fillStyle = o.controlledBy ? PLAYER_COLORS[o.controlledBy].glow : 'rgba(207,154,68,0.42)';
+      ctx.fillStyle = fill;
       ctx.fill();
       ctx.lineWidth = Math.max(2, r * 0.22);
       ctx.strokeStyle = color;
@@ -1031,12 +1104,16 @@ export function render(rc: RenderContext) {
 
   drawPings(rc);
   drawKillMarkers(rc);
+  drawEventFlashes(rc);
+  drawBreadcrumbs(rc);
 
   // ---- Formations ----
   Object.values(state.formations).forEach((f) => {
     if (!isFormationVisible(rc, f)) return;
     drawFormation(rc, f);
   });
+
+  drawCombatEffects(rc);
 
   // ---- Selection ring ----
   if (rc.selected && state.formations[rc.selected.id]) {
@@ -1596,6 +1673,133 @@ function drawPings(rc: RenderContext) {
 }
 
 /**
+ * Event-location flash (phase 12 §11) — a brief highlight pulse at a batched
+ * jump-to-event notification's tile, drawn the instant the notification
+ * fires so the eye can catch it even before the player clicks to jump there.
+ * Independent of ContactPing's multi-ring "sensor return" style — a single
+ * soft expanding square reads as "look here", distinct from "new contact".
+ * Source data is whatever App.tsx's already fog-audited notification
+ * pipeline handed it (contacts/kills/objective changes — all already
+ * fog-filtered before they ever reach this component), so this draws
+ * whatever it is given with no fog logic of its own, same as ContactPing.
+ */
+function drawEventFlashes(rc: RenderContext) {
+  if (!rc.eventFlashes?.length) return;
+  const { ctx, width, height, camera } = rc;
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const s = camera.scale;
+  for (const e of rc.eventFlashes) {
+    const age = now - e.at;
+    if (age < 0 || age > EVENT_FLASH_LIFETIME_MS) continue;
+    const t = age / EVENT_FLASH_LIFETIME_MS;
+    const { sx, sy } = worldToScreen(camera, width, height, e.x, e.y);
+    const fade = 1 - t;
+    const size = s * (1.1 + t * 0.6);
+    ctx.save();
+    ctx.strokeStyle = `rgba(240,196,112,${(fade * 0.7).toFixed(2)})`;
+    ctx.lineWidth = Math.max(1.5, 3 * fade);
+    ctx.strokeRect(sx - size / 2, sy - size / 2, size, size);
+    ctx.restore();
+  }
+}
+
+/**
+ * Movement breadcrumbs (phase 9's replay snapshot data reused, phase 12 §9)
+ * — a thin fading line from where a formation started THIS round (the most
+ * recent entry in `state.replay`, taken at round start) to its current live
+ * position, for any formation whose position has changed. Already
+ * fog-filtered upstream: `state.replay` on the client is the redacted view
+ * fog.ts's `redactReplay` produced, so an enemy formation not legitimately
+ * tracked simply has no (or a withheld) entry to diff against.
+ */
+function drawBreadcrumbs(rc: RenderContext) {
+  const { ctx, width, height, camera, state } = rc;
+  const snapshot = state.replay[state.replay.length - 1];
+  if (!snapshot) return;
+  const byId = new Map(snapshot.entries.map((e) => [e.id, e]));
+  Object.values(state.formations).forEach((f) => {
+    if (!isFormationVisible(rc, f)) return;
+    const start = byId.get(f.id);
+    if (!start) return;
+    if (start.x === f.x && start.y === f.y) return;
+    const a = worldToScreen(camera, width, height, start.x, start.y);
+    const b = worldToScreen(camera, width, height, f.x, f.y);
+    const pc = PLAYER_COLORS[f.owner];
+    ctx.save();
+    ctx.strokeStyle = pc.main;
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = Math.max(1, camera.scale * 0.06);
+    ctx.setLineDash([Math.max(2, camera.scale * 0.12), Math.max(2, camera.scale * 0.1)]);
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx, b.sy);
+    ctx.stroke();
+    ctx.restore();
+  });
+  ctx.setLineDash([]);
+}
+
+/**
+ * On-map combat effects (phase 12 §5) — a brief muzzle-flash/tracer for
+ * direct fire, a shell-burst for standoff/overwatch fire, timed with the
+ * existing combat sound cue (App.tsx plays it the same instant these are
+ * raised). Fog-of-war is already fully resolved upstream by fog.ts's
+ * `redactCombatEvent` — an effect this function is HANDED never needs
+ * further filtering; when the shooter or target position was withheld,
+ * fog.ts already collapsed it onto the viewer's own formation's tile, so the
+ * worst this can ever draw is "something engaged here", never a leaked
+ * position.
+ */
+function drawCombatEffects(rc: RenderContext) {
+  if (!rc.combatEffects?.length) return;
+  const { ctx, width, height, camera } = rc;
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const s = camera.scale;
+  for (const ev of rc.combatEffects) {
+    const age = now - ev.at;
+    if (age < 0 || age > COMBAT_EFFECT_LIFETIME_MS) continue;
+    const t = age / COMBAT_EFFECT_LIFETIME_MS;
+    const fade = 1 - t;
+    const a = worldToScreen(camera, width, height, ev.attackerX, ev.attackerY);
+    const b = worldToScreen(camera, width, height, ev.defenderX, ev.defenderY);
+    ctx.save();
+    if (ev.kind === 'direct' && (ev.attackerX !== ev.defenderX || ev.attackerY !== ev.defenderY)) {
+      // Tracer line attacker -> defender, drawn shrinking back from the
+      // target so it reads as travelling rather than just appearing.
+      const reach = Math.min(1, t * 3);
+      ctx.strokeStyle = `rgba(240,214,150,${(fade * 0.85).toFixed(2)})`;
+      ctx.lineWidth = Math.max(1.2, s * 0.05);
+      ctx.beginPath();
+      ctx.moveTo(a.sx + (b.sx - a.sx) * Math.max(0, reach - 0.35), a.sy + (b.sy - a.sy) * Math.max(0, reach - 0.35));
+      ctx.lineTo(a.sx + (b.sx - a.sx) * reach, a.sy + (b.sy - a.sy) * reach);
+      ctx.stroke();
+      // Muzzle flash at the shooter.
+      ctx.beginPath();
+      ctx.arc(a.sx, a.sy, Math.max(2, s * 0.14) * (1 - t * 0.6), 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(240,214,150,${(fade * 0.9).toFixed(2)})`;
+      ctx.fill();
+    }
+    // Shell-burst at the target — standoff and overwatch always get it; a
+    // direct assault gets a small one too once the tracer lands.
+    if (ev.kind !== 'direct' || t > 0.3) {
+      const burstR = Math.max(3, s * 0.24) * (0.4 + t * 1.4);
+      ctx.beginPath();
+      ctx.arc(b.sx, b.sy, burstR, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(230,120,90,${(fade * 0.8).toFixed(2)})`;
+      ctx.lineWidth = Math.max(1.2, s * 0.05);
+      ctx.stroke();
+      if (t < 0.5) {
+        ctx.beginPath();
+        ctx.arc(b.sx, b.sy, burstR * 0.4, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(230,150,100,${(fade * 0.6).toFixed(2)})`;
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+}
+
+/**
  * A brief, unmistakable wreck marker where a formation was just destroyed
  * (phase 7) — held for KILL_MARKER_LIFETIME_MS before fading, on both sides,
  * fog-redaction already applied upstream (a marker with no `type` is a
@@ -1645,13 +1849,38 @@ function drawKillMarkers(rc: RenderContext) {
 function drawFormation(rc: RenderContext, f: Formation) {
   const { ctx, width, height, camera } = rc;
   const s = camera.scale;
-  const { sx, sy } = worldToScreen(camera, width, height, f.x, f.y);
+  // Animated movement (phase 12 §4): draw at the interpolated tile position
+  // if one is being animated toward the authoritative f.x/f.y, otherwise at
+  // the true position exactly as before. Every OTHER use of this formation's
+  // position on the map (reachable wash, ZOC, hit-testing, selection ring)
+  // still reads f.x/f.y directly — only the icon's paint position moves.
+  const animPos = rc.animPositions?.get(f.id);
+  const drawX = animPos ? animPos.x : f.x;
+  const drawY = animPos ? animPos.y : f.y;
+  const { sx: gsx, sy: gsy } = worldToScreen(camera, width, height, drawX, drawY);
   const pc = PLAYER_COLORS[f.owner];
   const r = Math.max(6, s * 0.34);
   // Enemy counters carry their detection rung. Own formations have none.
   const intel = f.owner === rc.viewer ? null : f.intel ?? 'CONFIRMED';
   const identifiedOnly = intel === 'IDENTIFIED';
   const contact = rc.state.players[rc.viewer].contacts[f.id];
+
+  // Elevation-aware ground-contact shadow (phase 12 §7): the counter itself
+  // is drawn LIFTED off its true ground position by an amount proportional
+  // to the tile's height, with a soft shadow left behind at the true ground
+  // point — the same "token floats above its shadow" cue a physical relief
+  // map miniature reads by. Capped small and subtle: this is a read on the
+  // existing icon, not a new lighting engine.
+  const tile = rc.state.tiles[f.y]?.[f.x];
+  const lift = tile ? Math.max(0, Math.min(1, tile.height)) * s * 0.22 : 0;
+  if (lift > 0.6) {
+    ctx.beginPath();
+    ctx.ellipse(gsx, gsy, r * 0.85, r * 0.32, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(6,8,10,${Math.min(0.5, 0.22 + lift * 0.03)})`;
+    ctx.fill();
+  }
+  const sx = gsx;
+  const sy = gsy - lift;
 
   // A dark halo under every counter. This is what guarantees a formation reads
   // over forest, urban fabric, a hillshade shadow or the movement wash — the
@@ -1690,6 +1919,37 @@ function drawFormation(rc: RenderContext, f: Formation) {
     const damaged = !identifiedOnly && f.strength >= 0 && f.strength < DAMAGE_STRENGTH_THRESHOLD;
     const bmp = getIconBitmap(f.type, iconSize, pc.light, damaged);
     ctx.drawImage(bmp, sx - iconSize / 2, sy - iconSize / 2, iconSize, iconSize);
+
+    // Strength-cluster pip row (phase 12 §8) — classic wargame-counter
+    // strength-step language: a row of up to 4 small pips along the bottom
+    // rim of the counter itself, visibly thinning as strength falls. Kept
+    // deliberately tiny and INSIDE the disc so it never collides with the
+    // damage-state overlay (which lives on the icon bitmap itself), the
+    // suppression bar, fortify pips or the on-alert ring (all outside the
+    // disc) — same "bold/simplified at small sizes, gated by zoom" discipline
+    // phase 8 used for the base icons. Withheld exactly where strength is
+    // (IDENTIFIED-only enemies never reach a known number).
+    if (!identifiedOnly && f.strength >= 0 && s >= 9) {
+      const pips = 4;
+      const lit = Math.max(0, Math.min(pips, Math.ceil((f.strength / 100) * pips)));
+      const pr = Math.max(1.1, r * 0.1);
+      const spacing = r * 0.32;
+      const rowY = sy + r * 0.64;
+      const startX = sx - (spacing * (pips - 1)) / 2;
+      const pipColor = lit >= 3 ? '#93a35f' : lit === 2 ? '#cf9a44' : '#c1524a';
+      for (let i = 0; i < pips; i++) {
+        const px = startX + i * spacing;
+        ctx.beginPath();
+        ctx.arc(px, rowY, pr, 0, Math.PI * 2);
+        ctx.fillStyle = i < lit ? pipColor : 'rgba(9,12,16,0.55)';
+        ctx.fill();
+        if (i >= lit) {
+          ctx.lineWidth = Math.max(0.6, pr * 0.35);
+          ctx.strokeStyle = 'rgba(220,224,220,0.35)';
+          ctx.stroke();
+        }
+      }
+    }
   }
 
   if (f.fortified) {

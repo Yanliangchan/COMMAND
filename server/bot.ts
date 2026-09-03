@@ -36,7 +36,7 @@
 import * as engine from '../src/game/engine';
 import { filterStateForPlayer } from '../src/game/fog';
 import { FORMATION_DEFS } from '../src/game/data';
-import { MANOEUVRE_TYPES, isSupportType, planGroupMove, zocTilesFor } from '../src/game/movement';
+import { MANOEUVRE_TYPES, isSupportType, isThreatened, planGroupMove, planWithdraw, zocTilesFor } from '../src/game/movement';
 import { currentDetectionRange, lineOfSight } from '../src/game/detection';
 import {
   ActionKind,
@@ -346,6 +346,27 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
         // But burning the sweep on empty ground with nothing to resolve is not.
         if (toIdentify === 0 && toRefresh === 0) score -= 1.2;
         candidates.push({ action: { type: 'RECON', formationId: f.id }, score });
+      }
+    }
+
+    // --- WITHDRAW (phase 12 §1): pull a formation that is both THREATENED
+    // (adjacent to a detected enemy / in an enemy ZOC / badly hurt — the same
+    // gate a human player's action bar enforces) AND actually hurt enough
+    // that disengaging beats fighting on. `dangerScore` is what stops this
+    // from making the bot passive: a healthy formation standing in a ZOC or
+    // next to one enemy contact reads as "threatened" by the gate but scores
+    // ~0 here and simply keeps fighting — only real damage (low strength,
+    // broken morale, heavy suppression) makes withdrawing worth the AP over
+    // an attack or a hold. Competes on the same candidate list as everything
+    // else, so a great attack still outscores it exactly as it should.
+    if (boundsLeft > 0 && affordable(state, 'WITHDRAW') && isThreatened(state, f)) {
+      const dangerScore =
+        Math.max(0, 65 - f.strength) / 65 + (f.moraleValue < 44 ? 0.6 : 0) + (f.suppression > 50 ? 0.3 : 0);
+      if (dangerScore > 0.15) {
+        const plan = planWithdraw(state, f);
+        if (plan.ok) {
+          candidates.push({ action: { type: 'WITHDRAW', formationId: f.id }, score: 0.6 + dangerScore * 3.2 });
+        }
       }
     }
 

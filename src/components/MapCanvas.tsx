@@ -3,7 +3,33 @@ import { computeReachable, distance, formationAt } from '../game/engine';
 import { FORMATION_DEFS } from '../game/data';
 import { zocTilesFor } from '../game/movement';
 import { Formation, GameState, GRID_SIZE, PlayerId } from '../game/types';
-import { Camera, ContactPing, KillMarker, MapLabel, Overlays, render, screenToTile } from '../render/renderMap';
+import {
+  Camera,
+  CombatEffect,
+  ContactPing,
+  EventFlash,
+  KillMarker,
+  MapLabel,
+  ObjectiveFlash,
+  Overlays,
+  render,
+  screenToTile,
+} from '../render/renderMap';
+
+/** Total on-screen duration of the movement glide (phase 12 §4) — short and
+ *  flat regardless of path length, so a long move never makes the player
+ *  wait on the animation. */
+const MOVE_ANIM_MS = 260;
+
+interface AnimEntry {
+  /** Waypoints in tile space, from -> ... -> to. At least 2 points. */
+  points: { x: number; y: number }[];
+  /** Cumulative distance to each waypoint, same length as points. */
+  cum: number[];
+  total: number;
+  start: number;
+  duration: number;
+}
 
 interface Props {
   state: GameState;
@@ -29,6 +55,43 @@ interface Props {
   kills?: KillMarker[];
   /** Reports the smoothed frame time of the render loop, for the perf readout. */
   onFrameTime?: (ms: number) => void;
+  /**
+   * Real per-formation paths captured at the moment a Move/Withdraw was
+   * issued (from the same pure planMove/planWithdraw the preview uses),
+   * keyed by formationId — consumed (and cleared) the instant that
+   * formation's authoritative position actually changes, so a stale hint
+   * can never attach to some LATER, unrelated move. Absent for opponent and
+   * bot moves (the client never sees their path, only before/after
+   * position), which fall back to a straight-line glide — see MapCanvas's
+   * animation effect.
+   */
+  moveHints?: React.MutableRefObject<Map<string, { x: number; y: number }[]>>;
+  /** Transient on-map combat effects (phase 12 §5). */
+  combatEffects?: CombatEffect[];
+  /** Transient objective-capture flashes (phase 12 §6). */
+  objectiveFlashes?: ObjectiveFlash[];
+  /** Transient event-location highlight flashes (phase 12 §11). */
+  eventFlashes?: EventFlash[];
+}
+
+function tileDist(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function pointAtFraction(entry: AnimEntry, frac: number): { x: number; y: number } {
+  const last = entry.points[entry.points.length - 1];
+  if (entry.total <= 0) return last;
+  const target = entry.total * Math.max(0, Math.min(1, frac));
+  for (let i = 1; i < entry.points.length; i++) {
+    if (target <= entry.cum[i] || i === entry.points.length - 1) {
+      const segLen = entry.cum[i] - entry.cum[i - 1];
+      const segT = segLen > 0 ? (target - entry.cum[i - 1]) / segLen : 1;
+      const a = entry.points[i - 1];
+      const b = entry.points[i];
+      return { x: a.x + (b.x - a.x) * segT, y: a.y + (b.y - a.y) * segT };
+    }
+  }
+  return last;
 }
 
 /**
@@ -60,12 +123,60 @@ export const MapCanvas: React.FC<Props> = ({
   onFrameTime,
   pings,
   kills,
+  moveHints,
+  combatEffects,
+  objectiveFlashes,
+  eventFlashes,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const hoverRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef({ dragging: false, lastX: 0, lastY: 0, moved: false });
+  // ---- Animated movement (phase 12 §4) -------------------------------------
+  // Client-side rendering ONLY: the server has already resolved every action
+  // instantly and authoritatively by the time `state` reaches here. This ref
+  // tracks, per formation, a short glide from wherever it last visually was
+  // to its current true position — recomputed from scratch every time the
+  // authoritative position changes, so a further action arriving mid-glide
+  // restarts smoothly from the current on-screen point rather than snapping
+  // backward or drifting out of sync.
+  const prevStateRef = useRef<GameState | null>(null);
+  const animRef = useRef<Map<string, AnimEntry>>(new Map());
+  useEffect(() => {
+    const prev = prevStateRef.current;
+    prevStateRef.current = state;
+    if (!prev) return; // first push this session/game — nothing to glide from
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    Object.values(state.formations).forEach((f) => {
+      const before = prev.formations[f.id];
+      if (!before) return; // newly appeared to this viewer — draw in place, don't glide from nowhere
+      if (before.x === f.x && before.y === f.y) return; // did not move
+      const existing = animRef.current.get(f.id);
+      let fromPoint = { x: before.x, y: before.y };
+      if (existing) {
+        const elapsed = now - existing.start;
+        fromPoint = pointAtFraction(existing, elapsed / existing.duration);
+      }
+      const hintPath = moveHints?.current.get(f.id);
+      moveHints?.current.delete(f.id);
+      const to = { x: f.x, y: f.y };
+      let points: { x: number; y: number }[];
+      if (hintPath?.length && hintPath[hintPath.length - 1].x === to.x && hintPath[hintPath.length - 1].y === to.y) {
+        points = [fromPoint, ...hintPath];
+      } else {
+        points = [fromPoint, to];
+      }
+      const cum = [0];
+      for (let i = 1; i < points.length; i++) cum.push(cum[i - 1] + tileDist(points[i - 1], points[i]));
+      animRef.current.set(f.id, { points, cum, total: cum[cum.length - 1], start: now, duration: MOVE_ANIM_MS });
+    });
+    // A formation no longer on the board (destroyed, or left this viewer's
+    // fog) has nothing left to animate toward — correctness over smoothness.
+    animRef.current.forEach((_v, id) => {
+      if (!state.formations[id]) animRef.current.delete(id);
+    });
+  }, [state, moveHints]);
   // The camera actually being drawn — eased toward the `camera` prop each frame
   // so recentres, zooms and pans glide instead of snapping.
   const viewRef = useRef<Camera>({ ...camera });
@@ -108,7 +219,27 @@ export const MapCanvas: React.FC<Props> = ({
     [state, selected?.id, selected?.x, selected?.y, targetMode]
   );
 
-  propsRef.current = { state, viewer, selected, reachable, attackable, overlays, labels, flashTiles, size, camera, groupIds, pathPreview, pathInvalid, pings, kills, zocTiles };
+  propsRef.current = {
+    state,
+    viewer,
+    selected,
+    reachable,
+    attackable,
+    overlays,
+    labels,
+    flashTiles,
+    size,
+    camera,
+    groupIds,
+    pathPreview,
+    pathInvalid,
+    pings,
+    kills,
+    zocTiles,
+    combatEffects,
+    objectiveFlashes,
+    eventFlashes,
+  };
 
   // ---- Animation / render loop -------------------------------------------
   useEffect(() => {
@@ -156,6 +287,25 @@ export const MapCanvas: React.FC<Props> = ({
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const t0 = performance.now();
+
+      // Animated-movement positions for THIS frame — cheap (at most a
+      // handful of formations mid-glide at once) and cleans up finished
+      // entries as it goes, so steady-state cost is exactly zero maps/finds.
+      let animPositions: Map<string, { x: number; y: number }> | undefined;
+      if (animRef.current.size) {
+        animPositions = new Map();
+        animRef.current.forEach((entry, id) => {
+          const elapsed = t - entry.start;
+          if (elapsed >= entry.duration) {
+            animRef.current.delete(id);
+            return;
+          }
+          const frac = Math.max(0, Math.min(1, elapsed / entry.duration));
+          const eased = 1 - Math.pow(1 - frac, 2);
+          animPositions!.set(id, pointAtFraction(entry, eased));
+        });
+      }
+
       render({
         ctx,
         width: p.size.w,
@@ -176,6 +326,10 @@ export const MapCanvas: React.FC<Props> = ({
         pings: p.pings,
         kills: p.kills,
         zocTiles: p.zocTiles,
+        animPositions,
+        combatEffects: p.combatEffects,
+        objectiveFlashes: p.objectiveFlashes,
+        eventFlashes: p.eventFlashes,
         pulse: (t % 1800) / 1800,
       });
       const dt = performance.now() - t0;
