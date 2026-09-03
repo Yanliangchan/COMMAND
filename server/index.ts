@@ -273,6 +273,9 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
     case 'MOVE':
       engine.moveFormation(state, action.formationId, action.x, action.y);
       break;
+    case 'MOVE_GROUP':
+      engine.moveGroup(state, action.formationIds, action.x, action.y);
+      break;
     case 'ATTACK':
       engine.attackAction(state, action.attackerId, action.targetId);
       break;

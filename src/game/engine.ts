@@ -7,6 +7,21 @@
 import { FORMATION_DEFS, MORALE_MULTIPLIER, ORDERS_OF_BATTLE, TERRAIN_DEFS } from './data';
 import { generateBattlefield } from './mapgen';
 import {
+  computeReachable as computeReachableTiles,
+  cohesionAdvisory,
+  planGroupMove,
+  planMove,
+} from './movement';
+import {
+  COHESION_RADIUS,
+  MORALE_BASELINE,
+  MORALE_CASUALTY_DEADZONE,
+  MORALE_CASUALTY_SCALE,
+  MORALE_ELAN_CEILING,
+  MORALE_RECOVERY,
+  MORALE_SHOCKS,
+  gridRef,
+  moraleBandFor,
   AP_CAP,
   AP_COSTS,
   AP_PER_TURN,
@@ -19,7 +34,6 @@ import {
   Contact,
   Formation,
   GameState,
-  GRID_SIZE,
   LossLevel,
   Morale,
   Objective,
@@ -53,7 +67,10 @@ function makeFormation(owner: PlayerId, profileIndex: number, x: number, y: numb
     x,
     y,
     strength: 100,
-    morale: 'Steady',
+    morale: moraleBandFor(MORALE_BASELINE[p.type]),
+    moraleValue: MORALE_BASELINE[p.type],
+    moraleBaseline: MORALE_BASELINE[p.type],
+    lastEngagedRound: 0,
     readiness: 100,
     supply: 100,
     ammo: 100,
@@ -113,37 +130,12 @@ export function formationAt(state: GameState, x: number, y: number): Formation |
   return Object.values(state.formations).find((f) => f.x === x && f.y === y);
 }
 
-function inBounds(x: number, y: number) {
-  return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE;
-}
-
-function neighbors(x: number, y: number): [number, number][] {
-  return [
-    [x + 1, y],
-    [x - 1, y],
-    [x, y + 1],
-    [x, y - 1],
-  ].filter(([nx, ny]) => inBounds(nx, ny)) as [number, number][];
-}
-
 export function distance(x0: number, y0: number, x1: number, y1: number) {
   return Math.abs(x0 - x1) + Math.abs(y0 - y1);
 }
 
 function moraleMult(m: Morale) {
   return MORALE_MULTIPLIER[m];
-}
-
-function crossable(state: GameState, formation: Formation, tile: Tile): boolean {
-  const def = FORMATION_DEFS[formation.type];
-  if (tile.terrain === 'WATER') {
-    // Ships stay on the single validated navigable body — mapgen guarantees it
-    // reaches every port berth, naval spawn and maritime objective, so a ship
-    // can never be boxed into a dead pool.
-    if (def.isNaval) return tile.navigable === true;
-    return tile.bridge === true; // land units cross water only on a bridge
-  }
-  return !def.isNaval; // ships cannot go ashore
 }
 
 /** Movement actions this formation still has left this round. */
@@ -155,48 +147,13 @@ export function canMove(state: GameState, f: Formation): boolean {
   return f.owner === state.activePlayer && movesRemaining(f) > 0 && canAfford(state, 'MOVE');
 }
 
-/** Dijkstra-style reachable-tile search bounded by the formation's move range. */
-export function computeReachable(state: GameState, formationId: string): Map<string, number> {
-  const f = state.formations[formationId];
-  const result = new Map<string, number>();
-  // Movement is gated by the per-round movement-action allowance, NOT by the
-  // single "major action" flag — a formation may still manoeuvre after having
-  // fired, and may manoeuvre more than once per round (see MOVES_PER_ROUND).
-  if (!f || movesRemaining(f) <= 0) return result;
-  const def = FORMATION_DEFS[f.type];
-  const budget = def.moveRange * (f.readiness < 50 ? 0.6 : 1) * (f.supply < 30 ? 0.6 : 1);
-  const visited = new Map<string, number>();
-  const frontier: { x: number; y: number; cost: number }[] = [{ x: f.x, y: f.y, cost: 0 }];
-  visited.set(`${f.x},${f.y}`, 0);
-  while (frontier.length) {
-    frontier.sort((a, b) => a.cost - b.cost);
-    const cur = frontier.shift()!;
-    for (const [nx, ny] of neighbors(cur.x, cur.y)) {
-      const tile = state.tiles[ny][nx];
-      if (!crossable(state, f, tile)) continue;
-      const occupant = formationAt(state, nx, ny);
-      if (occupant && occupant.owner !== f.owner) continue; // can't move through/onto enemy
-      const terrainDef = TERRAIN_DEFS[tile.terrain];
-      let cost = tile.terrain === 'WATER' ? 1 : terrainDef.moveCost;
-      if (tile.road && tile.terrain !== 'WATER') cost = 0.5;
-      else if (tile.terrain !== 'WATER') {
-        // Climbing costs more than contouring — movement follows the ground.
-        const climb = tile.elevation - state.tiles[cur.y][cur.x].elevation;
-        if (climb > 0) cost += climb * 0.5;
-      }
-      const newCost = cur.cost + cost;
-      if (newCost > budget) continue;
-      const key = `${nx},${ny}`;
-      if (!visited.has(key) || visited.get(key)! > newCost) {
-        visited.set(key, newCost);
-        frontier.push({ x: nx, y: ny, cost: newCost });
-      }
-    }
-  }
-  visited.delete(`${f.x},${f.y}`);
-  visited.forEach((v, k) => result.set(k, v));
-  return result;
-}
+/**
+ * Tiles this formation can reach this round. The whole movement model (range,
+ * road bonus, rough-going surcharge, climb cost, per-round budget) lives in
+ * movement.ts so the client preview and the server rules are literally the
+ * same code.
+ */
+export const computeReachable = computeReachableTiles;
 
 // ---------------------------------------------------------------------------
 // AP / action gating
@@ -222,19 +179,171 @@ function log(state: GameState, msg: string) {
 export function moveFormation(state: GameState, formationId: string, x: number, y: number): GameState {
   const f = state.formations[formationId];
   if (!f || f.owner !== state.activePlayer) return state;
-  if (movesRemaining(f) <= 0) return state; // per-round movement allowance exhausted
-  if (!canAfford(state, 'MOVE')) return state;
-  const reachable = computeReachable(state, formationId);
-  if (!reachable.has(`${x},${y}`)) return state;
-  spendAP(state, 'MOVE');
+  const plan = planMove(state, f, x, y);
+  if (!plan.ok) return state;
+  // A long bound may consume more than one of the formation's movement actions
+  // (and one AP each) — the client preview states exactly how many before the
+  // player commits, so the accounting is never a surprise.
+  if (plan.actionsRequired > movesRemaining(f)) return state;
+  if (state.players[f.owner].ap < plan.apCost) return state;
+
+  const advisory = cohesionAdvisory(state, f, x, y);
+  state.players[state.activePlayer].ap -= plan.apCost;
   f.x = x;
   f.y = y;
   f.fortified = false;
-  f.movesUsed += 1;
-  f.lastOrder = `Moved to (${x},${y}) — bound ${f.movesUsed}/${f.movesMax}`;
-  log(state, `${f.shortName} moved to (${x}, ${y}) [${f.movesUsed}/${f.movesMax} bounds].`);
+  f.movesUsed += plan.actionsRequired;
+  const ref = gridRef(x, y);
+  f.lastOrder = `Moved to grid ${ref} — bound ${f.movesUsed}/${f.movesMax}`;
+  log(state, `${f.shortName} moved to grid ${ref} [${f.movesUsed}/${f.movesMax} bounds].`);
+  if (advisory) log(state, advisory.message);
   refreshFogOfWar(state, state.activePlayer);
   return state;
+}
+
+/**
+ * Move Formation — an OPTIONAL grouped order. Every participant is paced to the
+ * slowest member's single-action range so the group arrives together, each
+ * spends one of its own movement actions and 1 AP, and destination tiles are
+ * resolved around the objective so nothing stacks illegally.
+ * Single-unit movement is untouched by this.
+ */
+export function moveGroup(state: GameState, formationIds: string[], x: number, y: number): GameState {
+  const plan = planGroupMove(state, formationIds, x, y);
+  if (!plan.ok) return state;
+  const movers = plan.members.filter((m) => m.ok);
+  if (state.players[state.activePlayer].ap < plan.apCost) return state;
+  state.players[state.activePlayer].ap -= plan.apCost;
+  const names: string[] = [];
+  for (const m of movers) {
+    const f = state.formations[m.id];
+    if (!f) continue;
+    f.x = m.x;
+    f.y = m.y;
+    f.fortified = false;
+    f.movesUsed += 1;
+    f.lastOrder = `Moved with formation to grid ${m.gridRef} — bound ${f.movesUsed}/${f.movesMax}`;
+    names.push(f.shortName);
+  }
+  log(
+    state,
+    `Formation move on grid ${plan.targetRef}: ${names.join(', ')} advanced together at ${plan.pacedBy}'s pace (${plan.pace} pts, ${plan.apCost} AP).`
+  );
+  plan.advisories.forEach((a) => log(state, a));
+  plan.excluded.forEach((e) => log(state, `${e.shortName} could not join the formation move — ${e.reason}.`));
+  refreshFogOfWar(state, state.activePlayer);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
+// Morale (phase 4a)
+//
+// Morale is a slow-moving battlefield condition carried as a 0..100 number that
+// drifts back toward each formation's baseline. Only the named shocks in
+// MORALE_SHOCKS and genuinely heavy casualties move it off that baseline;
+// routine movement and small engagements move it not at all. The five named
+// bands are derived from the number and still drive combat power.
+// ---------------------------------------------------------------------------
+
+function setMorale(f: Formation, value: number) {
+  f.moraleValue = Math.max(0, Math.min(100, Math.round(value * 10) / 10));
+  f.morale = moraleBandFor(f.moraleValue);
+}
+
+/** Apply a named morale shock. Returns true if the band actually changed. */
+export function applyMoraleShock(state: GameState, f: Formation, points: number, reason: string): boolean {
+  if (points === 0) return false;
+  let applied = points;
+  if (points > 0 && f.moraleValue > f.moraleBaseline) {
+    const over = f.moraleValue - f.moraleBaseline;
+    applied = points * Math.max(0.15, 1 - over / MORALE_ELAN_CEILING);
+  }
+  const before = f.morale;
+  setMorale(f, f.moraleValue + applied);
+  if (f.morale !== before) {
+    log(state, `${f.shortName} morale ${before} → ${f.morale} (${reason}).`);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Morale cost of taking casualties. Has a deliberate dead zone: anything up to
+ * MORALE_CASUALTY_DEADZONE strength lost is a routine engagement and costs no
+ * morale at all. Indirect fire (artillery, air, raids) carries a lighter
+ * weight than a stand-up assault.
+ */
+function casualtyShock(delta: number, weight = 1): number {
+  const lost = Math.abs(Math.min(0, delta));
+  return -Math.max(0, lost - MORALE_CASUALTY_DEADZONE) * MORALE_CASUALTY_SCALE * weight;
+}
+
+/** Everyone on `owner`'s side within COHESION_RADIUS of (x, y). */
+function friendsNear(state: GameState, owner: PlayerId, x: number, y: number, radius = COHESION_RADIUS): Formation[] {
+  return Object.values(state.formations).filter((f) => f.owner === owner && distance(f.x, f.y, x, y) <= radius);
+}
+
+/** Losing a battalion shakes everyone who watched it happen. */
+function mourn(state: GameState, lost: Formation) {
+  friendsNear(state, lost.owner, lost.x, lost.y).forEach((f) => {
+    if (f.id === lost.id) return;
+    applyMoraleShock(state, f, MORALE_SHOCKS.KEY_FORMATION_LOST, `${lost.shortName} destroyed nearby`);
+  });
+}
+
+/**
+ * End-of-round morale tick for one side: positional shocks (isolated,
+ * surrounded, out of supply) first, then gradual recovery back toward the
+ * formation's baseline for anyone who was not in a fight this round.
+ */
+function tickMorale(state: GameState, owner: PlayerId) {
+  Object.values(state.formations).forEach((f) => {
+    if (f.owner !== owner) return;
+    const friends = friendsNear(state, owner, f.x, f.y).filter((o) => o.id !== f.id);
+    const enemiesClose = Object.values(state.formations).filter(
+      (o) => o.owner !== owner && distance(o.x, o.y, f.x, f.y) <= 3
+    ).length;
+
+    let shock = 0;
+    const reasons: string[] = [];
+    if (friends.length === 0) {
+      shock += MORALE_SHOCKS.ISOLATED;
+      reasons.push('isolated');
+    }
+    if (enemiesClose >= 2 && enemiesClose > friends.length) {
+      shock += MORALE_SHOCKS.SURROUNDED;
+      reasons.push('surrounded');
+    }
+    if (!FORMATION_DEFS[f.type].isNaval) {
+      if (f.supply < 20) {
+        shock += MORALE_SHOCKS.SUPPLY_CRITICAL;
+        reasons.push('supply critical');
+      } else if (f.supply < 40) {
+        shock += MORALE_SHOCKS.SUPPLY_LOW;
+        reasons.push('supply running low');
+      }
+    }
+    if (shock < 0) applyMoraleShock(state, f, shock, reasons.join(', '));
+
+    const engaged = f.lastEngagedRound === state.round;
+    if (engaged) return; // a formation in contact does not reorganise
+
+    if (f.moraleValue > f.moraleBaseline) {
+      // Elan above the baseline fades slowly rather than being banked forever.
+      setMorale(f, Math.max(f.moraleBaseline, f.moraleValue - MORALE_RECOVERY.ABOVE_BASELINE_DECAY));
+      return;
+    }
+    if (f.moraleValue >= f.moraleBaseline) return;
+
+    let recovery = MORALE_RECOVERY.BASE;
+    if (FORMATION_DEFS[f.type].isNaval || isInSupplyRange(state, f)) recovery += MORALE_RECOVERY.IN_SUPPLY;
+    if (f.movesUsed === 0 || f.fortified) recovery += MORALE_RECOVERY.HELD_POSITION;
+    if (friends.length > 0) recovery += MORALE_RECOVERY.NEAR_FRIENDS;
+    if (friends.length === 0) recovery = recovery / 2; // nobody to reorganise around
+    const before = f.morale;
+    setMorale(f, Math.min(f.moraleBaseline, f.moraleValue + recovery));
+    if (f.morale !== before) log(state, `${f.shortName} morale recovered to ${f.morale}.`);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -372,6 +481,7 @@ export function resupplyAction(state: GameState, formationId: string): GameState
   f.readiness = Math.min(100, f.readiness + 20);
   f.hasActedThisTurn = true;
   f.lastOrder = 'Resupplied';
+  applyMoraleShock(state, f, MORALE_SHOCKS.RESUPPLIED, 'resupplied and reorganised');
   log(state, `${f.name} resupplied — ammo and supply restored.`);
   return state;
 }
@@ -387,8 +497,8 @@ export function engineerBridgeAction(state: GameState, formationId: string, x: n
   tile.bridge = true;
   tile.road = true;
   f.hasActedThisTurn = true;
-  f.lastOrder = `Built a bridge at (${x},${y})`;
-  log(state, `${f.name} threw a temporary bridge across the river at (${x}, ${y}).`);
+  f.lastOrder = `Built a bridge at grid ${gridRef(x, y)}`;
+  log(state, `${f.name} threw a temporary bridge across the river at grid ${gridRef(x, y)}.`);
   return state;
 }
 
@@ -404,8 +514,8 @@ export function engineerClearAction(state: GameState, formationId: string, x: nu
     target.fortified = false; // clearing enemy fortification/obstacles
   }
   f.hasActedThisTurn = true;
-  f.lastOrder = `Cleared obstacles at (${x},${y})`;
-  log(state, `${f.name} cleared obstacles/fortifications at (${x}, ${y}).`);
+  f.lastOrder = `Cleared obstacles at grid ${gridRef(x, y)}`;
+  log(state, `${f.name} cleared obstacles/fortifications at grid ${gridRef(x, y)}.`);
   return state;
 }
 
@@ -504,14 +614,6 @@ export function computePower(
   return Math.max(0.1, power);
 }
 
-function applyMoraleShift(f: Formation, won: boolean, lossLevel: LossLevel) {
-  const order: Morale[] = ['Broken', 'Shaken', 'Stressed', 'Steady', 'Elite'];
-  let idx = order.indexOf(f.morale);
-  if (!won || lossLevel === 'Heavy' || lossLevel === 'Destroyed') idx = Math.max(0, idx - 1);
-  else if (won && (lossLevel === 'None' || lossLevel === 'Light')) idx = Math.min(order.length - 1, idx + (Math.random() < 0.3 ? 1 : 0));
-  f.morale = order[idx];
-}
-
 export function attackAction(state: GameState, attackerId: string, targetId: string): GameState {
   const attacker = state.formations[attackerId];
   const target = state.formations[targetId];
@@ -584,13 +686,26 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
 
   const attackerLoss = lossFromDelta(attackerDelta);
   const defenderLoss = lossFromDelta(defenderDelta);
-  applyMoraleShift(attacker, outcome === 'Position Captured' || outcome === 'Defender Repelled', attackerLoss);
-  applyMoraleShift(target, false, defenderLoss);
+
+  // --- Morale. Routine engagements cost nothing; only heavy casualties, a
+  // major failed attack, or being driven off ground register as shocks.
+  attacker.lastEngagedRound = state.round;
+  target.lastEngagedRound = state.round;
+  applyMoraleShock(state, attacker, casualtyShock(attackerDelta), 'casualties in the assault');
+  applyMoraleShock(state, target, casualtyShock(defenderDelta), 'casualties under attack');
+  if (outcome === 'Attack Repulsed' && attackerLoss !== 'None' && attackerLoss !== 'Light') {
+    applyMoraleShock(state, attacker, MORALE_SHOCKS.ATTACK_REPULSED, 'major attack repulsed');
+  }
+  if (captured) {
+    applyMoraleShock(state, attacker, MORALE_SHOCKS.ASSAULT_SUCCESS, 'position taken by assault');
+    applyMoraleShock(state, target, MORALE_SHOCKS.POSITION_LOST, 'driven off its position');
+  }
 
   let destroyedTarget = false;
   if (target.strength <= 0 || captured) {
     destroyedTarget = target.strength <= 0;
     if (captured || destroyedTarget) {
+      if (destroyedTarget) mourn(state, target);
       delete state.formations[target.id];
       if (captured && !destroyedTarget) {
         // survives but retreats off the tile — simplified as removal from board for prototype clarity
@@ -602,6 +717,7 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
     }
   }
   if (attacker.strength <= 0) {
+    mourn(state, attacker);
     delete state.formations[attacker.id];
   }
 
@@ -656,15 +772,21 @@ export function artilleryAction(state: GameState, formationId: string, x: number
   spendAP(state, 'ARTILLERY');
   f.ammo = Math.max(0, f.ammo - 25);
   f.hasActedThisTurn = true;
-  f.lastOrder = `Fire mission on (${x},${y})`;
+  f.lastOrder = `Fire mission on grid ${gridRef(x, y)}`;
 
   const factors: BattleFactor[] = [];
   const power = computePower(state, f, 'attack', state.tiles[f.y][f.x], factors) * 0.5;
   const delta = -Math.min(35, 10 + power);
   target.strength = Math.max(0, target.strength + delta);
-  applyMoraleShift(target, false, lossFromDelta(delta));
-  log(state, `${f.name} fire mission struck ${target.name} at (${x}, ${y}) — ${lossFromDelta(delta)} losses.`);
-  if (target.strength <= 0) delete state.formations[target.id];
+  target.lastEngagedRound = state.round;
+  // Indirect fire is harassing: it carries half the morale weight of a
+  // stand-up assault, and a light stonk carries none at all.
+  applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'under artillery fire');
+  log(state, `${f.name} fire mission struck ${target.name} at grid ${gridRef(x, y)} — ${lossFromDelta(delta)} losses.`);
+  if (target.strength <= 0) {
+    mourn(state, target);
+    delete state.formations[target.id];
+  }
   refreshFogOfWar(state, otherPlayer(f.owner));
   return state;
 }
@@ -678,9 +800,13 @@ export function airStrikeAction(state: GameState, x: number, y: number): GameSta
   ps.airSorties -= 1;
   const delta = -(15 + Math.random() * 20);
   target.strength = Math.max(0, target.strength + delta);
-  applyMoraleShift(target, false, lossFromDelta(delta));
-  log(state, `Air strike (F-15SG/F-16 flight) hit ${target.name} at (${x}, ${y}) — ${lossFromDelta(delta)} losses.`);
-  if (target.strength <= 0) delete state.formations[target.id];
+  target.lastEngagedRound = state.round;
+  applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'under air attack');
+  log(state, `Air strike (F-15SG/F-16 flight) hit ${target.name} at grid ${gridRef(x, y)} — ${lossFromDelta(delta)} losses.`);
+  if (target.strength <= 0) {
+    mourn(state, target);
+    delete state.formations[target.id];
+  }
   refreshFogOfWar(state, otherPlayer(state.activePlayer));
   return state;
 }
@@ -698,10 +824,14 @@ export function specialOpAction(state: GameState, formationId: string, x: number
   if (target && target.owner !== f.owner) {
     const delta = -(18 + Math.random() * 15);
     target.strength = Math.max(0, target.strength + delta);
-    applyMoraleShift(target, false, lossFromDelta(delta));
-    f.lastOrder = `Special op raid on (${x},${y})`;
+    target.lastEngagedRound = state.round;
+    applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'raided behind the lines');
+    f.lastOrder = `Special op raid on grid ${gridRef(x, y)}`;
     log(state, `${f.name} conducted a special-ops raid on ${target.name} — ${lossFromDelta(delta)} losses.`);
-    if (target.strength <= 0) delete state.formations[target.id];
+    if (target.strength <= 0) {
+      mourn(state, target);
+      delete state.formations[target.id];
+    }
   } else {
     const enemy = otherPlayer(f.owner);
     const ps = state.players[f.owner];
@@ -710,8 +840,8 @@ export function specialOpAction(state: GameState, formationId: string, x: number
       .forEach((e) => {
         ps.contacts[e.id] = { formationId: e.id, owner: e.owner, type: e.type, x: e.x, y: e.y, confidence: 100, lastSeenTurn: state.round, source: 'Commando Recon' };
       });
-    f.lastOrder = `Deep recon at (${x},${y})`;
-    log(state, `${f.name} conducted a deep-recon special operation near (${x}, ${y}).`);
+    f.lastOrder = `Deep recon at grid ${gridRef(x, y)}`;
+    log(state, `${f.name} conducted a deep-recon special operation near grid ${gridRef(x, y)}.`);
   }
   refreshFogOfWar(state, otherPlayer(f.owner));
   return state;
@@ -733,8 +863,19 @@ function tickObjectives(state: GameState, awardVp: boolean) {
     if (sides.size === 1) {
       const side = [...sides][0];
       if (o.controlledBy !== side) {
+        const previous = o.controlledBy;
         o.controlledBy = side;
-        log(state, `${side} secured objective: ${o.name}.`);
+        log(state, `${side} secured objective: ${o.name} (grid ${gridRef(o.x, o.y)}).`);
+        // Taking ground lifts the units that took it; losing an objective you
+        // held is one of the few things that genuinely knocks a force back.
+        occupants
+          .filter((f) => f.owner === side)
+          .forEach((f) => applyMoraleShock(state, f, MORALE_SHOCKS.OBJECTIVE_TAKEN, `captured ${o.name}`));
+        if (previous) {
+          friendsNear(state, previous, o.x, o.y).forEach((f) =>
+            applyMoraleShock(state, f, MORALE_SHOCKS.OBJECTIVE_LOST, `${o.name} lost`)
+          );
+        }
       }
     }
     // VP are paid out once per ROUND, to both holders at once, at the end of
@@ -761,9 +902,8 @@ function tickSupply(state: GameState, owner: PlayerId) {
     } else {
       f.supply = Math.max(0, f.supply - 12);
       f.readiness = Math.max(20, f.readiness - 8);
-      if (f.supply < 20) {
-        f.morale = f.morale === 'Elite' ? 'Steady' : f.morale === 'Steady' ? 'Stressed' : f.morale;
-      }
+      // Morale is NOT touched here — supply pressure feeds the morale tick as a
+      // named, gradual shock instead of a per-turn band demotion.
     }
   });
 }
@@ -793,6 +933,7 @@ export function endTurn(state: GameState): GameState {
   const finishing = state.activePlayer;
   tickObjectives(state, finishing === 'REDFOR');
   tickSupply(state, finishing);
+  tickMorale(state, finishing);
   if (finishing === 'REDFOR') state.round += 1;
   // Reset the finishing side's per-round budgets so everything is fresh when
   // control comes back to them.

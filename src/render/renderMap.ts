@@ -12,7 +12,7 @@
 // ============================================================================
 
 import { FORMATION_DEFS } from '../game/data';
-import { Formation, GameState, GRID_SIZE, Objective, PlayerId, Tile } from '../game/types';
+import { Formation, GameState, GRID_SIZE, Objective, PlayerId, Tile, gridRef } from '../game/types';
 import { PLAYER_COLORS, TERRAIN_COLORS, UI } from './colors';
 
 /** Contour interval, as a fraction of the full 0..1 height range. */
@@ -59,6 +59,12 @@ export interface RenderContext {
   labels?: MapLabel[];
   /** Tiles to flash (e.g. the two ends of the engagement a battle report describes). */
   flashTiles?: { x: number; y: number }[];
+  /** Formation ids currently grouped for a Move Formation order. */
+  groupIds?: string[];
+  /** The exact path the hovered destination would be reached by. */
+  pathPreview?: { x: number; y: number }[];
+  /** Draw the path in the refusal colour (the destination is not legal). */
+  pathInvalid?: boolean;
   /** 0..1 animation phase for pulsing selection / flash effects. */
   pulse?: number;
 }
@@ -977,6 +983,10 @@ export function render(rc: RenderContext) {
         ctx.textBaseline = 'middle';
         ctx.fillText('?', sx, sy + 1);
       }
+      if (s >= 15) {
+        // Same lettered grid reference the rest of the UI uses.
+        drawLabel(rc, sx, sy + s * 0.55, gridRef(c.x, c.y), Math.max(8, s * 0.24), `rgba(224,140,130,${alpha})`, 0.06);
+      }
     });
   }
 
@@ -1029,6 +1039,50 @@ export function render(rc: RenderContext) {
     }
   }
 
+  // ---- Move Formation group brackets ----
+  if (rc.groupIds?.length) {
+    for (const id of rc.groupIds) {
+      const f = state.formations[id];
+      if (!f) continue;
+      const { sx, sy } = worldToScreen(camera, width, height, f.x, f.y);
+      const r = Math.max(8, s * 0.55);
+      ctx.strokeStyle = 'rgba(10,13,17,0.7)';
+      ctx.lineWidth = 5;
+      ctx.strokeRect(sx - r, sy - r, r * 2, r * 2);
+      ctx.strokeStyle = 'rgba(111,168,201,0.95)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx - r, sy - r, r * 2, r * 2);
+    }
+  }
+
+  // ---- Path preview to the hovered destination ----
+  if (rc.pathPreview?.length && rc.selected) {
+    const pts = [{ x: rc.selected.x, y: rc.selected.y }, ...rc.pathPreview];
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const { sx, sy } = worldToScreen(camera, width, height, p.x, p.y);
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.strokeStyle = 'rgba(10,13,17,0.8)';
+    ctx.lineWidth = Math.max(5, s * 0.3);
+    ctx.stroke();
+    ctx.strokeStyle = rc.pathInvalid ? 'rgba(224,106,94,0.95)' : 'rgba(240,196,112,0.95)';
+    ctx.lineWidth = Math.max(2.2, s * 0.15);
+    ctx.stroke();
+    // Destination pip.
+    const last = pts[pts.length - 1];
+    const { sx, sy } = worldToScreen(camera, width, height, last.x, last.y);
+    ctx.beginPath();
+    ctx.arc(sx, sy, Math.max(3.5, s * 0.22), 0, Math.PI * 2);
+    ctx.fillStyle = rc.pathInvalid ? 'rgba(224,106,94,0.95)' : 'rgba(240,196,112,0.95)';
+    ctx.fill();
+    ctx.restore();
+  }
+
   // ---- Hover highlight ----
   if (rc.hoverTile) {
     const { x, y } = rc.hoverTile;
@@ -1037,6 +1091,9 @@ export function render(rc: RenderContext) {
       ctx.strokeStyle = 'rgba(255,255,255,0.45)';
       ctx.lineWidth = 1;
       ctx.strokeRect(sx - s / 2 + 0.5, sy - s / 2 + 0.5, s - 1, s - 1);
+      if (s >= 11) {
+        drawLabel(rc, sx, sy - s * 0.72, gridRef(x, y), Math.max(9, s * 0.28), 'rgba(236,232,220,0.9)', 0.08);
+      }
     }
   }
 

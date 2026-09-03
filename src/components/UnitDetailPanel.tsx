@@ -1,7 +1,8 @@
 import React from 'react';
 import { FORMATION_DEFS } from '../game/data';
 import { isInSupplyRange, movesRemaining } from '../game/engine';
-import { Formation, GameState } from '../game/types';
+import { movementProfile, nearbyFriendlies, supportedFormation } from '../game/movement';
+import { COHESION_RADIUS, Formation, GameState, gridRef } from '../game/types';
 
 const MORALE_COLOR: Record<string, string> = {
   Elite: 'var(--olive-bright)',
@@ -36,6 +37,11 @@ export const UnitDetailPanel: React.FC<{
   const def = FORMATION_DEFS[f.type];
   const supplied = isInSupplyRange(state, f);
   const movesLeft = movesRemaining(f);
+  const mv = movementProfile(f);
+  const friends = nearbyFriendlies(state, f).slice(0, 3);
+  const partner = supportedFormation(state, f);
+  const partnerDistance = partner ? Math.abs(partner.x - f.x) + Math.abs(partner.y - f.y) : 0;
+  const separated = !!partner && partnerDistance > COHESION_RADIUS;
 
   return (
     <div className="unit-card">
@@ -70,6 +76,34 @@ export const UnitDetailPanel: React.FC<{
         {!supplied && <span className="mini-chip chip-danger">out of supply</span>}
       </div>
 
+      <div className="unit-move-block" data-testid="unit-movement">
+        <div className="unit-move-row">
+          <span className="k">Movement</span>
+          <span className="v" data-testid="movement-range">
+            {mv.effectiveRange} tiles
+          </span>
+        </div>
+        <div className="unit-move-row">
+          <span className="k">Movement Actions</span>
+          <span className={`v ${movesLeft > 0 ? '' : 'spent'}`} data-testid="movement-actions">
+            {movesLeft} / {mv.movesMax}
+          </span>
+        </div>
+        <div className="unit-move-row">
+          <span className="k">On roads</span>
+          <span className="v">{mv.roadRange} tiles</span>
+        </div>
+        <div className="unit-move-note">
+          {mv.mobilityLabel}
+          {mv.roughMultiplier > 1 && ` · forest / built-up going ×${mv.roughMultiplier}`}
+        </div>
+        {mv.modifiers.map((m) => (
+          <div className="unit-move-note warn" key={m.label} data-testid="movement-modifier">
+            Range reduced ×{m.multiplier} — {m.label}
+          </div>
+        ))}
+      </div>
+
       <Bar label="Strength" value={f.strength} color="var(--olive)" />
       <Bar label="Readiness" value={f.readiness} color="var(--blue)" />
       <Bar label="Supply" value={f.supply} color={supplied ? 'var(--olive)' : 'var(--danger)'} />
@@ -92,6 +126,24 @@ export const UnitDetailPanel: React.FC<{
             {def.sightRadius} / {def.reconRadius}
           </span>
         </div>
+      </div>
+      <div className="unit-card-rows">
+        <div>
+          <span className="k">Grid</span>
+          <span className="v" data-testid="unit-grid">{gridRef(f.x, f.y)}</span>
+        </div>
+        <div>
+          <span className="k">Nearby friendly</span>
+          <span className="v">{friends.length ? friends.map((n) => `${n.shortName} ${n.distance}`).join(' · ') : 'none within ' + COHESION_RADIUS}</span>
+        </div>
+        {partner && (
+          <div>
+            <span className="k">Supporting</span>
+            <span className="v" style={{ color: separated ? 'var(--danger)' : undefined }} data-testid="support-link">
+              {partner.shortName} — {partnerDistance} tiles{separated ? ' (separated)' : ''}
+            </span>
+          </div>
+        )}
       </div>
       <div className="unit-card-order">
         <span className="k">Current orders</span> {f.lastOrder}

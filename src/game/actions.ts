@@ -35,7 +35,7 @@ export const ACTION_SPECS: ActionSpec[] = [
     shortcut: 'M',
     apCost: AP_COSTS.MOVE,
     mode: 'MOVE',
-    blurb: 'Reposition the formation. Highlighted tiles are within reach this move.',
+    blurb: 'Reposition the formation. The highlighted area is everywhere it can reach this round; hover a tile for the costed path. Shift-click friendlies then Shift+M to move them as one formation.',
   },
   {
     id: 'ATTACK',

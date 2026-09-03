@@ -18,6 +18,7 @@ export type BotDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
 
 export type GameAction =
   | { type: 'MOVE'; formationId: string; x: number; y: number }
+  | { type: 'MOVE_GROUP'; formationIds: string[]; x: number; y: number }
   | { type: 'ATTACK'; attackerId: string; targetId: string }
   | { type: 'RECON'; formationId: string }
   | { type: 'FORTIFY'; formationId: string }

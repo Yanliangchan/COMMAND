@@ -16,7 +16,10 @@ export const FormationList: React.FC<{
   collapsed: boolean;
   onToggle: () => void;
   onSelect: (f: Formation) => void;
-}> = ({ state, viewer, selectedId, collapsed, onToggle, onSelect }) => {
+  /** Shift-click — add/remove the formation from the Move Formation group. */
+  onToggleGroup: (f: Formation) => void;
+  groupIds: string[];
+}> = ({ state, viewer, selectedId, collapsed, onToggle, onSelect, onToggleGroup, groupIds }) => {
   const mine = Object.values(state.formations)
     .filter((f) => f.owner === viewer)
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -37,8 +40,10 @@ export const FormationList: React.FC<{
             return (
               <button
                 key={f.id}
-                className={`roster-row ${selectedId === f.id ? 'active' : ''} ${a.actionable ? '' : 'spent'}`}
-                onClick={() => onSelect(f)}
+                className={`roster-row ${selectedId === f.id ? 'active' : ''} ${a.actionable ? '' : 'spent'} ${
+                  groupIds.includes(f.id) ? 'grouped' : ''
+                }`}
+                onClick={(e) => (e.shiftKey ? onToggleGroup(f) : onSelect(f))}
                 title={`${f.name} — ${FORMATION_DEFS[f.type].label}`}
               >
                 <span className="roster-glyph">{formationGlyph(f.type)}</span>
@@ -53,7 +58,10 @@ export const FormationList: React.FC<{
               </button>
             );
           })}
-          <div className="roster-foot">Tab — jump to the next formation with orders left</div>
+          <div className="roster-foot">
+            Tab — jump to the next formation with orders left. Shift-click two or more, then Shift+M to move them as a
+            formation.
+          </div>
         </div>
       )}
     </div>

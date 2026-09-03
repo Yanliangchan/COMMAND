@@ -23,7 +23,7 @@ const TERRAIN: Entry[] = [
   { symbol: '⁘', color: TERRAIN_COLORS.BEACH.base, label: 'Beach', note: 'Coastal landing strip of sand — open, exposed.' },
   { symbol: '✈', color: TERRAIN_COLORS.AIRFIELD.base, label: 'Airfield', note: 'Supply source when you hold it.' },
   { symbol: '⚓', color: TERRAIN_COLORS.PORT.base, label: 'Port', note: 'Supply source, naval berth.' },
-  { symbol: '═', color: '#e2d2b2', label: 'Road', note: 'Halves movement cost along its length.' },
+  { symbol: '═', color: '#e2d2b2', label: 'Road', note: 'Big movement bonus: infantry 4 tiles cross-country, 6 by road; mechanised formations roughly double.' },
   { symbol: '∿', color: '#29608a', label: 'River', note: 'Impassable to land units unless bridged.' },
   { symbol: '⌢', color: '#8a6b45', label: 'Bridge', note: 'Lets land units cross a water tile.' },
   { symbol: '⌒', color: '#6b4a1e', label: 'Contour line', note: 'Equal height. Thick lines every fifth contour.' },

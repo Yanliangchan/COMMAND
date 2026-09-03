@@ -23,7 +23,8 @@
 import * as engine from '../src/game/engine';
 import { filterStateForPlayer } from '../src/game/fog';
 import { FORMATION_DEFS } from '../src/game/data';
-import { ActionKind, AP_COSTS, AP_PER_TURN, Formation, GameState, Objective, PlayerId } from '../src/game/types';
+import { MANOEUVRE_TYPES, isSupportType, planGroupMove } from '../src/game/movement';
+import { ActionKind, AP_COSTS, AP_PER_TURN, COHESION_RADIUS, Formation, GameState, Objective, PlayerId } from '../src/game/types';
 import { GameAction } from '../src/net/protocol';
 
 export type BotDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
@@ -43,18 +44,26 @@ interface Weights {
    * exploit the full allowance to manoeuvre aggressively.
    */
   maxBoundsPerUnit: number;
+  /**
+   * How strongly the bot keeps its artillery and engineers tucked in behind a
+   * manoeuvre formation instead of letting them wander at a nearby objective.
+   * 0 disables support cohesion entirely (EASY).
+   */
+  cohesionWeight: number;
+  /** Whether this difficulty will issue grouped Move Formation orders. */
+  useGroupMoves: boolean;
 }
 
 const WEIGHTS: Record<BotDifficulty, Weights> = {
   // Mostly-random legal moves, weak objective/combined-arms awareness, will
   // take bad attacks and can waste AP on low-value actions.
-  EASY: { objectiveWeight: 0.4, attackThreshold: 0, isolationBonus: 0, reconPriority: 0.2, resupplyThreshold: 15, clusterWeight: 0, randomness: 0.45, minScore: -100, maxBoundsPerUnit: 1 },
+  EASY: { objectiveWeight: 0.4, attackThreshold: 0, isolationBonus: 0, reconPriority: 0.2, resupplyThreshold: 15, clusterWeight: 0, randomness: 0.45, minScore: -100, maxBoundsPerUnit: 1, cohesionWeight: 0, useGroupMoves: false },
   // Prioritizes objectives, recons before committing when AP allows, avoids
   // clearly bad attacks, keeps an eye on supply.
-  MEDIUM: { objectiveWeight: 1.1, attackThreshold: 0.42, isolationBonus: 4, reconPriority: 0.7, resupplyThreshold: 35, clusterWeight: 0.3, randomness: 0.12, minScore: 0.2, maxBoundsPerUnit: 3 },
+  MEDIUM: { objectiveWeight: 1.1, attackThreshold: 0.42, isolationBonus: 4, reconPriority: 0.7, resupplyThreshold: 35, clusterWeight: 0.3, randomness: 0.12, minScore: 0.2, maxBoundsPerUnit: 3, cohesionWeight: 0.7, useGroupMoves: true },
   // Combined-arms aware, target-prioritizes weakened/isolated formations,
   // defends held objectives, manages logistics, spends its AP efficiently.
-  HARD: { objectiveWeight: 1.4, attackThreshold: 0.5, isolationBonus: 9, reconPriority: 1.1, resupplyThreshold: 55, clusterWeight: 0.8, randomness: 0.02, minScore: 0.5, maxBoundsPerUnit: 3 },
+  HARD: { objectiveWeight: 1.4, attackThreshold: 0.5, isolationBonus: 9, reconPriority: 1.1, resupplyThreshold: 55, clusterWeight: 0.8, randomness: 0.02, minScore: 0.5, maxBoundsPerUnit: 3, cohesionWeight: 1.2, useGroupMoves: true },
 };
 
 interface Candidate {
@@ -105,6 +114,22 @@ function isolationScore(view: GameState, target: Formation): number {
   const weakness = Math.max(0, (60 - target.strength) / 60); // 0..1, more damaged = higher
   const isolation = Math.max(0, (2 - friendsNearby) / 2); // 0..1, fewer nearby friends = higher
   return weakness + isolation;
+}
+
+/** Nearest friendly manoeuvre element (what a gun or bridging unit should be shadowing). */
+function nearestManoeuvre(state: GameState, f: Formation): Formation | null {
+  let best: Formation | null = null;
+  let bestD = Infinity;
+  for (const o of Object.values(state.formations)) {
+    if (o.owner !== f.owner || o.id === f.id) continue;
+    if (!MANOEUVRE_TYPES.includes(o.type) || FORMATION_DEFS[o.type].isNaval) continue;
+    const d = dist(f.x, f.y, o.x, o.y);
+    if (d < bestD) {
+      bestD = d;
+      best = o;
+    }
+  }
+  return best;
 }
 
 function clusterScore(state: GameState, bot: PlayerId, x: number, y: number): number {
@@ -192,7 +217,15 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
         let targetY = f.y;
         let haveTarget = false;
         const nearestObj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y, def.isNaval);
-        if (nearestObj) {
+        // Support elements (guns, engineers) shadow the manoeuvre formation
+        // they are working with once they drift outside cohesion range —
+        // artillery and engineers now have the mobility to actually do it.
+        const anchor = w.cohesionWeight > 0 && isSupportType(f.type) ? nearestManoeuvre(state, f) : null;
+        if (anchor && dist(f.x, f.y, anchor.x, anchor.y) > COHESION_RADIUS) {
+          targetX = anchor.x;
+          targetY = anchor.y;
+          haveTarget = true;
+        } else if (nearestObj) {
           targetX = nearestObj.obj.x;
           targetY = nearestObj.obj.y;
           haveTarget = true;
@@ -220,6 +253,13 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
           const improvement = haveTarget ? currentD - bestD : 1;
           let score = improvement * w.objectiveWeight * 0.4;
           score += clusterScore(state, bot, chosenTile.x, chosenTile.y) * w.clusterWeight;
+          if (anchor) {
+            // Reward closing on the supported formation, punish drifting away.
+            const before = dist(f.x, f.y, anchor.x, anchor.y);
+            const after = dist(chosenTile.x, chosenTile.y, anchor.x, anchor.y);
+            score += (before - after) * w.cohesionWeight * 0.35;
+            if (after > COHESION_RADIUS) score -= w.cohesionWeight;
+          }
           // A second or third bound in the same round is still worth taking,
           // but slightly less than the first — keeps AP available elsewhere.
           if (f.movesUsed > 0) score *= 0.8;
@@ -227,6 +267,42 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
           candidates.push({ action: { type: 'MOVE', formationId: f.id, x: chosenTile.x, y: chosenTile.y }, score });
         }
       }
+    }
+  }
+
+  // --- MOVE FORMATION: keep a combined-arms pair together as it advances.
+  // The bot uses exactly the same grouped order the player has, so the pacing,
+  // AP accounting and destination resolution are the shared engine code.
+  if (w.useGroupMoves && affordable(state, 'MOVE')) {
+    for (const f of mine) {
+      const def = FORMATION_DEFS[f.type];
+      if (def.isNaval) continue;
+      if (!MANOEUVRE_TYPES.includes(f.type)) continue;
+      if (f.movesUsed >= f.movesMax) continue;
+      const partner = Object.values(state.formations).find(
+        (o) =>
+          o.owner === bot &&
+          o.id !== f.id &&
+          isSupportType(o.type) &&
+          o.movesUsed < o.movesMax &&
+          dist(o.x, o.y, f.x, f.y) <= COHESION_RADIUS
+      );
+      if (!partner) continue;
+      const obj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y, false);
+      if (!obj) continue;
+      const plan = planGroupMove(state, [f.id, partner.id], obj.obj.x, obj.obj.y);
+      if (!plan.ok) continue;
+      const movers = plan.members.filter((m) => m.ok);
+      if (movers.length < 2) continue;
+      const before = movers.reduce((acc, m) => acc + dist(state.formations[m.id].x, state.formations[m.id].y, obj.obj.x, obj.obj.y), 0);
+      const after = movers.reduce((acc, m) => acc + dist(m.x, m.y, obj.obj.x, obj.obj.y), 0);
+      const improvement = (before - after) / movers.length;
+      // Scored per AP spent so it competes fairly with single-unit bounds.
+      const score = improvement * w.objectiveWeight * 0.4 + w.cohesionWeight * 0.9;
+      candidates.push({
+        action: { type: 'MOVE_GROUP', formationIds: movers.map((m) => m.id), x: obj.obj.x, y: obj.obj.y },
+        score,
+      });
     }
   }
 

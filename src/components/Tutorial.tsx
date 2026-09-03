@@ -65,7 +65,10 @@ const SECTIONS: Section[] = [
       ];
       return (
         <>
-          <p className="tut-lede">Move repositions a formation. Press <K>M</K>, then click any highlighted tile.</p>
+          <p className="tut-lede">
+            Move repositions a formation. Press <K>M</K>, then hover a tile — the preview names the grid reference, the
+            distance, the going, the road bonus and how many movement actions the bound costs — then click to commit.
+          </p>
           <TutorialDiagram
             rows={['..ggg..r', '.gg.fg.r', '.g..g..r', '.gffg..r']}
             markers={markers}
@@ -73,17 +76,28 @@ const SECTIONS: Section[] = [
           />
           <ul className="tut-list">
             <li>
-              <b>Terrain sets the cost.</b> Open ground and grass are cheap, forest and hills are expensive, roads are half price.
-              Climbing uphill costs extra.
+              <b>Terrain sets the cost.</b> Open ground and grass are cheap, forest and hills expensive, climbing uphill
+              costs extra — and roads are much cheaper than any of it. Infantry cover 4 tiles cross-country but 6 along a
+              road; armour, artillery, engineers and recce roughly double their reach on one.
             </li>
             <li>
               <b>Water stops land units</b> unless there is a bridge. Ships may only travel on navigable water.
             </li>
             <li>
-              <b>You may move more than once a round.</b> The unit card shows "1 / 2 movement actions". Move, fight, then move
-              again to break contact.
+              <b>You may move more than once a round.</b> The unit card publishes both numbers — "Movement: 4 tiles" and
+              "Movement Actions: 2 / 2", dropping to "1 / 2" once you have moved. Move, fight, then move again to break
+              contact.
             </li>
-            <li>Moving cancels a dug-in position, and a tired or unsupplied formation covers less ground.</li>
+            <li>
+              <b>Move a whole formation at once.</b> Shift-click two or more of your units, then press <K>⇧M</K> and pick a
+              destination. They advance together at the slowest one's pace — that is how you keep 40 SAR, 21 SA and 35 SCE
+              in the same fight instead of strung out across the sheet.
+            </li>
+            <li>
+              A destination that will not work always tells you why — too far, terrain impassable, enemy-controlled — and if a
+              support element is about to be left behind you get an advisory, not a veto.
+            </li>
+            <li>Moving cancels a dug-in position, and a tired or unsupplied formation covers less ground (the unit card says so).</li>
           </ul>
         </>
       );

@@ -1,4 +1,4 @@
-import { FormationDef, FormationType, MOVES_PER_ROUND, PlayerId, TerrainDef, TerrainType } from './types';
+import { FormationDef, FormationType, MOBILITY, PlayerId, TerrainDef, TerrainType } from './types';
 
 // ============================================================================
 // TERRAIN DEFINITIONS
@@ -33,13 +33,13 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     branch: 'Army',
     baseAttack: 6,
     baseDefense: 7,
-    moveRange: 3,
+    moveRange: MOBILITY.INFANTRY.moveRange,
     attackRange: 1,
     sightRadius: 3,
     reconRadius: 4,
     isNaval: false,
     maxAmmo: 100,
-    movesPerRound: MOVES_PER_ROUND.INFANTRY,
+    movesPerRound: MOBILITY.INFANTRY.movesPerRound,
   },
   COMMANDO: {
     type: 'COMMANDO',
@@ -47,13 +47,13 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     branch: 'Army',
     baseAttack: 7,
     baseDefense: 4,
-    moveRange: 4,
+    moveRange: MOBILITY.COMMANDO.moveRange,
     attackRange: 1,
     sightRadius: 4,
     reconRadius: 6,
     isNaval: false,
     maxAmmo: 100,
-    movesPerRound: MOVES_PER_ROUND.COMMANDO,
+    movesPerRound: MOBILITY.COMMANDO.movesPerRound,
   },
   ARMOUR: {
     type: 'ARMOUR',
@@ -61,13 +61,13 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     branch: 'Army',
     baseAttack: 10,
     baseDefense: 6,
-    moveRange: 5,
+    moveRange: MOBILITY.ARMOUR.moveRange,
     attackRange: 1,
     sightRadius: 3,
     reconRadius: 3,
     isNaval: false,
     maxAmmo: 100,
-    movesPerRound: MOVES_PER_ROUND.ARMOUR,
+    movesPerRound: MOBILITY.ARMOUR.movesPerRound,
   },
   ARTILLERY: {
     type: 'ARTILLERY',
@@ -75,7 +75,7 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     branch: 'Army',
     baseAttack: 9,
     baseDefense: 3,
-    moveRange: 3,
+    moveRange: MOBILITY.ARTILLERY.moveRange,
     // Phase 3: 8 -> 7 with the 80x80 -> 72x72 board, so the gun's reach stays
     // the same *fraction* of the battlefield it was tuned against.
     attackRange: 7,
@@ -83,7 +83,7 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     reconRadius: 2,
     isNaval: false,
     maxAmmo: 100,
-    movesPerRound: MOVES_PER_ROUND.ARTILLERY,
+    movesPerRound: MOBILITY.ARTILLERY.movesPerRound,
   },
   ENGINEER: {
     type: 'ENGINEER',
@@ -91,13 +91,13 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     branch: 'Army',
     baseAttack: 3,
     baseDefense: 5,
-    moveRange: 3,
+    moveRange: MOBILITY.ENGINEER.moveRange,
     attackRange: 1,
     sightRadius: 2,
     reconRadius: 2,
     isNaval: false,
     maxAmmo: null,
-    movesPerRound: MOVES_PER_ROUND.ENGINEER,
+    movesPerRound: MOBILITY.ENGINEER.movesPerRound,
   },
   RECON: {
     type: 'RECON',
@@ -105,13 +105,13 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     branch: 'Army',
     baseAttack: 3,
     baseDefense: 3,
-    moveRange: 5,
+    moveRange: MOBILITY.RECON.moveRange,
     attackRange: 1,
     sightRadius: 5,
     reconRadius: 8,
     isNaval: false,
     maxAmmo: 100,
-    movesPerRound: MOVES_PER_ROUND.RECON,
+    movesPerRound: MOBILITY.RECON.movesPerRound,
   },
   FRIGATE: {
     type: 'FRIGATE',
@@ -119,13 +119,13 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     branch: 'Navy',
     baseAttack: 9,
     baseDefense: 7,
-    moveRange: 7,
+    moveRange: MOBILITY.FRIGATE.moveRange,
     attackRange: 4, // naval surface fire against coastal targets
     sightRadius: 5,
     reconRadius: 6,
     isNaval: true,
     maxAmmo: 100,
-    movesPerRound: MOVES_PER_ROUND.FRIGATE,
+    movesPerRound: MOBILITY.FRIGATE.movesPerRound,
   },
   CORVETTE: {
     type: 'CORVETTE',
@@ -133,13 +133,13 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     branch: 'Navy',
     baseAttack: 6,
     baseDefense: 5,
-    moveRange: 8,
+    moveRange: MOBILITY.CORVETTE.moveRange,
     attackRange: 3,
     sightRadius: 4,
     reconRadius: 5,
     isNaval: true,
     maxAmmo: 100,
-    movesPerRound: MOVES_PER_ROUND.CORVETTE,
+    movesPerRound: MOBILITY.CORVETTE.movesPerRound,
   },
 };
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BattleFactor, BattleReport } from '../game/types';
+import { BattleFactor, BattleReport, gridRef } from '../game/types';
 
 const OUTCOME_COLOR: Record<BattleReport['outcome'], string> = {
   'Position Captured': 'var(--olive-bright)',
@@ -64,7 +64,8 @@ export const BattleReportModal: React.FC<{ report: BattleReport; onClose: () => 
       </div>
 
       <div className="battle-line">
-        <b>{report.attackerName}</b> attacked <b>{report.defenderName}</b>
+        <b>{report.attackerName}</b> (grid {gridRef(report.attackerX, report.attackerY)}) attacked{' '}
+        <b>{report.defenderName}</b> (grid {gridRef(report.defenderX, report.defenderY)})
       </div>
 
       <div className="battle-bars">

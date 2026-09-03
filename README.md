@@ -335,7 +335,7 @@ numbers, and its equipment text names no real platform.
   multipliers, terrain cost/defense bonuses, supply radius, combat roll
   bounds — is an invented design choice for a playable prototype, not real
   SAF data. These live in `src/game/data.ts`, `src/game/types.ts`
-  (`AP_COSTS`, `AP_PER_TURN`, `MOVES_PER_ROUND`, `VP_WIN_THRESHOLD`, …) and
+  (`AP_COSTS`, `AP_PER_TURN`, `MOBILITY`, `MORALE_BASELINE`, `VP_WIN_THRESHOLD`, …) and
   `src/game/engine.ts`.
 - The map is a **fictional generated landmass**. It is not Singapore and does
   not depict any real terrain, base, installation or coastline.
@@ -350,27 +350,149 @@ replaced by a **two-budget** model:
   action still costs AP exactly as before (Move 1, Attack 2, Recon 1, Fortify
   1, Resupply 1, Artillery 2, Engineer bridge 2 / clear 1, Special Op 3, Air
   strike 3).
-- **A per-unit, per-round movement-action allowance** (`MOVES_PER_ROUND` in
+- **A per-unit, per-round movement-action allowance** (`MOBILITY` in
   `src/game/types.ts`), surfaced on every `Formation` as `movesUsed` /
-  `movesMax` so the UI can show "1 / 2 movement actions used":
+  `movesMax` so the UI can show "Movement Actions: 1 / 2".
 
-  | Formation | Movement actions / round |
-  | --- | --- |
-  | Infantry (1/2/5 SIR) | 2 |
-  | Armour (40 SAR) | 2 |
-  | Commandos (1 CDO BN) | 3 |
-  | C4I / ISR (24 C4I) | 3 |
-  | Littoral combat squadron (188 SQN) | 3 |
-  | Frigate squadron (185 SQN) | 2 |
-  | Artillery (21 SA) | 1 |
-  | Combat Engineers (35 SCE) | 1 |
+Crucially, **movement and the major action are separate budgets**: a formation
+may move, fire, and move again in the same round. The counters reset at the end
+of that side's turn.
 
-Crucially, **movement and the major action are now separate budgets**: a
-formation may move, fire, and move again in the same round. Movement *range*
-per action is still computed from unit type, terrain cost, roads, elevation
-change and a readiness/supply penalty — the allowance only caps how many
-separate bounds it may make. The counters reset at the end of that side's
-turn.
+### Mobility table (phase 4a)
+
+Base movement follows the formation's **operational role**, not a
+combat/support split. `Movement Range` is the movement points one bound gets
+(1 point = one ordinary grass/open tile, so it is quoted in tiles);
+`road tiles` is how far the same bound reaches following a road the whole way.
+
+| Formation | Range | Actions / round | Road tile cost | Tiles by road | Tiles / round (road) | Rough going |
+| --- | --- | --- | --- | --- | --- | --- |
+| Infantry (1/2/5 SIR) | 4 | 2 | 0.65 | 6 | 8 (12) | — |
+| Commandos (1 CDO BN) | 6 | 3 | 0.70 | 8 | 18 (24) | — |
+| Armour (40 SAR) | 5 | 2 | 0.50 | 10 | 10 (20) | ×1.5 |
+| Artillery (21 SA) | 4 | 2 | 0.50 | 8 | 8 (16) | ×1.25 |
+| Combat Engineers (35 SCE) | 4 | 2 | 0.50 | 8 | 8 (16) | ×1.25 |
+| C4I / ISR (24 C4I) | 6 | 3 | 0.50 | 12 | 18 (36) | — |
+| Frigate squadron (185 SQN) | 7 | 2 | — | — | 14 | — |
+| Littoral squadron (188 SQN) | 8 | 3 | — | — | 24 | — |
+
+"Rough going" is the surcharge heavy formations pay in forest, urban and
+industrial tiles — it is what makes armour specifically fast **on roads and in
+the open** rather than fast everywhere, and it is itemised in the movement
+preview rather than applied invisibly.
+
+The headline fix is artillery and engineers: **3 range × 1 action = 3 tiles a
+round** previously, against armour's 10. They now get **4 × 2 = 8**. Over 12
+bot-vs-bot games per configuration (identical seeds before and after) that
+drops the average distance from a support element to the nearest friendly
+manoeuvre formation, and the share of sampled unit-rounds in which a support
+element is stranded more than 8 tiles from any manoeuvre element:
+
+| Cohesion metric | Before | After |
+| --- | --- | --- |
+| Avg. support → nearest manoeuvre formation, MEDIUM bot | 8.54 tiles | **2.65 tiles** |
+| Avg. support → nearest manoeuvre formation, HARD bot | 8.74 tiles | **2.70 tiles** |
+| Support stranded > 8 tiles, MEDIUM bot | 36.6% | **6.6%** |
+| Support stranded > 8 tiles, HARD bot | 37.6% | **4.9%** |
+
+Readiness and supply still modulate range, but in two coarse, **named** steps
+(×0.75 for readiness < 50%, ×0.75 for supply < 30%) that are printed on the
+unit card — never a smooth hidden fudge. The same unit on the same ground
+always gets the same number.
+
+### Move Formation
+
+An **optional** grouped order. Shift-click two or more friendly formations (map
+or roster), press <kbd>Shift</kbd>+<kbd>M</kbd>, click a destination: the group
+advances together, **paced to the slowest participant's single-action range**,
+with destination tiles resolved around the objective so nothing stacks
+illegally. Every participant spends one of its own movement actions and 1 AP —
+the total is shown before confirming — and a formation with no movement actions
+left is named in the preview rather than silently dropped. Single-unit movement
+is completely unchanged.
+
+### Movement preview
+
+`src/game/movement.ts` is the single source of truth: range, per-tile cost,
+reachable set, exact path, road bonus, actions required, refusal reasons and
+cohesion advisories. The client preview calls the **same pure functions the
+server validates with**, so the preview can never promise something the rules
+will refuse. Hovering a tile in Move mode reads e.g.
+
+```
+MOVE TO GRID H-42 · Distance 6 · Terrain Cost Moderate · Road Bonus +2 · Movement Actions: 1 required · 1 AP
+```
+
+An illegal destination is never silently ignored — it is explained ("Too far",
+"Terrain impassable — a river crossing. Bring engineers up to bridge it.",
+"Enemy-controlled position", "Warships cannot go ashore", "Tile already
+occupied by 1 SIR").
+
+### Grid references
+
+There is one map-sheet coordinate scheme (`gridRef` in `src/game/types.ts`):
+lettered columns, 1-based numbered rows, e.g. `H-42`. It is used by the
+movement preview, the hover label on the map, the order log, contact markers
+and the battle report alike.
+
+### Formation cohesion (movement-side)
+
+Artillery and engineers are matched to the nearest friendly manoeuvre formation
+(`supportedFormation`). Moving either past `COHESION_RADIUS` (6 tiles) raises an
+**advisory** — "35 SCE is becoming separated from supported formation" — as does
+moving a manoeuvre element away from a support unit that has nobody else to fall
+in with. It is advice, never a veto.
+
+## Morale (phase 4a)
+
+Morale used to be a discrete band that ratcheted **down** on essentially every
+engagement and had no route back up: over bot-vs-bot games the average
+end-of-game morale of surviving formations was 61.5 out of 100 against a 75
+start, with 1.3 band transitions per unit per game and a per-round chance of
+Broken. It behaved like a fluctuating resource.
+
+It is now a **long-term battlefield condition**. Each formation carries a
+continuous `moraleValue` (0–100) and a per-type `moraleBaseline`
+(`MORALE_BASELINE`) that it drifts back toward. The five named bands
+(Elite / Steady / Stressed / Shaken / Broken) are derived from that number and
+still multiply combat power exactly as before.
+
+- **Casualties have a dead zone.** Anything up to 15 strength lost costs no
+  morale at all; beyond that the shock is `(loss − 15) × 0.5`. Indirect fire
+  (artillery, air, raids) carries half that weight.
+- **Shocks** (`MORALE_SHOCKS`) are the only other thing that moves it: a major
+  attack repulsed (−5), being driven off a position (−8), losing an objective
+  your side held (−6 to units near it), a friendly battalion destroyed nearby
+  (−7), being surrounded (−4/round), isolated (−3/round), supply critical
+  (−5/round) or low (−2/round). Upward: taking a position by assault (+6),
+  capturing an objective (+8), resupplying and reorganising (+3).
+- **Recovery** is gradual and conditional: +3 base, +3 in supply, +2 holding
+  position (did not move, or dug in), +2 with a friendly formation inside the
+  cohesion radius — halved if the formation is on its own, and zero in the
+  round it fought. Recovery only ever pulls **toward** the baseline.
+- **Élan above the baseline has diminishing returns** (`MORALE_ELAN_CEILING`)
+  and decays 2/round, so Elite must be earned and cannot be farmed off a run of
+  easy objective captures.
+
+Measured over 12 bot-vs-bot games per configuration (HARD, same seeds):
+
+| Metric | Before | After |
+| --- | --- | --- |
+| Average morale (0–100, sampled per formation per round) | 70.4 | **75.2** |
+| Unit-rounds Steady | 86.7% | **97.4%** |
+| Unit-rounds Shaken or Broken | 4.9% | **0.0%** |
+| Band changed between rounds | 5.4% | **2.2%** |
+| Band transitions per unit per game (every action sampled) | 1.25 | **0.30** |
+| Formations that hit Broken at some point in a game | 27.9% | **0.0%** |
+| Formations that hit Shaken or worse at some point | 35.0% | **0.4%** |
+| Formations that never left Steady | 46.3% | **87.9%** |
+| Average morale of survivors at game end | 61.2 | **74.1** |
+
+It has not lost its teeth: three consecutive heavy maulings (−40 strength each)
+plus being driven off its position still walks an infantry battalion
+72 → 59.5 → 47 → 34.5 → 26.5, i.e. Steady → Stressed → Shaken → **Broken**; six
+quiet rounds in supply beside friendly forces bring it back to 72. Five light
+contacts (−12 strength each) move it **not at all**.
 
 ### What was changed and why
 
@@ -502,7 +624,7 @@ A routine per-action broadcast is **7 KB** instead of ~440 KB.
   within range, per the brief; the *range* itself is computed from
   unit-type move points, terrain cost, roads, elevation change, and a
   readiness/supply penalty. The number of Move actions a formation may take
-  in a round is capped separately (`MOVES_PER_ROUND`) — see "Movement actions
+  in a round is capped separately (`MOBILITY`) — see "Movement actions
   and the AP economy".
 - **Combat resolution on capture:** a "Position Captured" outcome removes
   the defending formation from the board (retreat is not separately

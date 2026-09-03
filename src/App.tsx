@@ -11,14 +11,17 @@ import { EndGameScreen } from './components/EndGameScreen';
 import { Legend } from './components/Legend';
 import { HelpPanel } from './components/HelpPanel';
 import { Lobby } from './components/Lobby';
+import { GroupMovePreview, MovementPreview } from './components/MovementPreview';
 import { Camera, Overlays } from './render/renderMap';
 import { TargetMode } from './App.types';
 import { ActionAvailability, actionAvailability, ACTION_BY_SHORTCUT, formationsWithActions } from './game/actions';
 import { computeReachable, formationAt } from './game/engine';
+import { cohesionAdvisory, planGroupMove, planMove } from './game/movement';
 import { AP_COSTS, Formation, GRID_SIZE } from './game/types';
 
 const TARGET_HINTS: Record<string, string> = {
-  MOVE: 'Click a highlighted tile to move there.',
+  MOVE: 'Click a highlighted tile to move there. Shift-click friendly formations to group them for a formation move.',
+  MOVE_GROUP: 'Click the objective tile — the whole group advances together at the slowest formation\u2019s pace.',
   ATTACK: 'Click a red-ringed enemy inside your attack range.',
   ARTILLERY: 'Click a spotted enemy inside the red range diamond to fire on it.',
   AIR_TARGET: 'Click any spotted enemy formation to call the strike in.',
@@ -41,6 +44,8 @@ export default function App() {
   const { state, you } = net;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [targetMode, setTargetMode] = useState<TargetMode>(null);
+  const [groupIds, setGroupIds] = useState<string[]>([]);
+  const [hoverTile, setHoverTile] = useState<{ x: number; y: number } | null>(null);
   const [camera, setCamera] = useState<Camera>({ x: GRID_SIZE / 2, y: GRID_SIZE / 2, scale: 11 });
   const [overlays, setOverlays] = useState<Overlays>({ terrain: true, movement: true, intel: true, supply: false, objectives: true });
   const [showReportId, setShowReportId] = useState<string | null>(null);
@@ -89,7 +94,17 @@ export default function App() {
   useEffect(() => {
     setTargetMode(null);
     setEndTurnWarn(false);
+    setGroupIds([]);
   }, [state?.activePlayer]);
+
+  // Drop group members that no longer exist (destroyed, or not ours).
+  useEffect(() => {
+    if (!state || !you) return;
+    setGroupIds((ids) => {
+      const keep = ids.filter((id) => state.formations[id]?.owner === you);
+      return keep.length === ids.length ? ids : keep;
+    });
+  }, [state?.formations, you]);
 
   const myTurn = !!state && !!you && state.activePlayer === you;
 
@@ -99,6 +114,40 @@ export default function App() {
   );
 
   const readyFormations = useMemo(() => (state && you ? formationsWithActions(state, you) : []), [state, you]);
+
+  const groupFormations = useMemo(
+    () => (state ? (groupIds.map((id) => state.formations[id]).filter(Boolean) as Formation[]) : []),
+    [state, groupIds]
+  );
+
+  // ---- Movement preview -----------------------------------------------------
+  // planMove / planGroupMove are the SAME pure functions the server validates
+  // with, so what the preview promises is exactly what the move will do.
+  const movePlan = useMemo(
+    () => (state && selected && targetMode === 'MOVE' && hoverTile ? planMove(state, selected, hoverTile.x, hoverTile.y) : null),
+    [state, selected, targetMode, hoverTile?.x, hoverTile?.y]
+  );
+  const moveAdvisory = useMemo(
+    () =>
+      state && selected && targetMode === 'MOVE' && hoverTile && movePlan?.ok
+        ? cohesionAdvisory(state, selected, hoverTile.x, hoverTile.y)
+        : null,
+    [state, selected, targetMode, hoverTile?.x, hoverTile?.y, movePlan?.ok]
+  );
+  const groupPlan = useMemo(
+    () =>
+      state && targetMode === 'MOVE_GROUP' && hoverTile && groupIds.length
+        ? planGroupMove(state, groupIds, hoverTile.x, hoverTile.y)
+        : null,
+    [state, targetMode, hoverTile?.x, hoverTile?.y, groupIds]
+  );
+
+  const toggleGroupMember = useCallback(
+    (f: Formation) => {
+      setGroupIds((ids) => (ids.includes(f.id) ? ids.filter((i) => i !== f.id) : [...ids, f.id]));
+    },
+    []
+  );
 
   const centreOn = useCallback((f: { x: number; y: number }) => {
     setCamera((c) => ({ ...c, x: f.x, y: f.y }));
@@ -172,8 +221,20 @@ export default function App() {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key;
 
+      // Shift+M — Move Formation (the grouped order). Plain M is unchanged.
+      if (e.shiftKey && k.toUpperCase() === 'M') {
+        e.preventDefault();
+        if (groupIds.length < 2) {
+          flash('Shift-click two or more of your formations first, then press Shift+M to move them together.');
+          return;
+        }
+        setTargetMode((m) => (m === 'MOVE_GROUP' ? null : 'MOVE_GROUP'));
+        return;
+      }
+
       if (k === 'Escape') {
         if (targetMode) setTargetMode(null);
+        else if (groupIds.length) setGroupIds([]);
         else if (legendOpen) setLegendOpen(false);
         else if (helpOpen) setHelpOpen(false);
         else if (endTurnWarn) setEndTurnWarn(false);
@@ -249,7 +310,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [targetMode, legendOpen, helpOpen, endTurnWarn, selected, actions, runAction, nextReady, centreOn, doEndTurn, myTurn, flash]);
+  }, [targetMode, legendOpen, helpOpen, endTurnWarn, selected, actions, runAction, nextReady, centreOn, doEndTurn, myTurn, flash, groupIds]);
 
   if (!state || !you) {
     return (
@@ -268,7 +329,15 @@ export default function App() {
 
   const clearMode = () => setTargetMode(null);
 
-  const handleFormationClick = (f: Formation) => {
+  const handleFormationClick = (f: Formation, mods: { shift: boolean } = { shift: false }) => {
+    if (mods.shift) {
+      if (f.owner !== you) {
+        flash('Only your own formations can be grouped for a formation move.');
+        return;
+      }
+      toggleGroupMember(f);
+      return;
+    }
     if (targetMode === 'ATTACK' && selected && f.owner !== selected.owner) {
       net.sendAction({ type: 'ATTACK', attackerId: selected.id, targetId: f.id });
       clearMode();
@@ -288,12 +357,30 @@ export default function App() {
   };
 
   const handleTileClick = (x: number, y: number) => {
+    if (targetMode === 'MOVE_GROUP') {
+      const plan = planGroupMove(state, groupIds, x, y);
+      if (!plan.ok) {
+        flash(plan.reason);
+        return;
+      }
+      net.sendAction({ type: 'MOVE_GROUP', formationIds: plan.members.filter((m) => m.ok).map((m) => m.id), x, y });
+      clearMode();
+      return;
+    }
     if (!selected) return;
     switch (targetMode) {
-      case 'MOVE':
+      case 'MOVE': {
+        // Never silently refuse: if the destination is illegal, say why and
+        // stay in move mode so the player can pick another tile.
+        const plan = planMove(state, selected, x, y);
+        if (!plan.ok) {
+          flash(plan.reason);
+          return;
+        }
         net.sendAction({ type: 'MOVE', formationId: selected.id, x, y });
         clearMode();
         break;
+      }
       case 'ATTACK': {
         const f = formationAt(state, x, y);
         if (f && f.owner !== selected.owner) net.sendAction({ type: 'ATTACK', attackerId: selected.id, targetId: f.id });
@@ -347,6 +434,10 @@ export default function App() {
         camera={camera}
         setCamera={setCamera}
         flashTiles={flashTiles}
+        groupIds={groupIds}
+        pathPreview={targetMode === 'MOVE' ? movePlan?.path : undefined}
+        pathInvalid={targetMode === 'MOVE' ? movePlan?.ok === false : false}
+        onHoverTile={setHoverTile}
       />
 
       <TopBar state={state} you={you} objectivesHeld={objectivesHeld} objectivesTotal={state.objectives.length} />
@@ -372,10 +463,50 @@ export default function App() {
         collapsed={rosterCollapsed}
         onToggle={() => setRosterCollapsed((v) => !v)}
         onSelect={(f) => selectFormation(f, true)}
+        onToggleGroup={toggleGroupMember}
+        groupIds={groupIds}
       />
 
       {selected && (
         <UnitDetailPanel state={state} formation={selected} onCentre={() => centreOn(selected)} onClose={() => setSelectedId(null)} />
+      )}
+
+      {(targetMode === 'MOVE' || targetMode === 'MOVE_GROUP') && (
+        <div className="move-preview-wrap">
+          {targetMode === 'MOVE_GROUP' ? (
+            <GroupMovePreview plan={groupPlan} count={groupFormations.length} />
+          ) : (
+            selected && <MovementPreview unitName={selected.shortName} plan={movePlan} advisory={moveAdvisory} />
+          )}
+        </div>
+      )}
+
+      {groupFormations.length > 0 && (
+        <div className="group-bar" data-testid="group-bar">
+          <span className="group-title">FORMATION GROUP</span>
+          {groupFormations.map((f) => (
+            <button
+              key={f.id}
+              className="group-chip"
+              title="Remove from the group"
+              onClick={() => toggleGroupMember(f)}
+              data-testid="group-chip"
+            >
+              {f.shortName} <span className="group-x">×</span>
+            </button>
+          ))}
+          <button
+            className="btn-primary small"
+            data-testid="move-formation-btn"
+            disabled={groupFormations.length < 2 || !myTurn}
+            onClick={() => setTargetMode((m) => (m === 'MOVE_GROUP' ? null : 'MOVE_GROUP'))}
+          >
+            Move Formation <kbd>⇧M</kbd>
+          </button>
+          <button className="btn-ghost small" onClick={() => setGroupIds([])}>
+            Clear
+          </button>
+        </div>
       )}
 
       {selected ? (

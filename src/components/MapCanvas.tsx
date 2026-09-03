@@ -11,10 +11,16 @@ interface Props {
   overlays: Overlays;
   targetMode: string | null;
   onTileClick: (x: number, y: number) => void;
-  onFormationClick: (f: Formation) => void;
+  onFormationClick: (f: Formation, mods: { shift: boolean }) => void;
   camera: Camera;
   setCamera: React.Dispatch<React.SetStateAction<Camera>>;
   flashTiles?: { x: number; y: number }[];
+  /** Ids in the current Move Formation group — drawn with a group bracket. */
+  groupIds?: string[];
+  /** Tiles of the previewed path to the hovered tile. */
+  pathPreview?: { x: number; y: number }[];
+  /** True when the previewed destination is refused, so the path draws in red. */
+  pathInvalid?: boolean;
   onHoverTile?: (t: { x: number; y: number } | null) => void;
   /** Reports the smoothed frame time of the render loop, for the perf readout. */
   onFrameTime?: (ms: number) => void;
@@ -59,6 +65,9 @@ export const MapCanvas: React.FC<Props> = ({
   camera,
   setCamera,
   flashTiles,
+  groupIds,
+  pathPreview,
+  pathInvalid,
   onHoverTile,
   onFrameTime,
 }) => {
@@ -107,7 +116,7 @@ export const MapCanvas: React.FC<Props> = ({
     [overlays.supply, state.formations, state.objectives, viewer]
   );
 
-  propsRef.current = { state, viewer, selected, reachable, attackable, overlays, supplySet, labels, flashTiles, size, camera };
+  propsRef.current = { state, viewer, selected, reachable, attackable, overlays, supplySet, labels, flashTiles, size, camera, groupIds, pathPreview, pathInvalid };
 
   // ---- Animation / render loop -------------------------------------------
   useEffect(() => {
@@ -170,6 +179,9 @@ export const MapCanvas: React.FC<Props> = ({
         hoverTile: hoverRef.current,
         labels: p.labels,
         flashTiles: p.flashTiles,
+        groupIds: p.groupIds,
+        pathPreview: p.pathPreview,
+        pathInvalid: p.pathInvalid,
         pulse: (t % 1800) / 1800,
       });
       const dt = performance.now() - t0;
@@ -250,7 +262,9 @@ export const MapCanvas: React.FC<Props> = ({
     const t = screenToTile(viewRef.current, rect.width, rect.height, e.clientX - rect.left, e.clientY - rect.top);
     if (t.x < 0 || t.y < 0 || t.x >= GRID_SIZE || t.y >= GRID_SIZE) return;
     const f = formationAt(state, t.x, t.y);
-    if (f && !targetMode) onFormationClick(f);
+    // Shift-click always means "add/remove from the Move Formation group",
+    // even while a targeting mode is armed.
+    if (f && (e.shiftKey || !targetMode)) onFormationClick(f, { shift: e.shiftKey });
     else onTileClick(t.x, t.y);
   };
 
