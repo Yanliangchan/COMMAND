@@ -5,7 +5,19 @@ import { Replay } from './Replay';
 
 export const EndGameScreen: React.FC<{ state: GameState; you: PlayerId; onRestart: () => void }> = ({ state, you, onRestart }) => {
   const [replayOpen, setReplayOpen] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const won = state.winner === you;
+  const replayLink = state.replayCode ? `${window.location.origin}${window.location.pathname}?replay=${state.replayCode}` : null;
+  const copyReplayLink = async () => {
+    if (!replayLink) return;
+    try {
+      await navigator.clipboard.writeText(replayLink);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 1800);
+    } catch {
+      // clipboard API unavailable — the link is still visible to copy manually.
+    }
+  };
   const draw = state.winner === 'DRAW';
   const held = state.objectives.filter((o) => o.controlledBy === you).length;
   return (
@@ -30,6 +42,14 @@ export const EndGameScreen: React.FC<{ state: GameState; you: PlayerId; onRestar
         <button className="btn-ghost small" data-testid="open-replay" onClick={() => setReplayOpen(true)}>
           Review Replay
         </button>
+        {replayLink && (
+          <div className="replay-share-row" data-testid="replay-share-row">
+            <input className="replay-share-input" readOnly value={replayLink} onFocus={(e) => e.currentTarget.select()} data-testid="replay-share-link" />
+            <button className="btn-ghost small" onClick={copyReplayLink} data-testid="copy-replay-link">
+              {linkCopied ? 'Copied' : 'Copy link'}
+            </button>
+          </div>
+        )}
         <button className="close-btn" onClick={onRestart}>
           Return to Lobby
         </button>

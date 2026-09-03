@@ -494,7 +494,11 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
   // waste, so the more AP is still banked the lower the bar a candidate has to
   // clear. This is what stops the bot ending turns on a full wallet.
   const apLeft = state.players[bot].ap;
-  const relaxed = apLeft >= AP_PER_TURN * 0.6 ? 0.15 : apLeft >= AP_PER_TURN * 0.35 ? 0.5 : 1;
+  // Phase 11 §4: custom rooms can change AP per turn — read it from the
+  // room's own rules rather than the global default constant, so the bot's
+  // "how much AP pressure" heuristic still tracks the actual budget it has.
+  const apPerTurn = state.rules?.apPerTurn ?? AP_PER_TURN;
+  const relaxed = apLeft >= apPerTurn * 0.6 ? 0.15 : apLeft >= apPerTurn * 0.35 ? 0.5 : 1;
   let viable = candidates.filter((c) => c.score >= w.minScore * relaxed);
   if (viable.length === 0) viable = difficulty === 'EASY' ? candidates : [];
   if (viable.length === 0) return null;

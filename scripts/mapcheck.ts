@@ -7,6 +7,7 @@
 // ============================================================================
 
 import { generateBattlefield, validateMap, MapDiagnostics } from '../src/game/mapgen';
+import { SCENARIOS } from '../src/game/scenarios';
 import { GRID_SIZE, PlayerId, Tile } from '../src/game/types';
 
 const COUNT = Number(process.argv[2] ?? 60);
@@ -18,6 +19,46 @@ let pass = 0;
 const failures: string[] = [];
 const stats: MapDiagnostics[] = [];
 let genMs = 0;
+
+/** Shared per-seed validation body — used for both the random soak and the curated pool below. */
+function checkSeed(seed: number, label: string): boolean {
+  try {
+    const t0 = Date.now();
+    const map = generateBattlefield(seed);
+    genMs += Date.now() - t0;
+    stats.push(map.diagnostics);
+    const errs: string[] = [...validateMap(map).errors];
+
+    const reach = navalReachability(map.tiles, map.navalSpawns.SABRE[0]);
+    (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
+      map.navalSpawns[side].forEach((s) => {
+        if (!reach.has(s.y * N + s.x)) errs.push(`${side} naval spawn (${s.x},${s.y}) unreachable by sea`);
+      });
+    });
+    map.objectives.filter((o) => o.maritime).forEach((o) => {
+      if (!reach.has(o.y * N + o.x)) errs.push(`maritime objective ${o.name} unreachable by sea`);
+    });
+    for (const p of map.ports) {
+      const berth = N4.some(([dx, dy]) => inB(p.x + dx, p.y + dy) && reach.has((p.y + dy) * N + (p.x + dx)));
+      if (!berth) errs.push(`port (${p.x},${p.y}) unreachable by sea`);
+    }
+    if (map.objectives.length < 12) errs.push(`only ${map.objectives.length} objectives`);
+
+    (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
+      if (map.startZones[side].length < 10) errs.push(`${side} deployment zone seats only ${map.startZones[side].length} land formations (need >= 10)`);
+    });
+
+    if (errs.length) {
+      failures.push(`${label} (seed ${seed}): ${errs.join(' | ')}`);
+      return false;
+    }
+    pass++;
+    return true;
+  } catch (e) {
+    failures.push(`${label} (seed ${seed}): THREW ${(e as Error).message.split('\n')[0]}`);
+    return false;
+  }
+}
 
 /** Independent re-derivation of the naval reachability claim (not the generator's own). */
 function navalReachability(tiles: Tile[][], from: { x: number; y: number }): Set<number> {
@@ -41,52 +82,15 @@ function navalReachability(tiles: Tile[][], from: { x: number; y: number }): Set
 }
 
 for (let i = 0; i < COUNT; i++) {
-  const seed = 100000 + i * 7919;
-  try {
-    const t0 = Date.now();
-    const map = generateBattlefield(seed);
-    genMs += Date.now() - t0;
-    stats.push(map.diagnostics);
-    const errs: string[] = [...validateMap(map).errors];
-
-    // Independent naval check: sail from SABRE's first ship and confirm we
-    // can reach every other naval spawn, every port berth and every anchorage.
-    const reach = navalReachability(map.tiles, map.navalSpawns.SABRE[0]);
-    (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
-      map.navalSpawns[side].forEach((s) => {
-        if (!reach.has(s.y * N + s.x)) errs.push(`${side} naval spawn (${s.x},${s.y}) unreachable by sea`);
-      });
-    });
-    map.objectives.filter((o) => o.maritime).forEach((o) => {
-      if (!reach.has(o.y * N + o.x)) errs.push(`maritime objective ${o.name} unreachable by sea`);
-    });
-    for (const p of map.ports) {
-      const berth = N4.some(([dx, dy]) => inB(p.x + dx, p.y + dy) && reach.has((p.y + dy) * N + (p.x + dx)));
-      if (!berth) errs.push(`port (${p.x},${p.y}) unreachable by sea`);
-    }
-    if (map.objectives.length < 12) errs.push(`only ${map.objectives.length} objectives`);
-
-    // Phase 9: 12 formations a side (10 land + 2 naval) — every side's
-    // deployment area must legally seat all 10 land formations on distinct
-    // tiles (generateBattlefield already enforces >= 10 internally and would
-    // have failed `ok`, but this independently re-checks the artifact that
-    // actually ships, the way the naval checks above do for water).
-    (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
-      if (map.startZones[side].length < 10) errs.push(`${side} deployment zone seats only ${map.startZones[side].length} land formations (need >= 10)`);
-    });
-
-    if (errs.length) failures.push(`seed ${seed}: ${errs.join(' | ')}`);
-    else pass++;
-  } catch (e) {
-    failures.push(`seed ${seed}: THREW ${(e as Error).message.split('\n')[0]}`);
-  }
+  checkSeed(100000 + i * 7919, 'random');
 }
 
+const randomPass = pass;
 const avg = (f: (d: MapDiagnostics) => number) =>
   stats.length ? Math.round((stats.reduce((s, d) => s + f(d), 0) / stats.length) * 10) / 10 : 0;
 
-console.log(`\nCOMMAND map soak — ${COUNT} seeds on a ${N}x${N} grid`);
-console.log(`  pass:   ${pass}/${COUNT}  (${((pass / COUNT) * 100).toFixed(1)}%)`);
+console.log(`\nCOMMAND map soak — ${COUNT} random seeds on a ${N}x${N} grid`);
+console.log(`  pass:   ${randomPass}/${COUNT}  (${((randomPass / COUNT) * 100).toFixed(1)}%)`);
 console.log(`  gen time: ${(genMs / COUNT).toFixed(0)} ms/map avg`);
 console.log(`  avg attempts/map:  ${avg((d) => d.attempts)}`);
 console.log(`  avg water tiles:   ${avg((d) => d.waterTiles)} (navigable ${avg((d) => d.navigableTiles)})`);
@@ -95,8 +99,24 @@ console.log(`  avg river tiles:   ${avg((d) => d.riverTiles)}`);
 console.log(`  avg road tiles:    ${avg((d) => d.roadTiles)}  bridges ${avg((d) => d.bridgeTiles)}`);
 console.log(`  avg forest tiles:  ${avg((d) => d.forestTiles)}  urban ${avg((d) => d.urbanTiles)}`);
 console.log(`  avg speckle fixed: ${avg((d) => d.speckleTiles)}`);
+
+// ---------------------------------------------------------------------------
+// Phase 11 §1 — the ten curated, named scenario maps. Every one of these
+// ships to real matches (see scenarios.ts / server room creation), so they
+// are validated explicitly here rather than only hoping they show up in the
+// random sample above.
+// ---------------------------------------------------------------------------
+console.log(`\nCOMMAND curated scenario pool — ${SCENARIOS.length} named maps`);
+let curatedPass = 0;
+for (const s of SCENARIOS) {
+  const ok = checkSeed(s.seed, `scenario "${s.name}"`);
+  console.log(`  ${ok ? 'OK  ' : 'FAIL'}  ${s.name} (${s.id}, seed ${s.seed})`);
+  if (ok) curatedPass++;
+}
+console.log(`  curated pass: ${curatedPass}/${SCENARIOS.length}`);
+
 if (failures.length) {
   console.log(`\n  FAILURES (${failures.length}):`);
-  failures.slice(0, 15).forEach((f) => console.log(`   - ${f}`));
+  failures.slice(0, 20).forEach((f) => console.log(`   - ${f}`));
   process.exitCode = 1;
 }

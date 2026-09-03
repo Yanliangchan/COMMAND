@@ -36,15 +36,16 @@ import {
   MORALE_SHOCKS,
   gridRef,
   moraleBandFor,
-  AP_CAP,
   AP_COSTS,
-  AP_PER_TURN,
   AIR_SORTIES_PER_TURN,
+  DEFAULT_RULES,
   EXPLOITATION_AP_REBATE,
   FORTIFY_TIER_MAX,
   FORTIFY_TIER_SUPPRESSION_DECAY_MULT,
   GRID_SIZE,
-  MAX_ROUNDS,
+  LAST_STAND_DURATION_ROUNDS,
+  LAST_STAND_THRESHOLD,
+  MatchRules,
   MUTUAL_REORGANIZE_MORALE_BONUS,
   MUTUAL_REORGANIZE_READINESS_BONUS,
   REACTION_FIRE_POWER_MULT,
@@ -61,7 +62,6 @@ import {
   UAV_SWEEP_RADIUS,
   VERTICAL_INSERT_MAX_USES,
   VERTICAL_INSERT_RADIUS,
-  VP_WIN_THRESHOLD,
   ActionKind,
   BattleFactor,
   BattleReport,
@@ -88,6 +88,26 @@ function initiativeRoll(seed: number): boolean {
   h = Math.imul(h, 0xc2b2ae35);
   h ^= h >>> 16;
   return (h & 1) === 1;
+}
+
+/**
+ * LAST STAND (phase 11 §5) — call after ANY strength mutation. Arms the
+ * one-time cornered-and-fighting-hard bonus the first time (and only the
+ * first time) a formation's strength crosses below LAST_STAND_THRESHOLD.
+ * `lastStandTriggered` never resets, so Reorganize healing a formation back
+ * above the floor and a later engagement dropping it below again does NOT
+ * re-trigger the bonus — it is spent.
+ */
+function checkLastStand(state: GameState, f: Formation) {
+  if (f.lastStandTriggered) return;
+  if (f.strength >= LAST_STAND_THRESHOLD || f.strength <= 0) return;
+  f.lastStandTriggered = true;
+  f.lastStandUntilRound = state.round + LAST_STAND_DURATION_ROUNDS - 1;
+  log(
+    state,
+    `${f.shortName} is fighting a last stand — strength below ${LAST_STAND_THRESHOLD}%, cornered and hitting back harder for ${LAST_STAND_DURATION_ROUNDS} rounds.`,
+    f.owner
+  );
 }
 
 let idCounter = 0;
@@ -135,11 +155,17 @@ function makeFormation(owner: PlayerId, profileIndex: number, x: number, y: numb
     fortifyTier: 0,
     fortifiedThisRound: false,
     verticalInsertsUsed: 0,
+    lastStandTriggered: false,
+    lastStandUntilRound: 0,
   };
 }
 
-export function initGame(seed = 1337): GameState {
+export function initGame(
+  seed = 1337,
+  opts: { rules?: Partial<MatchRules>; mapName?: string; initiative?: PlayerId } = {}
+): GameState {
   const map = generateBattlefield(seed);
+  const rules: MatchRules = { ...DEFAULT_RULES, ...opts.rules };
   const formations: Record<string, Formation> = {};
 
   (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
@@ -164,7 +190,7 @@ export function initGame(seed = 1337): GameState {
   // way a wargame rolls for it. Neither task force is systematically the
   // attacker, and because the server already assigns seats by a coin flip, no
   // human player is affected either way.
-  const first: PlayerId = initiativeRoll(seed) ? 'VANGUARD' : 'SABRE';
+  const first: PlayerId = opts.initiative ?? (initiativeRoll(seed) ? 'VANGUARD' : 'SABRE');
 
   const state: GameState = {
     round: 1,
@@ -174,8 +200,8 @@ export function initGame(seed = 1337): GameState {
     formations,
     objectives: map.objectives,
     players: {
-      SABRE: { id: 'SABRE', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {}, uavCharges: UAV_CHARGES_PER_GAME },
-      VANGUARD: { id: 'VANGUARD', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {}, uavCharges: UAV_CHARGES_PER_GAME },
+      SABRE: { id: 'SABRE', ap: rules.apPerTurn, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {}, uavCharges: UAV_CHARGES_PER_GAME },
+      VANGUARD: { id: 'VANGUARD', ap: rules.apPerTurn, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {}, uavCharges: UAV_CHARGES_PER_GAME },
     },
     log: [{ text: `${EXERCISE_NAME} begins. ${FACTION_NAMES[first]} has the initiative.`, audience: 'ALL' as const, round: 1 }],
     phase: 'PLAYING',
@@ -183,6 +209,10 @@ export function initGame(seed = 1337): GameState {
     lastBattleReport: null,
     killFeed: [],
     replay: [],
+    rules,
+    mapName: opts.mapName ?? 'Unnamed Sector',
+    mapSeed: seed,
+    replayCode: null,
   };
 
   refreshAllSpotting(state);
@@ -311,6 +341,8 @@ function triggerOverwatch(state: GameState, mover: Formation): boolean {
     const res = lossesFromShare(share, false);
     alert.strength = Math.max(0, Math.min(100, alert.strength + res.attacker));
     mover.strength = Math.max(0, Math.min(100, mover.strength + res.defender));
+    checkLastStand(state, alert);
+    checkLastStand(state, mover);
     alert.reactionFired = true;
     alert.lastEngagedRound = state.round;
     mover.lastEngagedRound = state.round;
@@ -914,6 +946,8 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
 
   attacker.strength = Math.max(0, Math.min(100, attacker.strength + attackerDelta));
   target.strength = Math.max(0, Math.min(100, target.strength + defenderDelta));
+  checkLastStand(state, attacker);
+  checkLastStand(state, target);
   // Suppression (phase 7): a secondary output of the SAME action, alongside
   // damage — never a substitute for it. Indirect/standoff fire suppresses
   // hard; a direct assault suppresses a little too.
@@ -975,7 +1009,7 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   // per turn, and this runs at most once per resolved attack.
   const breakthroughBonus = captured && (attackerLoss === 'None' || attackerLoss === 'Light');
   if (breakthroughBonus) {
-    state.players[attacker.owner].ap = Math.min(AP_CAP, state.players[attacker.owner].ap + EXPLOITATION_AP_REBATE);
+    state.players[attacker.owner].ap = Math.min(state.rules.apCap, state.players[attacker.owner].ap + EXPLOITATION_AP_REBATE);
     log(state, `${attacker.shortName} broke through cleanly — bonus AP granted (+${EXPLOITATION_AP_REBATE}).`, attacker.owner);
   }
 
@@ -1043,6 +1077,7 @@ export function artilleryAction(state: GameState, formationId: string, x: number
   const res = lossesFromShare(share, false);
   const delta = res.defender;
   target.strength = Math.max(0, target.strength + delta);
+  checkLastStand(state, target);
   target.lastEngagedRound = state.round;
   target.readiness = Math.max(25, target.readiness - 6);
   // Suppression (phase 7): a fire mission's second output, alongside damage —
@@ -1074,6 +1109,7 @@ export function airStrikeAction(state: GameState, x: number, y: number): GameSta
   ps.airSorties -= 1;
   const delta = -(15 + Math.random() * 20);
   target.strength = Math.max(0, target.strength + delta);
+  checkLastStand(state, target);
   target.lastEngagedRound = state.round;
   // A strike from off-map is standoff fire too — suppresses like artillery.
   target.suppression = Math.min(100, target.suppression + suppressionHitFor(false));
@@ -1101,6 +1137,7 @@ export function specialOpAction(state: GameState, formationId: string, x: number
   if (target && target.owner !== f.owner) {
     const delta = -(18 + Math.random() * 15);
     target.strength = Math.max(0, target.strength + delta);
+    checkLastStand(state, target);
     target.lastEngagedRound = state.round;
     applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'raided behind the lines');
     f.lastOrder = `Special op raid on grid ${gridRef(x, y)}`;
@@ -1366,11 +1403,11 @@ function checkVictory(state: GameState, roundComplete: boolean) {
   if (!roundComplete) return;
   const b = state.players.SABRE.vp;
   const r = state.players.VANGUARD.vp;
-  if (b >= VP_WIN_THRESHOLD || r >= VP_WIN_THRESHOLD) {
+  if (b >= state.rules.vpToWin || r >= state.rules.vpToWin) {
     state.phase = 'GAME_OVER';
     state.winner = b === r ? 'DRAW' : b > r ? 'SABRE' : 'VANGUARD';
     log(state, `Victory point threshold reached. Winner: ${winnerLabel(state.winner)}.`, 'ALL');
-  } else if (state.round > MAX_ROUNDS) {
+  } else if (state.round > state.rules.roundLimit) {
     state.phase = 'GAME_OVER';
     state.winner = b === r ? 'DRAW' : b > r ? 'SABRE' : 'VANGUARD';
     log(state, `Final round complete. Winner: ${winnerLabel(state.winner)}.`, 'ALL');
@@ -1403,7 +1440,7 @@ export function endTurn(state: GameState): GameState {
     f.fortifiedThisRound = false;
   });
   const nextPlayer = otherPlayer(finishing);
-  const carry = Math.min(AP_CAP, state.players[nextPlayer].ap + AP_PER_TURN);
+  const carry = Math.min(state.rules.apCap, state.players[nextPlayer].ap + state.rules.apPerTurn);
   state.players[nextPlayer].ap = carry;
   state.players[nextPlayer].airSorties = AIR_SORTIES_PER_TURN;
   state.activePlayer = nextPlayer;

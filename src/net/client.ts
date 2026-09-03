@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GameState, PlayerId } from '../game/types';
-import { BotDifficulty, ClientMsg, GameAction, ServerMsg } from './protocol';
+import { BotDifficulty, ClientMsg, CreateRulesInput, GameAction, ReplayViewState, RoomRulesInfo, ServerMsg } from './protocol';
 
 export type MatchKind = 'bot' | 'multiplayer';
 
@@ -43,6 +43,15 @@ export type ConnStatus =
   | 'opponent_disconnected' // still in_game, but the opponent dropped — grace period running
   | 'opponent_left' // grace period lapsed or opponent explicitly left; room is gone
   | 'error';
+
+/** A saved match replay fetched standalone via a shareable code (phase 11 §6) — see net/protocol.ts ReplayViewState. */
+export interface FetchedReplay {
+  code: string;
+  mapName: string;
+  winner: PlayerId | 'DRAW' | null;
+  sabre: ReplayViewState;
+  vanguard: ReplayViewState;
+}
 
 interface SessionInfo {
   code: string;
@@ -84,6 +93,16 @@ export function useMultiplayer() {
   // 10 §1) — the server is still the sole source of truth for game state.
   const [matchKind, setMatchKind] = useState<MatchKind | null>(null);
   const [botDifficulty, setBotDifficulty] = useState<BotDifficulty | null>(null);
+  // Phase 11 §3 — spectator mode: a third client watching an existing room,
+  // read-only, always sent the full unredacted state.
+  const [spectating, setSpectating] = useState(false);
+  // Phase 11 §4 — the room's resolved rules, shown before the match starts
+  // (the waiting screen for a host, the join screen for a joiner).
+  const [roomRules, setRoomRules] = useState<RoomRulesInfo | null>(null);
+  // Phase 11 §6 — a replay fetched standalone via a shareable code, and any
+  // error fetching one (bad/expired code).
+  const [fetchedReplay, setFetchedReplay] = useState<FetchedReplay | null>(null);
+  const [replayError, setReplayError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const sessionRef = useRef<SessionInfo | null>(null);
@@ -109,6 +128,7 @@ export function useMultiplayer() {
           saveSession(sessionRef.current);
           setRoomCode(msg.code);
           setYou(msg.you);
+          setRoomRules(msg.rules);
           setStatus('waiting');
           break;
         case 'joined':
@@ -116,6 +136,7 @@ export function useMultiplayer() {
           saveSession(sessionRef.current);
           setRoomCode(msg.code);
           setYou(msg.you);
+          setRoomRules(msg.rules);
           break;
         case 'waiting':
           setStatus('waiting');
@@ -140,6 +161,21 @@ export function useMultiplayer() {
           setState({ ...msg.state, tiles });
           break;
         }
+        case 'spectate_start':
+          setSpectating(true);
+          setRoomCode(msg.code);
+          setYou('SABRE'); // arbitrary — a spectator has no side; colours pick SABRE's palette
+          tilesRef.current = msg.state.tiles;
+          setState(msg.state);
+          setStatus('in_game');
+          break;
+        case 'spectate_state':
+          setState((prev) => (prev ? { ...msg.state, tiles: prev.tiles } : msg.state));
+          break;
+        case 'replay_data':
+          setFetchedReplay({ code: msg.code, mapName: msg.mapName, winner: msg.winner, sabre: msg.sabre, vanguard: msg.vanguard });
+          setReplayError(null);
+          break;
         case 'opponent_disconnected':
           setOpponentConnected(false);
           setStatus('opponent_disconnected');
@@ -155,6 +191,7 @@ export function useMultiplayer() {
           break;
         case 'error':
           setError(msg.message);
+          setReplayError(msg.message);
           // A LOBBY-phase failure (no such room code, room full, server refused
           // the queue) has to hand the player back to the menu with the reason
           // — otherwise the "connecting" card spins forever. An in-game action
@@ -182,15 +219,26 @@ export function useMultiplayer() {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }, []);
 
-  const createRoom = useCallback(() => {
-    setMatchKind('multiplayer');
-    openSocket((ws) => ws.send(JSON.stringify({ t: 'create' } satisfies ClientMsg)));
-  }, [openSocket]);
+  const createRoom = useCallback(
+    (rules?: CreateRulesInput) => {
+      setMatchKind('multiplayer');
+      openSocket((ws) => ws.send(JSON.stringify({ t: 'create', rules } satisfies ClientMsg)));
+    },
+    [openSocket]
+  );
 
   const joinRoom = useCallback(
     (code: string) => {
       setMatchKind('multiplayer');
       openSocket((ws) => ws.send(JSON.stringify({ t: 'join', code } satisfies ClientMsg)));
+    },
+    [openSocket]
+  );
+
+  const spectate = useCallback(
+    (code: string) => {
+      setMatchKind('multiplayer');
+      openSocket((ws) => ws.send(JSON.stringify({ t: 'spectate', code } satisfies ClientMsg)));
     },
     [openSocket]
   );
@@ -208,11 +256,30 @@ export function useMultiplayer() {
     [openSocket]
   );
 
-  const sendAction = useCallback((action: GameAction) => send({ t: 'action', action }), [send]);
-  const endTurn = useCallback(() => send({ t: 'action', action: { type: 'END_TURN' } }), [send]);
+  /** Phase 11 §6 — fetch a saved replay standalone, with no room/session of its own. */
+  const getReplay = useCallback(
+    (code: string) => {
+      setFetchedReplay(null);
+      setReplayError(null);
+      openSocket((ws) => ws.send(JSON.stringify({ t: 'get_replay', code } satisfies ClientMsg)));
+    },
+    [openSocket]
+  );
+
+  const sendAction = useCallback(
+    (action: GameAction) => {
+      if (spectating) return; // read-only — see App.tsx's own UI-level guard too
+      send({ t: 'action', action });
+    },
+    [send, spectating]
+  );
+  const endTurn = useCallback(() => {
+    if (spectating) return;
+    send({ t: 'action', action: { type: 'END_TURN' } });
+  }, [send, spectating]);
 
   const leaveToLobby = useCallback(() => {
-    send({ t: 'leave' });
+    if (!spectating) send({ t: 'leave' });
     wsRef.current?.close();
     wsRef.current = null;
     sessionRef.current = null;
@@ -225,8 +292,10 @@ export function useMultiplayer() {
     setError(null);
     setMatchKind(null);
     setBotDifficulty(null);
+    setSpectating(false);
+    setRoomRules(null);
     setStatus('lobby');
-  }, [send]);
+  }, [send, spectating]);
 
   // On mount, attempt to resume a session left over from a page refresh mid-game.
   useEffect(() => {
@@ -247,10 +316,16 @@ export function useMultiplayer() {
     error,
     matchKind,
     botDifficulty,
+    spectating,
+    roomRules,
+    fetchedReplay,
+    replayError,
     createRoom,
     joinRoom,
+    spectate,
     quickMatch,
     vsBot,
+    getReplay,
     sendAction,
     endTurn,
     leaveToLobby,

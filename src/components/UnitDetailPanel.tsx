@@ -9,6 +9,8 @@ import {
   FORTIFY_TIER_NAMES,
   Formation,
   GameState,
+  isLastStandActive,
+  LAST_STAND_THRESHOLD,
   REORGANIZE_COOLDOWN_ROUNDS,
   SPECIAL_OP_TYPES,
   VERTICAL_INSERT_MAX_USES,
@@ -99,6 +101,15 @@ export const UnitDetailPanel: React.FC<{
         {f.onAlert && (
           <span className="mini-chip chip-alert" title="No reaction shot fired yet this alert period — reacts once to an enemy that moves into range and line of sight." data-testid="alert-chip">
             ⚠ on alert
+          </span>
+        )}
+        {isLastStandActive(f, state.round) && (
+          <span
+            className="mini-chip chip-danger"
+            title={`Last stand — cornered below ${LAST_STAND_THRESHOLD}% strength, fighting harder through round ${f.lastStandUntilRound}. One-time bonus, already spent.`}
+            data-testid="last-stand-chip"
+          >
+            ★ last stand
           </span>
         )}
         {canReorganize(state, f) && f.owner === state.activePlayer && (

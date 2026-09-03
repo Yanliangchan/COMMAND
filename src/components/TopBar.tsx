@@ -1,5 +1,5 @@
 import React from 'react';
-import { AP_CAP, AP_COSTS, MAX_ROUNDS, GameState, PlayerId, VP_WIN_THRESHOLD, otherPlayer } from '../game/types';
+import { AP_COSTS, GameState, PlayerId, otherPlayer } from '../game/types';
 import { FACTION_SHORT } from '../game/data';
 
 export const TopBar: React.FC<{
@@ -21,7 +21,7 @@ export const TopBar: React.FC<{
           <i>ROUND</i>
           <b>
             {state.round}
-            <small>/{MAX_ROUNDS}</small>
+            <small>/{state.rules.roundLimit}</small>
           </b>
         </span>
         <span className={`turn-chip ${myTurn ? 'turn-active' : ''}`}>
@@ -36,7 +36,7 @@ export const TopBar: React.FC<{
           <i>AP</i>
           <b className="ap-value">
             {mine.ap}
-            <small>/{AP_CAP}</small>
+            <small>/{state.rules.apCap}</small>
           </b>
         </span>
         <span className="hud-stat">
@@ -51,7 +51,7 @@ export const TopBar: React.FC<{
           </b>
         </span>
         <span className="hud-stat vp">
-          <i>VP · to {VP_WIN_THRESHOLD}</i>
+          <i>VP · to {state.rules.vpToWin}</i>
           <b title={`${FACTION_SHORT[you]} : ${FACTION_SHORT[otherPlayer(you)]}`}>
             <span className={you === 'SABRE' ? 'vp-blue' : 'vp-red'}>{state.players[you].vp}</span>
             <small> : </small>

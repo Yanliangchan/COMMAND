@@ -60,6 +60,8 @@ import {
   Formation,
   FormationType,
   GameState,
+  isLastStandActive,
+  LAST_STAND_POWER_MULT,
   LossLevel,
   SUPPRESSION_HIT_DIRECT,
   SUPPRESSION_HIT_INDIRECT,
@@ -292,6 +294,11 @@ export function attackPower(
   if (sm < 0.995)
     factors.push({ label: `Suppressed (${Math.round(attacker.suppression ?? 0)}%)`, positive: false, magnitude: (1 - sm) * 100 });
 
+  if (isLastStandActive(attacker, state.round)) {
+    power *= LAST_STAND_POWER_MULT;
+    factors.push({ label: 'Last stand — cornered and fighting hard', positive: true, magnitude: (LAST_STAND_POWER_MULT - 1) * 100 });
+  }
+
   const match = MATCHUP[ac][dc][close ? 'close' : 'open'];
   power *= match;
   factors.push({
@@ -345,6 +352,11 @@ export function defencePower(state: GameState, defender: Formation, tile: Tile):
   const mm = moraleMult(defender);
   power *= mm;
   if (mm !== 1) factors.push({ label: `Morale (${defender.morale})`, positive: mm > 1, magnitude: Math.abs(mm - 1) * 100 });
+
+  if (isLastStandActive(defender, state.round)) {
+    power *= LAST_STAND_POWER_MULT;
+    factors.push({ label: 'Last stand — cornered and fighting hard', positive: true, magnitude: (LAST_STAND_POWER_MULT - 1) * 100 });
+  }
 
   const terrain = TERRAIN_DEFS[tile.terrain];
   if (terrain.defenseBonus !== 0) {

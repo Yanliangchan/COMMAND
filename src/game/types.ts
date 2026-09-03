@@ -402,6 +402,19 @@ export interface Formation {
    */
   verticalInsertsUsed: number;
   /**
+   * LAST STAND (phase 11 §5). Fires ONCE per formation per game, the first
+   * time its strength drops below LAST_STAND_THRESHOLD: a cornered unit
+   * fights hardest, not just bleeds out. `lastStandTriggered` is the
+   * permanent one-shot gate (never re-arms, even if strength later climbs
+   * back above the threshold via Reorganize and then falls below it again).
+   * `lastStandUntilRound` is the round through which the temporary combat
+   * bonus (see combat.ts attackPower/defencePower) remains live — 0 when
+   * never triggered or once it has lapsed. Both are ordinary intelligence:
+   * redacted like fortifyTier at the IDENTIFIED rung (see fog.ts).
+   */
+  lastStandTriggered: boolean;
+  lastStandUntilRound: number;
+  /**
    * Set by fog.ts on ENEMY formations only: the rung of the detection ladder
    * this viewer has reached. Undefined on your own formations. When it is
    * 'IDENTIFIED' the numeric fields above are REDACTED placeholders (-1) and
@@ -410,6 +423,22 @@ export interface Formation {
   intel?: DetectionLevel;
   /** True when this object was redacted for the viewer (intel below CONFIRMED). */
   redacted?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// LAST STAND (phase 11 §5)
+// ---------------------------------------------------------------------------
+
+/** Strength floor that arms the one-time last-stand bonus. */
+export const LAST_STAND_THRESHOLD = 20;
+/** Rounds (inclusive of the triggering round) the bonus remains live. */
+export const LAST_STAND_DURATION_ROUNDS = 3;
+/** Flat multiplier applied to BOTH attack and defence power while active. */
+export const LAST_STAND_POWER_MULT = 1.22;
+
+/** True while `f`'s one-time cornered-and-fighting-hard bonus is still live. */
+export function isLastStandActive(f: Pick<Formation, 'lastStandUntilRound'>, round: number): boolean {
+  return f.lastStandUntilRound > 0 && round <= f.lastStandUntilRound;
 }
 
 // ---------------------------------------------------------------------------
@@ -815,6 +844,54 @@ export const AIR_SORTIES_PER_TURN = 2;
 export const VP_WIN_THRESHOLD = 280;
 export const MAX_ROUNDS = 24;
 
+// ---------------------------------------------------------------------------
+// MATCH RULES (phase 11 §4) — per-room configuration for private-room hosts.
+// A default-rules match (vs-Bot, Quick Match, or a Create Room host who
+// changes nothing) uses exactly the constants above, unchanged. Every engine
+// function that used to read AP_PER_TURN / AP_CAP / VP_WIN_THRESHOLD /
+// MAX_ROUNDS directly now reads state.rules instead, so a custom room and the
+// default path are the SAME code path with different numbers, never a fork.
+// ---------------------------------------------------------------------------
+
+export interface MatchRules {
+  apPerTurn: number;
+  apCap: number;
+  vpToWin: number;
+  roundLimit: number;
+}
+
+export const DEFAULT_RULES: MatchRules = {
+  apPerTurn: AP_PER_TURN,
+  apCap: AP_CAP,
+  vpToWin: VP_WIN_THRESHOLD,
+  roundLimit: MAX_ROUNDS,
+};
+
+/** Server-side (and client-side, for the create-room form) validation bounds. */
+export const RULES_BOUNDS = {
+  apPerTurn: { min: 10, max: 80 },
+  vpToWin: { min: 50, max: 2000 },
+  roundLimit: { min: 4, max: 60 },
+};
+
+export function validateMatchRules(input: Partial<MatchRules>): { ok: true; rules: MatchRules } | { ok: false; reason: string } {
+  const apPerTurn = input.apPerTurn ?? DEFAULT_RULES.apPerTurn;
+  const vpToWin = input.vpToWin ?? DEFAULT_RULES.vpToWin;
+  const roundLimit = input.roundLimit ?? DEFAULT_RULES.roundLimit;
+  if (!Number.isFinite(apPerTurn) || apPerTurn < RULES_BOUNDS.apPerTurn.min || apPerTurn > RULES_BOUNDS.apPerTurn.max) {
+    return { ok: false, reason: `AP per turn must be between ${RULES_BOUNDS.apPerTurn.min} and ${RULES_BOUNDS.apPerTurn.max}.` };
+  }
+  if (!Number.isFinite(vpToWin) || vpToWin < RULES_BOUNDS.vpToWin.min || vpToWin > RULES_BOUNDS.vpToWin.max) {
+    return { ok: false, reason: `VP victory threshold must be between ${RULES_BOUNDS.vpToWin.min} and ${RULES_BOUNDS.vpToWin.max}.` };
+  }
+  if (!Number.isFinite(roundLimit) || roundLimit < RULES_BOUNDS.roundLimit.min || roundLimit > RULES_BOUNDS.roundLimit.max) {
+    return { ok: false, reason: `Round limit must be between ${RULES_BOUNDS.roundLimit.min} and ${RULES_BOUNDS.roundLimit.max}.` };
+  }
+  // AP cap tracks the same +8 margin the phase-8/9 balance passes used —
+  // never configurable directly, always derived from apPerTurn.
+  return { ok: true, rules: { apPerTurn, apCap: apPerTurn + 8, vpToWin, roundLimit } };
+}
+
 export interface PlayerState {
   id: PlayerId;
   ap: number;
@@ -904,4 +981,16 @@ export interface GameState {
   killFeed: KillEvent[];
   /** Positions snapshot at the start of every round, for the post-game replay view. */
   replay: ReplayRound[];
+  /** Effective AP/VP/round-limit for this match — see MatchRules. */
+  rules: MatchRules;
+  /** Curated scenario name (phase 11 §1), e.g. "Battle of Kampong Bukit Chandu". */
+  mapName: string;
+  /** Curated scenario seed this map was generated from. */
+  mapSeed: number;
+  /**
+   * Short shareable code (phase 11 §6) this match's replay was saved under
+   * once the game ended — set by the server after GAME_OVER, null before
+   * then and in any context (sandbox, standalone sim) that never saves one.
+   */
+  replayCode: string | null;
 }

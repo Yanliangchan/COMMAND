@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PLAYER_COLORS } from '../render/colors';
-import { GameState, GRID_SIZE, PlayerId, gridRef } from '../game/types';
+import { GRID_SIZE, PlayerId, gridRef } from '../game/types';
+import { ReplayViewState } from '../net/protocol';
 
 /**
  * MATCH REPLAY (phase 9) — a simple scrubber over the compact per-round
@@ -11,7 +12,7 @@ import { GameState, GRID_SIZE, PlayerId, gridRef } from '../game/types';
  * see README "Match replay". Positions are drawn as plain dots on a light
  * grid; a formation's owner sets its colour the same way the live map does.
  */
-export const Replay: React.FC<{ state: GameState; you: PlayerId; onClose: () => void }> = ({ state, you, onClose }) => {
+export const Replay: React.FC<{ state: ReplayViewState; you: PlayerId; onClose: () => void }> = ({ state, you, onClose }) => {
   const rounds = state.replay;
   const [idx, setIdx] = useState(Math.max(0, rounds.length - 1));
   const [playing, setPlaying] = useState(false);

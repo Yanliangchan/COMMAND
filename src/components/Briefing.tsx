@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { FACTION_NAMES, FACTION_SHORT, ORDERS_OF_BATTLE } from '../game/data';
 import { BotDifficulty } from '../net/protocol';
 import { MatchKind } from '../net/client';
-import { FormationType, GameState, MAX_ROUNDS, PlayerId, VP_WIN_THRESHOLD, otherPlayer } from '../game/types';
+import { FormationType, GameState, PlayerId, otherPlayer } from '../game/types';
 import { sound } from '../audio/sound';
 
 /** Minimum time the briefing stays up, however fast the match itself loaded — see App.tsx §1. */
@@ -103,13 +103,20 @@ export const Briefing: React.FC<{
       <div className="briefing">
         <div className="briefing-kicker">EXERCISE SABRE VANGUARD &mdash; TASK ORDER</div>
         <div className="briefing-title">PRE-BATTLE BRIEFING</div>
+        <div className="briefing-scenario" data-testid="briefing-scenario">
+          <span className="briefing-scenario-label">SCENARIO</span>
+          <span className="briefing-scenario-name">{state.mapName}</span>
+        </div>
         <ul className="briefing-lines">
           <li>
             You command <b>{FACTION_NAMES[you]}</b> ({FACTION_SHORT[you]}).
           </li>
           <li>{opponentLine}</li>
           <li>
-            Victory: first to <b>{VP_WIN_THRESHOLD} VP</b>, or the higher score at the end of round {MAX_ROUNDS}.
+            Victory: first to <b>{state.rules.vpToWin} VP</b>, or the higher score at the end of round {state.rules.roundLimit}.
+          </li>
+          <li>
+            AP per turn: <b>{state.rules.apPerTurn}</b> (carries over up to {state.rules.apCap}).
           </li>
           <li>
             <b>{FACTION_SHORT[state.initiative]}</b> holds the initiative and moves first this operation.

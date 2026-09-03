@@ -88,6 +88,9 @@ function redactIdentified(f: Formation): Formation {
     fortifyTier: REDACTED_NUMBER,
     fortifiedThisRound: false,
     verticalInsertsUsed: REDACTED_NUMBER,
+    // Last stand (phase 11 §5) — same tier as fortifyTier: withheld until CONFIRMED.
+    lastStandTriggered: false,
+    lastStandUntilRound: REDACTED_NUMBER,
     intel: 'IDENTIFIED',
     redacted: true,
   };
@@ -234,5 +237,30 @@ export function filterStateForPlayer(state: GameState, viewer: PlayerId): GameSt
       [viewer]: { ...state.players[viewer], contacts },
       [enemy]: { ...state.players[enemy], contacts: {} },
     },
+  };
+}
+
+/**
+ * SPECTATOR VIEW (phase 11 §3). A spectator is not a combatant on either
+ * side, so there is nothing to redact FROM — both sides are shown in full,
+ * every formation CONFIRMED, the whole log, and both players' contact
+ * tables (spectators can watch each side's detection picture, since neither
+ * one is theirs to keep secret from a non-participant). Still goes through
+ * this module rather than handing the raw state out ad-hoc, so the "what
+ * crosses the wire" decision always lives in one place: this is a
+ * deliberate, explicit, fully-open case, not a bypass.
+ */
+export function filterStateForSpectator(state: GameState): GameState {
+  const formations: GameState['formations'] = {};
+  Object.values(state.formations).forEach((f) => {
+    formations[f.id] = markConfirmed(f);
+  });
+  return {
+    ...state,
+    log: state.log,
+    formations,
+    killFeed: state.killFeed,
+    replay: state.replay,
+    players: state.players,
   };
 }

@@ -60,6 +60,9 @@ const TRUE_AT: Record<keyof Formation, DetectionLevel> = {
   fortifyTier: 'CONFIRMED',
   fortifiedThisRound: 'CONFIRMED',
   verticalInsertsUsed: 'CONFIRMED',
+  // Phase 11 §5 additions — last stand is intelligence too, same tier.
+  lastStandTriggered: 'CONFIRMED',
+  lastStandUntilRound: 'CONFIRMED',
 };
 
 const failures: string[] = [];

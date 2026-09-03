@@ -17,7 +17,7 @@ import * as engine from '../src/game/engine';
 import { attackPower, defencePower, lossesFromShare, predictEngagement } from '../src/game/combat';
 import { FORMATION_DEFS, ORDERS_OF_BATTLE } from '../src/game/data';
 import { movementProfile, planMove } from '../src/game/movement';
-import { AP_CAP, AP_COSTS, AP_PER_TURN, Formation, FormationType, GameState, GRID_SIZE, PlayerId, Tile, moraleBandFor } from '../src/game/types';
+import { AP_CAP, AP_COSTS, AP_PER_TURN, Formation, FormationType, GameState, GRID_SIZE, PlayerId, Tile, moraleBandFor, validateMatchRules } from '../src/game/types';
 
 let failures = 0;
 const check = (c: boolean, m: string) => {
@@ -37,6 +37,7 @@ function mk(type: FormationType, x: number, y: number, owner: PlayerId): Formati
     hasActedThisTurn: false, fortified: false, lastOrder: '',
     onAlert: false, reactionFired: false, suppression: 0, lastSuppressedRound: 0, lastReorganizedRound: 0,
     fortifyTier: 0, fortifiedThisRound: false, verticalInsertsUsed: 0,
+    lastStandTriggered: false, lastStandUntilRound: 0,
   };
 }
 const tile = (terrain: Tile['terrain']): Tile => ({ x: 5, y: 5, terrain, elevation: 1, height: 0.3 });
@@ -644,6 +645,89 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
     'VANGUARD roster includes 16 C4I Bn'
   );
   check(AP_PER_TURN === 30 && AP_CAP === 38, `AP economy matches the phase-9 bump (AP_PER_TURN=${AP_PER_TURN}, AP_CAP=${AP_CAP})`);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 11 §5: Last Stand — arms once, applies the named bonus while live,
+// never re-arms, and expires after its window.
+// ---------------------------------------------------------------------------
+{
+  const A0 = mk('ARMOUR', 10, 10, 'SABRE');
+  const D0 = mk('ENGINEER', 11, 10, 'VANGUARD');
+  D0.strength = 24; // just above threshold — should NOT have armed yet
+  const s0 = scenario([A0, D0], 'SABRE');
+  check(!s0.formations[D0.id]!.lastStandTriggered, 'last stand has not armed above the threshold');
+
+  // The combat roll is random, so repeat a fire mission (standoff — it
+  // damages but, unlike a close assault, never "captures" and removes the
+  // defending formation) against a weak defender until strength crosses the
+  // threshold — asserts the trigger over many independent attempts rather
+  // than depending on one roll landing a certain way.
+  let triggered = false;
+  let triggeredFormation: Formation | null = null;
+  for (let attempt = 0; attempt < 60 && !triggered; attempt++) {
+    const A = mk('ARTILLERY', 10, 10, 'SABRE');
+    const D = mk('ENGINEER', 11, 10, 'VANGUARD');
+    D.strength = 26;
+    const s = scenario([A, D], 'SABRE');
+    engine.artilleryAction(s, A.id, D.x, D.y);
+    const dAfter = s.formations[D.id];
+    if (dAfter && dAfter.strength > 0 && dAfter.strength < 20) {
+      triggered = true;
+      triggeredFormation = dAfter;
+      check(dAfter.lastStandTriggered, `last stand arms the first time strength drops below 20% (now ${dAfter.strength}%)`);
+      check(dAfter.lastStandUntilRound >= s.round, 'last stand bonus window extends at least through the current round');
+      const dp = defencePower(s, dAfter, s.tiles[dAfter.y][dAfter.x]);
+      check(
+        dp.factors.some((f) => f.label.includes('Last stand')),
+        'the last-stand bonus appears as a named factor in the defence breakdown'
+      );
+    }
+  }
+  check(triggered, 'last stand triggers within a bounded number of attempts against a heavily mismatched assault');
+
+  if (triggeredFormation) {
+    // Heal it back above the threshold with the window already lapsed
+    // (simulated), then drop it below the threshold again — must NOT
+    // re-arm a formation that already spent its one-time bonus. Retried the
+    // same way as the trigger check above, since the loss is still a roll.
+    let reChecked = false;
+    for (let attempt = 0; attempt < 60 && !reChecked; attempt++) {
+      const healed = { ...triggeredFormation, strength: 26, lastStandUntilRound: 0, hasActedThisTurn: false };
+      const A2 = mk('ARTILLERY', 10, 10, 'SABRE');
+      const s2 = scenario([A2, healed], 'SABRE');
+      engine.artilleryAction(s2, A2.id, healed.x, healed.y);
+      const d2 = s2.formations[healed.id];
+      if (d2 && d2.strength > 0 && d2.strength < 20) {
+        reChecked = true;
+        check(d2.lastStandUntilRound === 0, 'a formation that already spent its last stand does not get a new bonus window');
+      }
+    }
+    check(reChecked, 'the no-re-arm case was actually exercised within a bounded number of attempts');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 11 §4: custom match rules validate server-side with sane bounds, and
+// a validated ruleset actually drives the engine (AP economy, VP threshold,
+// round limit) rather than only being stored cosmetically.
+// ---------------------------------------------------------------------------
+{
+  check(validateMatchRules({}).ok, 'empty rules input falls back to the defaults and validates');
+  check(!validateMatchRules({ apPerTurn: 0 }).ok, 'zero AP per turn is rejected');
+  check(!validateMatchRules({ apPerTurn: -5 }).ok, 'negative AP per turn is rejected');
+  check(!validateMatchRules({ roundLimit: -1 }).ok, 'a negative round limit is rejected');
+  check(!validateMatchRules({ roundLimit: 0 }).ok, 'a zero round limit is rejected');
+  check(!validateMatchRules({ vpToWin: 1 }).ok, 'an absurdly low VP threshold is rejected');
+  const good = validateMatchRules({ apPerTurn: 40, vpToWin: 400, roundLimit: 30 });
+  check(good.ok, 'a sane custom ruleset validates');
+  if (good.ok) {
+    const s = engine.initGame(4501, { rules: good.rules, mapName: 'Custom Rules Test' });
+    check(s.players.SABRE.ap === 40, `custom apPerTurn actually seeds starting AP (has ${s.players.SABRE.ap})`);
+    check(s.rules.vpToWin === 400, 'custom vpToWin is carried on state.rules');
+    check(s.rules.roundLimit === 30, 'custom roundLimit is carried on state.rules');
+    check(s.mapName === 'Custom Rules Test', 'a custom map name is carried on state.mapName');
+  }
 }
 
 console.log(failures ? `\nFAIL: ${failures} combat-model assertion(s)` : '\nPASS: combat model holds.');

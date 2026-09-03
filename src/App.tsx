@@ -14,6 +14,8 @@ import { TurnSummaryBanner } from './components/TurnSummaryBanner';
 import { Legend } from './components/Legend';
 import { HelpPanel } from './components/HelpPanel';
 import { Lobby } from './components/Lobby';
+import { Sandbox } from './components/Sandbox';
+import { ReplayLinkView } from './components/ReplayLinkView';
 import { OpsLog } from './components/OpsLog';
 import { GroupMovePreview, MovementPreview } from './components/MovementPreview';
 import { AttackPreview } from './components/AttackPreview';
@@ -71,6 +73,15 @@ function isTypingTarget(e: KeyboardEvent): boolean {
 export default function App() {
   const net = useMultiplayer();
   const { state, you } = net;
+  // Phase 11 §6 — a shareable replay link is a query param the app checks on
+  // load (no router dependency): ?replay=CODE bypasses the lobby and the live
+  // game entirely. Computed once (useMemo, empty deps) so it stays stable for
+  // this mount — see the early return near the bottom of this component.
+  const replayLinkCode = useMemo(() => new URLSearchParams(window.location.search).get('replay'), []);
+  // Phase 11 §2 — Sandbox mode is a separate, self-contained screen (see
+  // components/Sandbox.tsx) reached from the landing page; it never touches
+  // the multiplayer socket at all.
+  const [sandboxMode, setSandboxMode] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [targetMode, setTargetMode] = useState<TargetMode>(null);
   const [groupIds, setGroupIds] = useState<string[]>([]);
@@ -362,7 +373,12 @@ export default function App() {
     });
   }, [state?.formations, you]);
 
-  const myTurn = !!state && !!you && state.activePlayer === you;
+  // Spectators (phase 11 §3) never "have a turn" regardless of which side
+  // net/client.ts arbitrarily labelled `you` for colour purposes — this is
+  // the client-side half of "cannot issue actions" (net.sendAction/endTurn
+  // already no-op for a spectator; the server independently rejects the
+  // wire message too, see server/index.ts).
+  const myTurn = !!state && !!you && state.activePlayer === you && !net.spectating;
 
   const actions: ActionAvailability[] = useMemo(
     () => (state && you && selected ? actionAvailability(state, selected, you) : []),
@@ -631,16 +647,39 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [targetMode, legendOpen, helpOpen, endTurnWarn, selected, actions, runAction, nextReady, centreOn, doEndTurn, myTurn, flash, groupIds, state, you, briefingOpen]);
 
+  if (replayLinkCode) {
+    return (
+      <ReplayLinkView
+        code={replayLinkCode}
+        fetched={net.fetchedReplay}
+        error={net.replayError}
+        onFetch={net.getReplay}
+        onExit={() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('replay');
+          window.location.href = url.toString();
+        }}
+      />
+    );
+  }
+
+  if (sandboxMode) {
+    return <Sandbox onExit={() => setSandboxMode(false)} />;
+  }
+
   if (!state || !you) {
     return (
       <Lobby
         status={net.status}
         roomCode={net.roomCode}
+        roomRules={net.roomRules}
         error={net.error}
         onCreate={net.createRoom}
         onJoin={net.joinRoom}
+        onSpectate={net.spectate}
         onQuickMatch={net.quickMatch}
         onVsBot={net.vsBot}
+        onSandbox={() => setSandboxMode(true)}
         onCancel={net.leaveToLobby}
       />
     );
@@ -796,6 +835,15 @@ export default function App() {
         </div>
       )}
 
+      {net.spectating && (
+        <div className="spectating-banner" data-testid="spectating-banner">
+          <span className="spectating-dot" /> SPECTATING &mdash; {FACTION_SHORT.SABRE} vs {FACTION_SHORT.VANGUARD}, full visibility, read-only
+          <button className="btn-ghost small" onClick={net.leaveToLobby} data-testid="spectating-leave">
+            Leave
+          </button>
+        </div>
+      )}
+
       <FormationList
         state={state}
         viewer={you}
@@ -863,7 +911,11 @@ export default function App() {
         </div>
       )}
 
-      {selected ? (
+      {net.spectating ? (
+        <div className="action-bar empty-bar" data-testid="spectator-action-bar">
+          <span>Spectating — read-only. No orders can be issued from this view.</span>
+        </div>
+      ) : selected ? (
         <ActionBar
           formation={selected}
           actions={actions}

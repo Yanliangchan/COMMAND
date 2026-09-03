@@ -23,9 +23,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import * as engine from '../src/game/engine';
-import { filterStateForPlayer } from '../src/game/fog';
-import { GameState, PlayerId, otherPlayer } from '../src/game/types';
-import { ClientMsg, GameAction, ServerMsg, WireGameState } from '../src/net/protocol';
+import { filterStateForPlayer, filterStateForSpectator } from '../src/game/fog';
+import { randomScenario, scenarioById, Scenario } from '../src/game/scenarios';
+import { GameState, MatchRules, PlayerId, otherPlayer, validateMatchRules } from '../src/game/types';
+import { ClientMsg, CreateRulesInput, GameAction, ReplayViewState, RoomRulesInfo, ServerMsg, WireGameState } from '../src/net/protocol';
 import { BotDifficulty, decideBotAction } from './bot';
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -116,9 +117,96 @@ interface Room {
   botSide: PlayerId | null;
   botDifficulty: BotDifficulty | null;
   botTimer: NodeJS.Timeout | null;
+  /** Phase 11 §4 — resolved once at room creation, echoed to both players. */
+  rulesInfo: RoomRulesInfo;
+  /** Phase 11 §4 — resolved which side moves first, applied once the host's seat is known. */
+  initiativeMode: 'RANDOM' | 'HOST' | 'GUEST';
+  /** Phase 11 §3 — read-only observers. Never seated, never accepted for `action`. */
+  spectators: Set<WebSocket>;
 }
 
 const rooms = new Map<string, Room>();
+
+// ---------------------------------------------------------------------------
+// SHAREABLE REPLAYS (phase 11 §6) — kept in a separate, longer-lived store so
+// a finished match's replay survives the room itself expiring (see
+// EMPTY_ROOM_TTL_MS below, much shorter). Deliberately in-memory only, same
+// as every other piece of state this prototype server holds (see module
+// header) — a process restart loses saved replays. That is a documented
+// limitation, not an oversight: a real deployment would move this to a
+// database the way it would for rooms, and nothing about the shape of
+// SavedReplay stops that later.
+// ---------------------------------------------------------------------------
+interface SavedReplay {
+  code: string;
+  mapName: string;
+  winner: PlayerId | 'DRAW' | null;
+  sabre: ReplayViewState;
+  vanguard: ReplayViewState;
+  savedAt: number;
+}
+const savedReplays = new Map<string, SavedReplay>();
+const REPLAY_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const REPLAY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — well past any room's own TTL
+const REPLAY_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+function genReplayCode(): string {
+  let code = '';
+  for (let i = 0; i < 7; i++) code += REPLAY_CODE_ALPHABET[randomBytes(1)[0] % REPLAY_CODE_ALPHABET.length];
+  return code;
+}
+
+function stripTiles(state: GameState): ReplayViewState {
+  const { tiles, ...rest } = state;
+  void tiles;
+  return rest;
+}
+
+/** Called once, when a room's GameState first reaches GAME_OVER. */
+function saveReplay(room: Room) {
+  if (room.state.phase !== 'GAME_OVER' || room.state.replayCode) return;
+  let code = genReplayCode();
+  while (savedReplays.has(code)) code = genReplayCode();
+  savedReplays.set(code, {
+    code,
+    mapName: room.state.mapName,
+    winner: room.state.winner,
+    sabre: stripTiles(filterStateForPlayer(room.state, 'SABRE')),
+    vanguard: stripTiles(filterStateForPlayer(room.state, 'VANGUARD')),
+    savedAt: Date.now(),
+  });
+  room.state.replayCode = code;
+}
+
+// ---------------------------------------------------------------------------
+// MATCH RULES resolution (phase 11 §4) — Create Room only. Quick Match and
+// vs-Bot never pass a `rules` input at all, so they always take this exact
+// default path: random scenario from the curated pool, default AP/VP/round
+// numbers, random initiative — unchanged from before this phase.
+// ---------------------------------------------------------------------------
+function resolveCreateRules(
+  input: CreateRulesInput | undefined
+): { ok: true; rules: MatchRules; scenario: Scenario; initiative: 'RANDOM' | 'HOST' | 'GUEST' } | { ok: false; reason: string } {
+  const v = validateMatchRules({ apPerTurn: input?.apPerTurn, vpToWin: input?.vpToWin, roundLimit: input?.roundLimit });
+  if (!v.ok) return v;
+
+  let scenario: Scenario;
+  const mapChoice = input?.mapChoice ?? 'RANDOM';
+  if (mapChoice === 'RANDOM') {
+    scenario = randomScenario();
+  } else {
+    const found = scenarioById(mapChoice);
+    if (!found) return { ok: false, reason: `Unknown scenario "${mapChoice}".` };
+    scenario = found;
+  }
+
+  const initiative = input?.initiative ?? 'RANDOM';
+  if (initiative !== 'RANDOM' && initiative !== 'HOST' && initiative !== 'GUEST') {
+    return { ok: false, reason: `Invalid initiative setting "${initiative}".` };
+  }
+
+  return { ok: true, rules: v.rules, scenario, initiative };
+}
 
 // Sockets waiting in the quick-match queue (at most one at a time for 1v1).
 let quickMatchWaiting: WebSocket | null = null;
@@ -147,6 +235,14 @@ function broadcastState(room: Room, includeTiles = false) {
     }
     send(seat.ws, { t: 'state', state: payload });
   });
+  // Spectators (phase 11 §3) get the full, unredacted state every push —
+  // there is no per-viewer secret to withhold from a non-combatant, and
+  // (unlike the two player seats) there is no cached tile grid to elide
+  // against since a spectator can join mid-match at any time.
+  if (room.spectators.size) {
+    const spec = filterStateForSpectator(room.state);
+    room.spectators.forEach((ws) => send(ws, { t: 'spectate_state', state: spec }));
+  }
 }
 
 function makeSeats(): Room['seats'] {
@@ -158,17 +254,29 @@ function makeSeats(): Room['seats'] {
   } as Room['seats'];
 }
 
-function createRoom(): Room {
+function createRoom(resolved?: { rules: MatchRules; scenario: Scenario; initiative: 'RANDOM' | 'HOST' | 'GUEST' }): Room {
   let code = genRoomCode();
   while (rooms.has(code)) code = genRoomCode();
+  const rules = resolved?.rules;
+  const scenario = resolved?.scenario ?? randomScenario();
+  const state = engine.initGame(scenario.seed, { rules, mapName: scenario.name });
   const room: Room = {
     code,
-    state: engine.initGame(Date.now() ^ Math.floor(Math.random() * 1e9)),
+    state,
     seats: makeSeats(),
     createdAt: Date.now(),
     lastActivity: Date.now(),
     botSide: null,
     botDifficulty: null,
+    rulesInfo: {
+      apPerTurn: state.rules.apPerTurn,
+      vpToWin: state.rules.vpToWin,
+      roundLimit: state.rules.roundLimit,
+      mapName: scenario.name,
+      initiative: resolved?.initiative ?? 'RANDOM',
+    },
+    initiativeMode: resolved?.initiative ?? 'RANDOM',
+    spectators: new Set(),
     botTimer: null,
   };
   rooms.set(code, room);
@@ -241,6 +349,22 @@ function seatBySocket(ws: WebSocket): { room: Room; seat: Seat } | null {
   return null;
 }
 
+function spectatorRoom(ws: WebSocket): Room | null {
+  for (const room of rooms.values()) {
+    if (room.spectators.has(ws)) return room;
+  }
+  return null;
+}
+
+/** Politely disconnect any spectators when their room goes away entirely. */
+function closeRoomSpectators(room: Room) {
+  room.spectators.forEach((ws) => {
+    send(ws, { t: 'error', message: 'The match ended and this room is now closed.' });
+    ws.close();
+  });
+  room.spectators.clear();
+}
+
 function handleDisconnect(room: Room, seat: Seat) {
   seat.connected = false;
   seat.ws = null;
@@ -254,6 +378,7 @@ function handleDisconnect(room: Room, seat: Seat) {
     const stillOther = room.seats[otherPlayer(seat.playerId)];
     if (stillOther.ws) send(stillOther.ws, { t: 'opponent_left' });
     clearBotTimer(room);
+    closeRoomSpectators(room);
     rooms.delete(room.code);
   }, RECONNECT_GRACE_MS);
 }
@@ -323,6 +448,9 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
   // repeating it here means a future action can never forget to.
   engine.refreshAllFog(state);
   room.lastActivity = Date.now();
+  // Shareable replay (phase 11 §6): the moment a match reaches GAME_OVER,
+  // save it under a short code that outlives the room itself.
+  if ((state.phase as GameState['phase']) === 'GAME_OVER') saveReplay(room);
   return { error: null, mapChanged: action.type === 'ENGINEER_BRIDGE' };
 }
 
@@ -343,11 +471,25 @@ wss.on('connection', (ws) => {
 
     switch (msg.t) {
       case 'create': {
-        const room = createRoom();
+        const resolved = resolveCreateRules(msg.rules);
+        if (!resolved.ok) {
+          send(ws, { t: 'error', message: resolved.reason });
+          return;
+        }
+        const room = createRoom(resolved);
         const seat = firstOpenSeat(room)!;
         seat.ws = ws;
         seat.connected = true;
-        send(ws, { t: 'created', code: room.code, token: seat.token, you: seat.playerId });
+        // Initiative HOST/GUEST can only be applied once we know which seat
+        // the creator (the "host") actually drew — makeSeats() assigns
+        // SABRE/VANGUARD before this point, so this is the earliest moment
+        // it is resolvable.
+        if (room.initiativeMode !== 'RANDOM') {
+          const first = room.initiativeMode === 'HOST' ? seat.playerId : otherPlayer(seat.playerId);
+          room.state.activePlayer = first;
+          room.state.initiative = first;
+        }
+        send(ws, { t: 'created', code: room.code, token: seat.token, you: seat.playerId, rules: room.rulesInfo });
         send(ws, { t: 'waiting' });
         break;
       }
@@ -364,13 +506,31 @@ wss.on('connection', (ws) => {
         }
         seat.ws = ws;
         seat.connected = true;
-        send(ws, { t: 'joined', code: room.code, token: seat.token, you: seat.playerId });
+        send(ws, { t: 'joined', code: room.code, token: seat.token, you: seat.playerId, rules: room.rulesInfo });
         if (bothConnected(room)) {
           (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((pid) => {
             const s = room.seats[pid];
             send(s.ws, { t: 'start', state: filterStateForPlayer(room.state, pid), you: pid, opponentConnected: true, botDifficulty: room.botDifficulty });
           });
         }
+        break;
+      }
+      case 'spectate': {
+        const room = rooms.get(msg.code.toUpperCase().trim());
+        if (!room) {
+          send(ws, { t: 'error', message: 'No room with that code.' });
+          return;
+        }
+        if (room.state.phase === 'GAME_OVER') {
+          send(ws, { t: 'error', message: 'That match has already finished. Ask for its replay link instead.' });
+          return;
+        }
+        if (!bothConnected(room) && !room.botSide) {
+          send(ws, { t: 'error', message: 'That match has not started yet.' });
+          return;
+        }
+        room.spectators.add(ws);
+        send(ws, { t: 'spectate_start', code: room.code, state: filterStateForSpectator(room.state) });
         break;
       }
       case 'bot': {
@@ -382,7 +542,7 @@ wss.on('connection', (ws) => {
         botSeat.connected = true; // no socket — the bot is always "connected"
         room.botSide = botSeat.playerId;
         room.botDifficulty = msg.difficulty;
-        send(ws, { t: 'joined', code: room.code, token: humanSeat.token, you: humanSeat.playerId });
+        send(ws, { t: 'joined', code: room.code, token: humanSeat.token, you: humanSeat.playerId, rules: room.rulesInfo });
         send(ws, {
           t: 'start',
           state: filterStateForPlayer(room.state, humanSeat.playerId),
@@ -404,8 +564,8 @@ wss.on('connection', (ws) => {
           const seatB = firstOpenSeat(room)!;
           seatB.ws = ws;
           seatB.connected = true;
-          send(waitingWs, { t: 'joined', code: room.code, token: seatA.token, you: seatA.playerId });
-          send(ws, { t: 'joined', code: room.code, token: seatB.token, you: seatB.playerId });
+          send(waitingWs, { t: 'joined', code: room.code, token: seatA.token, you: seatA.playerId, rules: room.rulesInfo });
+          send(ws, { t: 'joined', code: room.code, token: seatB.token, you: seatB.playerId, rules: room.rulesInfo });
           (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((pid) => {
             const s = room.seats[pid];
             send(s.ws, { t: 'start', state: filterStateForPlayer(room.state, pid), you: pid, opponentConnected: true, botDifficulty: room.botDifficulty });
@@ -414,6 +574,15 @@ wss.on('connection', (ws) => {
           quickMatchWaiting = ws;
           send(ws, { t: 'searching' });
         }
+        break;
+      }
+      case 'get_replay': {
+        const saved = savedReplays.get(msg.code.toUpperCase().trim());
+        if (!saved) {
+          send(ws, { t: 'error', message: 'No replay found for that code — it may have expired or never existed.' });
+          return;
+        }
+        send(ws, { t: 'replay_data', code: saved.code, mapName: saved.mapName, winner: saved.winner, sabre: saved.sabre, vanguard: saved.vanguard });
         break;
       }
       case 'reconnect': {
@@ -442,6 +611,10 @@ wss.on('connection', (ws) => {
         break;
       }
       case 'action': {
+        if (spectatorRoom(ws)) {
+          send(ws, { t: 'error', message: 'Spectators cannot issue actions.' });
+          return;
+        }
         const found = seatBySocket(ws);
         if (!found) {
           send(ws, { t: 'error', message: 'You are not seated in a room.' });
@@ -464,6 +637,7 @@ wss.on('connection', (ws) => {
           const other = room.seats[otherPlayer(seat.playerId)];
           if (other.ws) send(other.ws, { t: 'opponent_left' });
           clearBotTimer(room);
+          closeRoomSpectators(room);
           rooms.delete(room.code);
         }
         break;
@@ -475,6 +649,8 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     if (quickMatchWaiting === ws) quickMatchWaiting = null;
+    const specRoom = spectatorRoom(ws);
+    if (specRoom) specRoom.spectators.delete(ws);
     const found = seatBySocket(ws);
     if (found) handleDisconnect(found.room, found.seat);
   });
@@ -496,10 +672,20 @@ setInterval(() => {
       : room.seats.SABRE.connected || room.seats.VANGUARD.connected;
     if (!anyoneConnected && now - room.lastActivity > EMPTY_ROOM_TTL_MS) {
       clearBotTimer(room);
+      closeRoomSpectators(room);
       rooms.delete(code);
     }
   }
 }, ROOM_SWEEP_INTERVAL_MS).unref();
+
+// Saved-replay sweep (phase 11 §6) — much longer retention than a live room,
+// and on its own timer/interval so the two lifetimes never get conflated.
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, r] of savedReplays) {
+    if (now - r.savedAt > REPLAY_RETENTION_MS) savedReplays.delete(code);
+  }
+}, REPLAY_SWEEP_INTERVAL_MS).unref();
 
 process.on('uncaughtException', (err) => {
   console.error('[COMMAND] Uncaught exception (server kept alive):', err);

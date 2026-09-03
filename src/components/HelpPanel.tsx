@@ -162,6 +162,30 @@ const CONCEPTS: Topic[] = [
     title: 'Recon vs normal spotting',
     body: 'Ordinary troops detect nearby enemies. Recon sees further, sooner, and knows what it is looking at — and what that buys you is CERTAINTY, not firepower. Attacking an unconfirmed formation costs you nothing in combat power; it costs you the ability to know what you are walking into, because the preview has to guess at the target\u2019s strength, morale and defences and shows you a wide band instead of a number. Confirm it first and the prediction becomes reliable. The R order is worth its AP because it does five things passive spotting does not: it uses a much longer sensor range (14 tiles for C4I, 11 for commandos, against 9 and 7 passively), it pushes through forest and built-up ground instead of being stopped by it, it adds a flat confidence bonus that jumps contacts up the ladder in one go, it marks what it finds as recon-tracked so those contacts decay far more slowly, and it re-fixes stale contacts you are about to lose. A Special Op by the commandos (6 tiles) or the Guards (4 tiles) can also probe behind the lines and confirm whatever is around the objective it lands on.',
   },
+  {
+    title: 'Scenarios',
+    body: 'Every match — vs-Bot, Quick Match, or a Create Room host who leaves the map on "Random from pool" — draws its 72×72 battlefield from a fixed pool of ten named scenarios: Sarimbun Crossing, Kranji Approaches, The Jurong Line, Bukit Timah Heights, Bukit Chandu, Choa Chu Kang Corridor, Ama Keng Crossroads, Chong Pang Village, Paya Lebar Flats and Toa Payoh Basin. The names are drawn from real Singapore places and history — Battle-of-Singapore ground and cleared kampongs — but the terrain itself is procedurally generated and fictional: it is a themed scenario over the same generator as ever, not a depiction of the real place. The scenario name is shown on the pre-battle briefing, and a Create Room host can pin a specific one instead of a random pick.',
+  },
+  {
+    title: 'Sandbox mode',
+    body: 'A free-placement practice screen, reached from the landing page next to Tutorial. No AP limit, no turn structure, no opponent, no win condition — both full rosters are on the board from the start, and every order runs against the real combat/movement rules with AP, moves and ammo replenished after each one, so nothing ever runs dry. Reposition a formation anywhere passable for a clean setup, then Move, Attack, Recon or Fortify to see exactly what beats what. Reset starts over on a fresh curated map; Esc exits to the landing page.',
+  },
+  {
+    title: 'Spectating',
+    body: 'A third client can watch an already-started room read-only by entering its room code under "Spectate a match" on the landing page. A spectator sees the FULL, unredacted board — both sides confirmed, no fog of war, since a non-combatant has nothing to hide from — and cannot issue any order; the client blocks it and the server independently refuses any action message from a spectator connection. A clear SPECTATING banner marks the view. Spectating a room that has not started yet, or one that has already finished, is refused with a clear reason.',
+  },
+  {
+    title: 'Custom match rules',
+    body: 'Creating a room (not Quick Match, which always uses the defaults) offers "Custom rules…": AP per turn, VP victory threshold, round limit, which of the ten curated scenarios to use (or a random pick from the pool), and who moves first — random, you, or your opponent. The server validates every value against sane bounds and refuses an invalid ruleset with a clear reason rather than silently clamping it. Whatever is chosen is shown to the joining player before the match starts and again on the pre-battle briefing, so both sides always know the rules they are playing under.',
+  },
+  {
+    title: 'Last stand',
+    body: 'The first time — and only the first time — a formation’s strength drops below 20%, it fights a last stand: a one-time, temporary bonus to both its attack and defence power for the next few rounds, cornered and hitting back harder rather than just bleeding out. It is marked with a small red-star chip on the unit card and roster row, distinct from fortify, suppression and on-alert, and it appears as a named "Last stand" factor in the pre-attack preview and battle report whenever it applies. It never re-arms once spent, even if the formation recovers strength and later falls below the threshold again.',
+  },
+  {
+    title: 'Shareable replay links',
+    body: 'Once a match ends, the end-game screen offers a short "Copy link" next to Review Replay — a `?replay=CODE` URL anyone can open, with no account, room or session of their own, to watch that exact match’s replay standalone. It shows the same fog-of-war caveat a live player’s own replay does (each side’s final detection, not a per-round reconstruction of what was known when) — pick SABRE’s or VANGUARD’s view from the toggle at the top. Saved replays are kept server-side well past a room’s own short cleanup window, but this is still an in-memory prototype server: a restart of the server loses saved replays, same as it loses everything else that is not the file on disk.',
+  },
 ];
 
 export const HelpPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
