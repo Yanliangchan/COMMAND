@@ -17,7 +17,11 @@ const UNITS: Topic[] = [
   },
   {
     title: 'Commandos',
-    body: 'Light, fast, and able to raid far behind enemy lines with a Special Op. They hit hard and see far, but do not survive a stand-up fight.',
+    body: "Task Force Sabre's elite manoeuvre battalion. Light, fast, and able to raid far behind enemy lines with a Special Op. They hit hard, and only the C4I battalion sees further, but they do not survive a stand-up fight.",
+  },
+  {
+    title: 'Guards',
+    body: "Task Force Vanguard's elite manoeuvre battalion, and the commandos' counterpart. Air-assault infantry: just as mobile, and they can go in by helicopter with a Special Op, but at shorter reach and with ordinary sensors. In exchange they are markedly tougher once they are on the ground and fight as formed infantry.",
   },
   {
     title: 'Artillery',
@@ -42,6 +46,14 @@ const UNITS: Topic[] = [
 ];
 
 const CONCEPTS: Topic[] = [
+  {
+    title: 'The exercise',
+    body: 'COMMAND is a fictional large-scale SAF force-on-force exercise. Two task forces drawn from the same armed forces fight each other over a fictional training area: TASK FORCE SABRE (1 SIR, 2 SIR, 5 SIR, 1 CDO BN, 40 SAR, 21 SA, 35 SCE, 10 C4I Bn, 185 SQN, 188 SQN) and TASK FORCE VANGUARD (3 SIR, 8 SIR, 9 SIR, 1 GDS, 41 SAR, 20 SA, 30 SCE, 11 C4I Bn, 191 SQN, 189 SQN). Both fight with the same weight of force: three rifle battalions, one elite manoeuvre battalion, armour, guns, engineers, a C4I battalion and two RSN squadrons each. The formation names and their real-world character are drawn from public sources; which battalion is on which side, and every number in the game, are fictional.',
+  },
+  {
+    title: 'Initiative',
+    body: 'One task force moves first each round — which one is rolled at the start of the operation and shown in the log. Moving first is worth something: you reach the contested ground first and make the other side attack into it. Scoring is deliberately blind to it, though: each side is paid for the objectives it still holds once the OTHER side has finished replying, so neither ever gets the last word on its own score.',
+  },
   {
     title: 'Terrain',
     body: 'The ground decides fights. Urban, forest and hill tiles make a defender much harder to shift; open ground and beaches leave them exposed. Rivers stop land units until an engineer bridges them. Every tile on the sheet has a grid reference — column letter, row number, e.g. H-42 — and that is the reference used in the movement preview, the order log and the battle report.',
@@ -76,7 +88,7 @@ const CONCEPTS: Topic[] = [
   },
   {
     title: 'Objectives',
-    body: 'The marked locations — districts, bridges, ports, airfields, depots, anchorages. Occupy one to take control; every round you hold it, it pays Victory Points. First to 200 VP, or the higher score after 24 rounds, wins.',
+    body: 'The marked locations — districts, bridges, ports, airfields, depots, anchorages. Occupy one to take control. An objective is only paid for once your opponent has had their reply and you are STILL holding it, so ground you take and immediately lose scores nothing: objectives have to be held, not merely touched. Objectives are not all worth the same. The ones on the axis between the two deployment areas — the towns, the trunk river crossings, the commanding hills — are worth two to three times a rear-area objective, so a force that stays home cannot reach the threshold in the time available. First to 280 VP, or the higher score after 24 rounds, wins.',
   },
   {
     title: 'Spotting — you do NOT need to Recon to see',
@@ -92,7 +104,7 @@ const CONCEPTS: Topic[] = [
   },
   {
     title: 'Recon vs normal spotting',
-    body: 'Ordinary troops detect nearby enemies. Recon sees further, sooner, and knows what it is looking at. The R order is worth its AP because it does five things passive spotting does not: it uses a much longer sensor range (14 tiles for C4I, 11 for commandos, against 9 and 7 passively), it pushes through forest and built-up ground instead of being stopped by it, it adds a flat confidence bonus that jumps contacts up the ladder in one go, it marks what it finds as recon-tracked so those contacts decay far more slowly, and it re-fixes stale contacts you are about to lose. A commando Special Op can also probe deep behind the lines and confirm whatever is around the objective it walks onto.',
+    body: 'Ordinary troops detect nearby enemies. Recon sees further, sooner, and knows what it is looking at. The R order is worth its AP because it does five things passive spotting does not: it uses a much longer sensor range (14 tiles for C4I, 11 for commandos, against 9 and 7 passively), it pushes through forest and built-up ground instead of being stopped by it, it adds a flat confidence bonus that jumps contacts up the ladder in one go, it marks what it finds as recon-tracked so those contacts decay far more slowly, and it re-fixes stale contacts you are about to lose. A Special Op by the commandos (6 tiles) or the Guards (4 tiles) can also probe behind the lines and confirm whatever is around the objective it lands on.',
   },
 ];
 

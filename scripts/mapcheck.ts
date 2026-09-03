@@ -49,10 +49,10 @@ for (let i = 0; i < COUNT; i++) {
     stats.push(map.diagnostics);
     const errs: string[] = [...validateMap(map).errors];
 
-    // Independent naval check: sail from BLUEFOR's first ship and confirm we
+    // Independent naval check: sail from SABRE's first ship and confirm we
     // can reach every other naval spawn, every port berth and every anchorage.
-    const reach = navalReachability(map.tiles, map.navalSpawns.BLUEFOR[0]);
-    (['BLUEFOR', 'REDFOR'] as PlayerId[]).forEach((side) => {
+    const reach = navalReachability(map.tiles, map.navalSpawns.SABRE[0]);
+    (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
       map.navalSpawns[side].forEach((s) => {
         if (!reach.has(s.y * N + s.x)) errs.push(`${side} naval spawn (${s.x},${s.y}) unreachable by sea`);
       });

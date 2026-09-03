@@ -55,6 +55,27 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
     maxAmmo: 100,
     movesPerRound: MOBILITY.COMMANDO.movesPerRound,
   },
+  // Phase 5: each task force fields ONE elite manoeuvre battalion. SABRE's
+  // commandos and VANGUARD's Guards are deliberately of comparable weight but
+  // different character — the commandos are a raiding / deep-recce force
+  // (fragile, best sensors on the board, longest special-operation reach), the
+  // Guards an air-assault rifle battalion that arrives by helicopter and then
+  // FIGHTS as formed infantry (tougher, ordinary sensors, shorter insertion
+  // reach). Neither is strictly better; the seeded bot-vs-bot soak measures it.
+  GUARDS: {
+    type: 'GUARDS',
+    label: 'Guards Battalion',
+    branch: 'Army',
+    baseAttack: 7,
+    baseDefense: 6,
+    moveRange: MOBILITY.GUARDS.moveRange,
+    attackRange: 1,
+    sightRadius: DETECTION.GUARDS.baseRange,
+    reconRadius: DETECTION.GUARDS.reconRange,
+    isNaval: false,
+    maxAmmo: 100,
+    movesPerRound: MOBILITY.GUARDS.movesPerRound,
+  },
   ARMOUR: {
     type: 'ARMOUR',
     label: 'Armoured Battalion',
@@ -115,7 +136,7 @@ export const FORMATION_DEFS: Record<FormationType, FormationDef> = {
   },
   FRIGATE: {
     type: 'FRIGATE',
-    label: 'Frigate Squadron',
+    label: 'Surface Combatant Squadron',
     branch: 'Navy',
     baseAttack: 9,
     baseDefense: 7,
@@ -152,16 +173,22 @@ export const MORALE_MULTIPLIER: Record<string, number> = {
 };
 
 // ============================================================================
-// ORDERS OF BATTLE
+// ORDERS OF BATTLE — Exercise SABRE VANGUARD
 //
-// BLUEFOR uses real SAF *naming conventions* (verified against publicly
-// available sources — see README). The specific battalion numbers assigned to
-// each in-game formation are a FICTIONAL gameplay assignment; nothing here
-// asserts any real SAF order of battle, role, strength or capability.
-// Equipment strings name only publicly known platforms, as flavour.
+// The scenario is a large-scale SAF FORCE-ON-FORCE EXERCISE: two task forces
+// drawn from the same armed forces fight each other over a fictional training
+// area. Both sides therefore use real, publicly documented SAF/RSN formation
+// names and naming conventions (see README, "Real-World Reference vs Fictional
+// Game Mechanics").
 //
-// REDFOR is an entirely fictional opposing force ("Northern Union Forces")
-// with its own coherent, deliberately non-SAF naming scheme.
+// WHAT IS REAL: the formation titles, their short designations, their arm of
+// service and the general character of each arm — all drawn from public
+// sources.
+//
+// WHAT IS FICTIONAL: which battalion is assigned to which exercise task force,
+// every stat, cost and AP value, and the equipment strings' pairing with a
+// specific battalion. Nothing here asserts a real SAF order of battle,
+// grouping, strength or capability.
 // ============================================================================
 
 export interface FormationProfile {
@@ -175,12 +202,22 @@ export interface FormationProfile {
   equipment: string;
 }
 
+/** Full task-force titles, as printed in the roster and the after-action screen. */
 export const FACTION_NAMES: Record<PlayerId, string> = {
-  BLUEFOR: 'Singapore Armed Forces (BLUEFOR)',
-  REDFOR: 'Northern Union Forces (REDFOR)',
+  SABRE: 'Task Force Sabre',
+  VANGUARD: 'Task Force Vanguard',
 };
 
-const BLUEFOR_OOB: FormationProfile[] = [
+/** Compact form for chips, the HUD and the log. */
+export const FACTION_SHORT: Record<PlayerId, string> = {
+  SABRE: 'TF SABRE',
+  VANGUARD: 'TF VANGUARD',
+};
+
+/** The exercise both task forces are fighting. */
+export const EXERCISE_NAME = 'Exercise Sabre Vanguard';
+
+const SABRE_OOB: FormationProfile[] = [
   {
     type: 'INFANTRY',
     name: '1st Battalion, Singapore Infantry Regiment',
@@ -211,7 +248,7 @@ const BLUEFOR_OOB: FormationProfile[] = [
     shortName: '1 CDO BN',
     echelon: 'Battalion',
     arm: 'Commandos',
-    equipment: 'Special-operations troops: deep reconnaissance, direct action, heliborne insertion.',
+    equipment: 'Special-operations troops: deep reconnaissance, direct action, heliborne and small-boat insertion.',
   },
   {
     type: 'ARMOUR',
@@ -239,8 +276,8 @@ const BLUEFOR_OOB: FormationProfile[] = [
   },
   {
     type: 'RECON',
-    name: '24th C4I Battalion',
-    shortName: '24 C4I',
+    name: '10th Command, Control, Communications, Computers and Intelligence Battalion',
+    shortName: '10 C4I Bn',
     echelon: 'Battalion',
     arm: 'C4I / Signals & ISR',
     equipment: 'Ground sensor and EW teams cued by Heron 1 and Hermes 450 UAV feeds.',
@@ -259,94 +296,102 @@ const BLUEFOR_OOB: FormationProfile[] = [
     shortName: '188 SQN',
     echelon: 'Squadron',
     arm: 'Republic of Singapore Navy',
-    equipment: 'Victory-class corvette with Independence-class LMV in company — littoral strike and patrol.',
+    equipment: 'Victory-class missile corvette element — littoral strike and surface patrol.',
   },
 ];
 
-const REDFOR_OOB: FormationProfile[] = [
+const VANGUARD_OOB: FormationProfile[] = [
   {
     type: 'INFANTRY',
-    name: '3rd Motorised Rifle Battalion, Northern Union Forces',
-    shortName: '3 MRB',
+    name: '3rd Battalion, Singapore Infantry Regiment',
+    shortName: '3 SIR',
     echelon: 'Battalion',
-    arm: 'Motorised Infantry',
-    equipment: 'Wheeled infantry carriers, crew-served automatic weapons, man-portable ATGMs.',
+    arm: 'Infantry',
+    equipment: 'SAR 21 rifles, Terrex ICVs, SPIKE-LR ATGM detachments.',
   },
   {
     type: 'INFANTRY',
-    name: '7th Motorised Rifle Battalion, Northern Union Forces',
-    shortName: '7 MRB',
+    name: '8th Battalion, Singapore Infantry Regiment',
+    shortName: '8 SIR',
     echelon: 'Battalion',
-    arm: 'Motorised Infantry',
-    equipment: 'Wheeled infantry carriers with organic 82mm mortar and AGL platoons.',
+    arm: 'Infantry',
+    equipment: 'SAR 21 rifles, Terrex ICVs, 40mm AGL and 81mm mortar sections.',
   },
   {
     type: 'INFANTRY',
-    name: '11th Motorised Rifle Battalion, Northern Union Forces',
-    shortName: '11 MRB',
+    name: '9th Battalion, Singapore Infantry Regiment',
+    shortName: '9 SIR',
     echelon: 'Battalion',
-    arm: 'Motorised Infantry',
-    equipment: 'Light truck-mobile riflemen, recoilless guns, dug-in defensive doctrine.',
+    arm: 'Infantry',
+    equipment: 'SAR 21 rifles, Bronco all-terrain carriers, SPIKE-LR ATGM detachments.',
   },
   {
-    type: 'COMMANDO',
-    name: '1st Special Purpose Battalion, Northern Union Forces',
-    shortName: '1 SPB',
+    type: 'GUARDS',
+    name: '1st Battalion, Singapore Guards',
+    shortName: '1 GDS',
     echelon: 'Battalion',
-    arm: 'Special Purpose Troops',
-    equipment: 'Long-range raiding parties, sabotage teams, small-boat and heliborne infiltration.',
+    arm: 'Guards',
+    equipment: 'Air-assault infantry: heli-rappelling and fast-roping rifle companies with Light Strike Vehicles.',
   },
   {
     type: 'ARMOUR',
-    name: '22nd Tank Battalion, Northern Union Forces',
-    shortName: '22 TB',
+    name: '41st Battalion, Singapore Armoured Regiment',
+    shortName: '41 SAR',
     echelon: 'Battalion',
     arm: 'Armour',
-    equipment: 'Medium main battle tanks with tracked IFV companies attached.',
+    equipment: 'Leopard 2SG main battle tanks with Hunter AFV and Bionix IFV in support.',
   },
   {
     type: 'ARTILLERY',
-    name: '14th Gun & Rocket Artillery Battalion, Northern Union Forces',
-    shortName: '14 GRA',
+    name: '20th Battalion, Singapore Artillery',
+    shortName: '20 SA',
     echelon: 'Battalion',
     arm: 'Artillery',
-    equipment: 'Towed 152mm gun batteries and a truck-mounted multiple rocket launcher battery.',
+    equipment: 'SSPH Primus self-propelled howitzers, SLWH Pegasus gun batteries, HIMARS troop.',
   },
   {
     type: 'ENGINEER',
-    name: '6th Assault Engineer Battalion, Northern Union Forces',
-    shortName: '6 AEB',
+    name: '30th Battalion, Singapore Combat Engineers',
+    shortName: '30 SCE',
     echelon: 'Battalion',
-    arm: 'Assault Engineers',
-    equipment: 'Pontoon bridging companies, minelaying and breaching sections.',
+    arm: 'Combat Engineers',
+    equipment: 'Assault bridging, field fortification and obstacle-breaching plant.',
   },
   {
     type: 'RECON',
-    name: '9th Reconnaissance & Electronic Warfare Battalion, Northern Union Forces',
-    shortName: '9 REB',
+    name: '11th Command, Control, Communications, Computers and Intelligence Battalion',
+    shortName: '11 C4I Bn',
     echelon: 'Battalion',
-    arm: 'Reconnaissance & EW',
-    equipment: 'Scout car troops, direction-finding and jamming detachments, tactical UAV flight.',
+    arm: 'C4I / Signals & ISR',
+    equipment: 'Ground sensor and EW teams cued by Heron 1 and Hermes 450 UAV feeds.',
   },
   {
+    // 191 SQN is the RSN's publicly documented Endurance-class squadron (3rd
+    // Flotilla). Its real role is amphibious/landing-platform-dock, not air
+    // defence — the game slots it as VANGUARD's heavy surface group because it
+    // is the comparable-weight major-surface-combatant squadron. That slotting
+    // is an exercise arrangement, not a claim about the squadron's real task.
     type: 'FRIGATE',
-    name: '1st Guided-Missile Frigate Group, Northern Union Navy',
-    shortName: '1 GMF',
-    echelon: 'Group',
-    arm: 'Northern Union Navy',
-    equipment: 'Guided-missile frigate with anti-ship missiles and a medium naval gun.',
+    name: '191 Squadron, Republic of Singapore Navy',
+    shortName: '191 SQN',
+    echelon: 'Squadron',
+    arm: 'Republic of Singapore Navy',
+    equipment: 'Endurance-class landing platform dock group — heavy surface presence, aviation deck, naval gunfire support.',
   },
   {
+    // 189 SQN is the RSN's publicly documented Fearless-class patrol-vessel
+    // squadron, armed for anti-submarine work — the littoral counterpart to
+    // 188 SQN for the purposes of this exercise.
     type: 'CORVETTE',
-    name: '5th Missile Corvette Flotilla, Northern Union Navy',
-    shortName: '5 MCF',
-    echelon: 'Flotilla',
-    arm: 'Northern Union Navy',
-    equipment: 'Fast missile corvettes for littoral strike and coastal interdiction.',
+    name: '189 Squadron, Republic of Singapore Navy',
+    shortName: '189 SQN',
+    echelon: 'Squadron',
+    arm: 'Republic of Singapore Navy',
+    equipment: 'Fearless-class patrol vessel element — littoral patrol, anti-submarine and surface engagement.',
   },
 ];
 
 export const ORDERS_OF_BATTLE: Record<PlayerId, FormationProfile[]> = {
-  BLUEFOR: BLUEFOR_OOB,
-  REDFOR: REDFOR_OOB,
+  SABRE: SABRE_OOB,
+  VANGUARD: VANGUARD_OOB,
 };

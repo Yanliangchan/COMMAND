@@ -328,7 +328,7 @@ const SECTIONS: Section[] = [
           <TutorialDiagram
             rows={['.gguug.g', 'gguuug.g', '.g.ggwbg', 'gg.g.wbg']}
             markers={markers}
-            caption="Left: the town district is occupied and paying VP every round. Right: an uncontested objective the enemy is one move away from taking."
+            caption="Left: the town district is occupied and paying VP every round it survives the enemy's reply. Right: an objective the enemy is one move away from taking back."
           />
           <ul className="tut-list">
             <li>
@@ -336,8 +336,13 @@ const SECTIONS: Section[] = [
               someone takes it back.
             </li>
             <li>
-              <b>Every objective pays each round you hold it.</b> Urban districts pay the most; bridges, ports, airfields, depots
-              and anchorages pay less but matter strategically.
+              <b>You are paid for what you are still holding after the enemy's reply</b>, not for what you touched. Ground you
+              seize and then lose again before your opponent finishes their turn scores nothing at all.
+            </li>
+            <li>
+              <b>The middle is where the points are.</b> Objectives on the axis between the two deployment areas — the towns, the
+              trunk river crossings, the commanding hills — are worth two to three times a rear-area objective. Sitting on your
+              own back yard cannot win the operation inside the round limit.
             </li>
             <li>
               <b>Anchorages are maritime</b> — only a ship can hold one.
@@ -347,7 +352,7 @@ const SECTIONS: Section[] = [
               cannot resupply.
             </li>
             <li>
-              <b>Winning:</b> first side to 200 VP wins immediately; otherwise the higher score after 24 rounds takes the
+              <b>Winning:</b> first task force to 280 VP wins immediately; otherwise the higher score after 24 rounds takes the
               operation.
             </li>
           </ul>

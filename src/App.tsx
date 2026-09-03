@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FACTION_SHORT } from './game/data';
 import { useMultiplayer } from './net/client';
 import { TopBar } from './components/TopBar';
 import { FormationList } from './components/FormationList';
@@ -27,7 +28,7 @@ const TARGET_HINTS: Record<string, string> = {
   AIR_TARGET: 'Click any spotted enemy formation to call the strike in.',
   ENGINEER_BRIDGE: 'Click an adjacent river tile to bridge it.',
   ENGINEER_CLEAR: 'Click an adjacent tile to clear its obstacles and dug-in defences.',
-  SPECIAL_OP: 'Click a tile within commando reach to raid or probe it.',
+  SPECIAL_OP: 'Click a tile within this battalion\u2019s insertion reach to raid or probe it.',
 };
 
 /** Ladder rank, for spotting an upgrade between two state pushes. */
@@ -614,7 +615,7 @@ export default function App() {
               End Turn <kbd>E</kbd>
             </>
           ) : (
-            `${state.activePlayer} moving…`
+            `${FACTION_SHORT[state.activePlayer]} moving…`
           )}
         </button>
       </div>
@@ -648,7 +649,7 @@ export default function App() {
         </button>
       )}
       {toast && <div className="toast">{toast}</div>}
-      {legendOpen && <Legend onClose={() => setLegendOpen(false)} />}
+      {legendOpen && you && <Legend viewer={you} onClose={() => setLegendOpen(false)} />}
       {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}
       {report && (
         <BattleReportModal

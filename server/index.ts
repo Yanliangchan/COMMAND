@@ -135,7 +135,7 @@ function send(ws: WebSocket | null, msg: ServerMsg) {
  * per-action broadcast to a few tens of KB instead of ~400 KB.
  */
 function broadcastState(room: Room, includeTiles = false) {
-  (['BLUEFOR', 'REDFOR'] as PlayerId[]).forEach((pid) => {
+  (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((pid) => {
     const seat = room.seats[pid];
     if (!seat.ws) return;
     const full = filterStateForPlayer(room.state, pid);
@@ -151,7 +151,7 @@ function broadcastState(room: Room, includeTiles = false) {
 
 function makeSeats(): Room['seats'] {
   // Randomize which joiner gets which side.
-  const sides: PlayerId[] = Math.random() < 0.5 ? ['BLUEFOR', 'REDFOR'] : ['REDFOR', 'BLUEFOR'];
+  const sides: PlayerId[] = Math.random() < 0.5 ? ['SABRE', 'VANGUARD'] : ['VANGUARD', 'SABRE'];
   return {
     [sides[0]]: { playerId: sides[0], token: randomUUID(), ws: null, connected: false, disconnectTimer: null },
     [sides[1]]: { playerId: sides[1], token: randomUUID(), ws: null, connected: false, disconnectTimer: null },
@@ -214,15 +214,15 @@ function scheduleBotStep(room: Room, stepsTaken = 0) {
 }
 
 function firstOpenSeat(room: Room): Seat | null {
-  const a = room.seats.BLUEFOR;
-  const b = room.seats.REDFOR;
+  const a = room.seats.SABRE;
+  const b = room.seats.VANGUARD;
   if (!a.ws && !a.connected) return a;
   if (!b.ws && !b.connected) return b;
   return null;
 }
 
 function bothConnected(room: Room) {
-  return room.seats.BLUEFOR.connected && room.seats.REDFOR.connected;
+  return room.seats.SABRE.connected && room.seats.VANGUARD.connected;
 }
 
 function clearDisconnectTimer(seat: Seat) {
@@ -234,7 +234,7 @@ function clearDisconnectTimer(seat: Seat) {
 
 function seatBySocket(ws: WebSocket): { room: Room; seat: Seat } | null {
   for (const room of rooms.values()) {
-    for (const pid of ['BLUEFOR', 'REDFOR'] as PlayerId[]) {
+    for (const pid of ['SABRE', 'VANGUARD'] as PlayerId[]) {
       if (room.seats[pid].ws === ws) return { room, seat: room.seats[pid] };
     }
   }
@@ -360,7 +360,7 @@ wss.on('connection', (ws) => {
         seat.connected = true;
         send(ws, { t: 'joined', code: room.code, token: seat.token, you: seat.playerId });
         if (bothConnected(room)) {
-          (['BLUEFOR', 'REDFOR'] as PlayerId[]).forEach((pid) => {
+          (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((pid) => {
             const s = room.seats[pid];
             send(s.ws, { t: 'start', state: filterStateForPlayer(room.state, pid), you: pid, opponentConnected: true });
           });
@@ -383,7 +383,7 @@ wss.on('connection', (ws) => {
           you: humanSeat.playerId,
           opponentConnected: true,
         });
-        scheduleBotStep(room); // in case the bot drew BLUEFOR and moves first
+        scheduleBotStep(room); // in case the bot drew SABRE and moves first
         break;
       }
       case 'quick': {
@@ -399,7 +399,7 @@ wss.on('connection', (ws) => {
           seatB.connected = true;
           send(waitingWs, { t: 'joined', code: room.code, token: seatA.token, you: seatA.playerId });
           send(ws, { t: 'joined', code: room.code, token: seatB.token, you: seatB.playerId });
-          (['BLUEFOR', 'REDFOR'] as PlayerId[]).forEach((pid) => {
+          (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((pid) => {
             const s = room.seats[pid];
             send(s.ws, { t: 'start', state: filterStateForPlayer(room.state, pid), you: pid, opponentConnected: true });
           });
@@ -415,7 +415,7 @@ wss.on('connection', (ws) => {
           send(ws, { t: 'error', message: 'Room no longer exists.' });
           return;
         }
-        const seat = (['BLUEFOR', 'REDFOR'] as PlayerId[]).map((pid) => room.seats[pid]).find((s) => s.token === msg.token);
+        const seat = (['SABRE', 'VANGUARD'] as PlayerId[]).map((pid) => room.seats[pid]).find((s) => s.token === msg.token);
         if (!seat) {
           send(ws, { t: 'error', message: 'Invalid reconnect token.' });
           return;
@@ -485,7 +485,7 @@ setInterval(() => {
   for (const [code, room] of rooms) {
     const anyoneConnected = room.botSide
       ? room.seats[otherPlayer(room.botSide)].connected
-      : room.seats.BLUEFOR.connected || room.seats.REDFOR.connected;
+      : room.seats.SABRE.connected || room.seats.VANGUARD.connected;
     if (!anyoneConnected && now - room.lastActivity > EMPTY_ROOM_TTL_MS) {
       clearBotTimer(room);
       rooms.delete(code);

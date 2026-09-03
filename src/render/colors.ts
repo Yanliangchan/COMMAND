@@ -13,11 +13,11 @@ export const TERRAIN_COLORS: Record<TerrainType, { base: string; light: string; 
   PORT: { base: '#8a8570', light: '#9a9580', dark: '#736e5c' },
 };
 
-export const PLAYER_COLORS: Record<'BLUEFOR' | 'REDFOR', { main: string; dark: string; light: string; glow: string }> = {
+export const PLAYER_COLORS: Record<'SABRE' | 'VANGUARD', { main: string; dark: string; light: string; glow: string }> = {
   // `light` is the counter's glyph colour — deliberately brighter than `main`
   // so the two-letter designation still reads inside a small dark disc.
-  BLUEFOR: { main: '#6fa8c9', dark: '#0f2e3d', light: '#b6dcf2', glow: 'rgba(111,168,201,0.55)' },
-  REDFOR: { main: '#c17a5f', dark: '#3d211a', light: '#f0b39a', glow: 'rgba(193,122,95,0.55)' },
+  SABRE: { main: '#6fa8c9', dark: '#0f2e3d', light: '#b6dcf2', glow: 'rgba(111,168,201,0.55)' },
+  VANGUARD: { main: '#c17a5f', dark: '#3d211a', light: '#f0b39a', glow: 'rgba(193,122,95,0.55)' },
 };
 
 // Ops-room UI chrome tokens — mirrors the CSS custom properties in

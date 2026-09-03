@@ -4,7 +4,7 @@
 // expected to clone the state before calling a mutator, see store.ts).
 // ============================================================================
 
-import { FORMATION_DEFS, MORALE_MULTIPLIER, ORDERS_OF_BATTLE, TERRAIN_DEFS } from './data';
+import { EXERCISE_NAME, FACTION_NAMES, FORMATION_DEFS, MORALE_MULTIPLIER, ORDERS_OF_BATTLE, TERRAIN_DEFS } from './data';
 import { generateBattlefield } from './mapgen';
 import {
   computeReachable as computeReachableTiles,
@@ -40,9 +40,22 @@ import {
   Objective,
   PlayerId,
   SPECIAL_OP_RANGE,
+  SPECIAL_OP_RANGE_BY_TYPE,
+  SPECIAL_OP_TYPES,
   Tile,
   otherPlayer,
 } from './types';
+
+/** Deterministic, well-mixed coin flip on the map seed (murmur3 finaliser). */
+function initiativeRoll(seed: number): boolean {
+  let h = seed >>> 0;
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h & 1) === 1;
+}
 
 let idCounter = 0;
 function nextId(prefix: string) {
@@ -88,7 +101,7 @@ export function initGame(seed = 1337): GameState {
   const map = generateBattlefield(seed);
   const formations: Record<string, Formation> = {};
 
-  (['BLUEFOR', 'REDFOR'] as PlayerId[]).forEach((side) => {
+  (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
     const landSlots = [...map.startZones[side]];
     const seaSlots = [...map.navalSpawns[side]];
     ORDERS_OF_BATTLE[side].forEach((profile, i) => {
@@ -99,17 +112,31 @@ export function initGame(seed = 1337): GameState {
     });
   });
 
+  // ---- Initiative ---------------------------------------------------------
+  // Phase 5. Moving first in a sequential turn-based game is worth something:
+  // the side with the initiative reaches the contested ground first and makes
+  // the other side attack into it. Measured over seeded bot-vs-bot games that
+  // tempo is worth roughly +22 VP a game to whoever has it — a real, permanent
+  // advantage if one named side always gets it.
+  //
+  // So initiative is ROLLED, deterministically from the map seed, exactly the
+  // way a wargame rolls for it. Neither task force is systematically the
+  // attacker, and because the server already assigns seats by a coin flip, no
+  // human player is affected either way.
+  const first: PlayerId = initiativeRoll(seed) ? 'VANGUARD' : 'SABRE';
+
   const state: GameState = {
     round: 1,
-    activePlayer: 'BLUEFOR',
+    activePlayer: first,
+    initiative: first,
     tiles: map.tiles,
     formations,
     objectives: map.objectives,
     players: {
-      BLUEFOR: { id: 'BLUEFOR', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {} },
-      REDFOR: { id: 'REDFOR', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {} },
+      SABRE: { id: 'SABRE', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {} },
+      VANGUARD: { id: 'VANGUARD', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {} },
     },
-    log: [{ text: 'Operation begins. BLUEFOR moves first.', audience: 'ALL' as const }],
+    log: [{ text: `${EXERCISE_NAME} begins. ${FACTION_NAMES[first]} has the initiative.`, audience: 'ALL' as const }],
     phase: 'PLAYING',
     winner: null,
     lastBattleReport: null,
@@ -804,10 +831,12 @@ export function airStrikeAction(state: GameState, x: number, y: number): GameSta
 
 export function specialOpAction(state: GameState, formationId: string, x: number, y: number): GameState {
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn || f.type !== 'COMMANDO') return state;
+  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn || !SPECIAL_OP_TYPES.includes(f.type)) return state;
   if (!canAfford(state, 'SPECIAL_OP')) return state;
   const d = distance(f.x, f.y, x, y);
-  if (d > SPECIAL_OP_RANGE) return state;
+  // Commandos insert deepest; the Guards go in by helicopter as a formed
+  // sub-unit and so land closer to the friendly line.
+  if (d > (SPECIAL_OP_RANGE_BY_TYPE[f.type] ?? SPECIAL_OP_RANGE)) return state;
   spendAP(state, 'SPECIAL_OP');
   f.hasActedThisTurn = true;
   const target = formationAt(state, x, y);
@@ -838,7 +867,32 @@ export function specialOpAction(state: GameState, formationId: string, x: number
 // Objectives, supply tick, turn management
 // ---------------------------------------------------------------------------
 
-function tickObjectives(state: GameState, awardVp: boolean) {
+/**
+ * Resolve objective control, then pay `scoringSide` for the objectives it holds
+ * at this instant. `endTurn` calls it once per turn with the side that did NOT
+ * just move, so each side banks once per round, measured after an enemy turn.
+ *
+ * Phase 5 — side-balance fix. Until now control was resolved at the end of
+ * every turn but VP were paid to BOTH sides once per round, at the end of the
+ * *second* player's turn. That handed the second player the last word on every
+ * scoring tick: it could take or retake ground and bank it immediately, while
+ * anything the first player captured had to survive a full enemy turn before it
+ * paid out. Measured over seeded bot-vs-bot games this was worth roughly 20 VP
+ * a game and a 8/22 win split (see README, "Side balance").
+ *
+ * Paying each side at the end of its OWN turn instead simply mirrors the bug:
+ * measured the same way it hands the FIRST player a ~+30 VP edge, because
+ * whoever acts most recently before a scoring evaluation owns the contested
+ * ground at that instant.
+ *
+ * So each side is paid at the end of the OPPONENT's turn, for what it still
+ * holds once the opponent has had its reply. That is symmetric in the one way
+ * that matters — both sides' scoring is measured immediately after an enemy
+ * turn, so neither ever gets the last word on its own payout — and it is also
+ * the rule the design wants: an objective has to be HELD, not merely touched.
+ * Ground taken and lost again before the enemy finishes its reply never pays.
+ */
+function tickObjectives(state: GameState, scoringSide: PlayerId) {
   state.objectives.forEach((o) => {
     const occupants = Object.values(state.formations).filter((f) => {
       if (distance(f.x, f.y, o.x, o.y) > 1) return false;
@@ -852,7 +906,7 @@ function tickObjectives(state: GameState, awardVp: boolean) {
       if (o.controlledBy !== side) {
         const previous = o.controlledBy;
         o.controlledBy = side;
-        log(state, `${side} secured objective: ${o.name} (grid ${gridRef(o.x, o.y)}).`, 'ALL');
+        log(state, `${FACTION_NAMES[side]} secured objective: ${o.name} (grid ${gridRef(o.x, o.y)}).`, 'ALL');
         // Taking ground lifts the units that took it; losing an objective you
         // held is one of the few things that genuinely knocks a force back.
         occupants
@@ -865,11 +919,8 @@ function tickObjectives(state: GameState, awardVp: boolean) {
         }
       }
     }
-    // VP are paid out once per ROUND, to both holders at once, at the end of
-    // the round. Paying each side at the end of its own turn would give the
-    // first player half a round of free scoring every single round.
-    if (awardVp && o.controlledBy) {
-      state.players[o.controlledBy].vp += o.vpPerTurn;
+    if (o.controlledBy === scoringSide) {
+      state.players[scoringSide].vp += o.vpPerTurn;
     }
   });
 }
@@ -896,32 +947,38 @@ function tickSupply(state: GameState, owner: PlayerId) {
 }
 
 /**
- * Victory is only adjudicated at a ROUND boundary (after REDFOR's turn), so
- * both sides have banked the same number of scoring turns — otherwise BLUEFOR,
- * who always scores first, would cross the threshold half a round early every
- * single game.
+ * Victory is only adjudicated at a ROUND boundary — after the SECOND player's
+ * turn, whichever side that is this operation (see GameState.initiative) — so
+ * both sides have always banked the same number of scoring turns. Otherwise
+ * the side with the initiative would cross the threshold half a round early
+ * every single game. (The scoring itself is symmetric; see tickObjectives.)
  */
+function winnerLabel(w: GameState['winner']): string {
+  return w === 'DRAW' || w === null ? 'Draw' : FACTION_NAMES[w];
+}
+
 function checkVictory(state: GameState, roundComplete: boolean) {
   if (!roundComplete) return;
-  const b = state.players.BLUEFOR.vp;
-  const r = state.players.REDFOR.vp;
+  const b = state.players.SABRE.vp;
+  const r = state.players.VANGUARD.vp;
   if (b >= VP_WIN_THRESHOLD || r >= VP_WIN_THRESHOLD) {
     state.phase = 'GAME_OVER';
-    state.winner = b === r ? 'DRAW' : b > r ? 'BLUEFOR' : 'REDFOR';
-    log(state, `Victory point threshold reached. Winner: ${state.winner}.`, 'ALL');
+    state.winner = b === r ? 'DRAW' : b > r ? 'SABRE' : 'VANGUARD';
+    log(state, `Victory point threshold reached. Winner: ${winnerLabel(state.winner)}.`, 'ALL');
   } else if (state.round > MAX_ROUNDS) {
     state.phase = 'GAME_OVER';
-    state.winner = b === r ? 'DRAW' : b > r ? 'BLUEFOR' : 'REDFOR';
-    log(state, `Final round complete. Winner: ${state.winner}.`, 'ALL');
+    state.winner = b === r ? 'DRAW' : b > r ? 'SABRE' : 'VANGUARD';
+    log(state, `Final round complete. Winner: ${winnerLabel(state.winner)}.`, 'ALL');
   }
 }
 
 export function endTurn(state: GameState): GameState {
   const finishing = state.activePlayer;
-  tickObjectives(state, finishing === 'REDFOR');
+  tickObjectives(state, otherPlayer(finishing));
   tickSupply(state, finishing);
   tickMorale(state, finishing);
-  if (finishing === 'REDFOR') state.round += 1;
+  const roundComplete = finishing === otherPlayer(state.initiative);
+  if (roundComplete) state.round += 1;
   // Reset the finishing side's per-round budgets so everything is fresh when
   // control comes back to them.
   Object.values(state.formations).forEach((f) => {
@@ -935,9 +992,9 @@ export function endTurn(state: GameState): GameState {
   state.players[nextPlayer].airSorties = AIR_SORTIES_PER_TURN;
   state.activePlayer = nextPlayer;
   refreshAllSpotting(state);
-  checkVictory(state, finishing === 'REDFOR');
+  checkVictory(state, roundComplete);
   if (state.phase !== 'GAME_OVER') state.phase = 'TURN_HANDOFF';
-  log(state, `Turn passed to ${nextPlayer}. Round ${state.round}.`, 'ALL');
+  log(state, `Turn passed to ${FACTION_NAMES[nextPlayer]}. Round ${state.round}.`, 'ALL');
   return state;
 }
 

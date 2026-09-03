@@ -430,7 +430,7 @@ export function planMove(state: GameState, f: Formation, x: number, y: number, b
 // Formation cohesion (movement-side awareness)
 // ---------------------------------------------------------------------------
 
-export const MANOEUVRE_TYPES: FormationType[] = ['INFANTRY', 'ARMOUR', 'COMMANDO', 'RECON'];
+export const MANOEUVRE_TYPES: FormationType[] = ['INFANTRY', 'ARMOUR', 'COMMANDO', 'GUARDS', 'RECON'];
 export const SUPPORT_TYPES: FormationType[] = ['ARTILLERY', 'ENGINEER'];
 
 export function isSupportType(t: FormationType) {

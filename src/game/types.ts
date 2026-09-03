@@ -10,10 +10,10 @@
  */
 export const GRID_SIZE = 72;
 
-export type PlayerId = 'BLUEFOR' | 'REDFOR';
+export type PlayerId = 'SABRE' | 'VANGUARD';
 
 export function otherPlayer(p: PlayerId): PlayerId {
-  return p === 'BLUEFOR' ? 'REDFOR' : 'BLUEFOR';
+  return p === 'SABRE' ? 'VANGUARD' : 'SABRE';
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,7 @@ export interface Tile {
 export type FormationType =
   | 'INFANTRY'
   | 'COMMANDO'
+  | 'GUARDS'
   | 'ARMOUR'
   | 'ARTILLERY'
   | 'ENGINEER'
@@ -183,6 +184,7 @@ export interface MobilityProfile {
 export const MOBILITY: Record<FormationType, MobilityProfile> = {
   INFANTRY: { moveRange: 4, movesPerRound: 2, roadCost: 0.65, roughMultiplier: 1, mobilityLabel: 'Foot / motorised' },
   COMMANDO: { moveRange: 6, movesPerRound: 3, roadCost: 0.7, roughMultiplier: 1, mobilityLabel: 'Light / heliborne' },
+  GUARDS: { moveRange: 6, movesPerRound: 3, roadCost: 0.7, roughMultiplier: 1, mobilityLabel: 'Air-assault / heliborne' },
   ARMOUR: { moveRange: 5, movesPerRound: 2, roadCost: 0.5, roughMultiplier: 1.5, mobilityLabel: 'Tracked / mechanised' },
   ARTILLERY: { moveRange: 4, movesPerRound: 2, roadCost: 0.5, roughMultiplier: 1.25, mobilityLabel: 'Self-propelled / towed' },
   ENGINEER: { moveRange: 4, movesPerRound: 2, roadCost: 0.5, roughMultiplier: 1.25, mobilityLabel: 'Mechanised plant' },
@@ -210,6 +212,7 @@ export const MOVES_PER_ROUND: Record<FormationType, number> = Object.fromEntries
 export const MORALE_BASELINE: Record<FormationType, number> = {
   INFANTRY: 72,
   COMMANDO: 78,
+  GUARDS: 78,
   ARMOUR: 74,
   ARTILLERY: 70,
   ENGINEER: 70,
@@ -400,6 +403,7 @@ export interface DetectionProfile {
 export const DETECTION: Record<FormationType, DetectionProfile> = {
   INFANTRY: { baseRange: 5, reconRange: 8, identifyFactor: 1.0, decayPerRound: 22, sensorLabel: 'Eyes-on / battalion scouts' },
   COMMANDO: { baseRange: 7, reconRange: 11, identifyFactor: 1.2, decayPerRound: 16, sensorLabel: 'Deep recce patrols' },
+  GUARDS: { baseRange: 5, reconRange: 8, identifyFactor: 1.0, decayPerRound: 20, sensorLabel: 'Air-assault recce screen' },
   ARMOUR: { baseRange: 5, reconRange: 7, identifyFactor: 0.95, decayPerRound: 24, sensorLabel: 'Vehicle optics / thermal' },
   ARTILLERY: { baseRange: 3, reconRange: 5, identifyFactor: 0.8, decayPerRound: 26, sensorLabel: 'Gun-line observation only' },
   ENGINEER: { baseRange: 4, reconRange: 6, identifyFactor: 0.85, decayPerRound: 25, sensorLabel: 'Route and obstacle recce' },
@@ -408,8 +412,19 @@ export const DETECTION: Record<FormationType, DetectionProfile> = {
   CORVETTE: { baseRange: 7, reconRange: 9, identifyFactor: 1.05, decayPerRound: 18, sensorLabel: 'Littoral surface search' },
 };
 
-/** Reach of a commando SPECIAL_OP (raid / deep probe), in tiles. */
+/**
+ * Reach of a SPECIAL_OP, in tiles, by formation. Both task forces field one
+ * elite manoeuvre battalion that can mount one: SABRE's commandos insert
+ * deepest (raid / deep probe), VANGUARD's Guards go in by helicopter as a
+ * formed rifle sub-unit and so land closer to the friendly line.
+ */
 export const SPECIAL_OP_RANGE = 6;
+export const SPECIAL_OP_RANGE_BY_TYPE: Partial<Record<FormationType, number>> = {
+  COMMANDO: 6,
+  GUARDS: 4,
+};
+/** Formation types that may mount a SPECIAL_OP at all. */
+export const SPECIAL_OP_TYPES: FormationType[] = ['COMMANDO', 'GUARDS'];
 
 /**
  * What a side knows about one enemy formation. Stored per player on the server.
@@ -552,7 +567,14 @@ export const AP_COSTS: Record<ActionKind, number> = {
 export const AP_PER_TURN = 26;
 export const AP_CAP = 34;
 export const AIR_SORTIES_PER_TURN = 2;
-export const VP_WIN_THRESHOLD = 200;
+/**
+ * Victory-point threshold. Raised 200 -> 280 in phase 5: objectives on the
+ * axis of advance are now worth two to three times a rear-area objective (see
+ * mapgen "contested VP"), so a round of holding ground pays roughly 40% more
+ * than it used to. Without the matching rise games ended around round 9-10 and
+ * the second half of the operation never happened.
+ */
+export const VP_WIN_THRESHOLD = 280;
 export const MAX_ROUNDS = 24;
 
 export interface PlayerState {
@@ -579,6 +601,13 @@ export interface LogEntry {
 export interface GameState {
   round: number;
   activePlayer: PlayerId;
+  /**
+   * Which side had the initiative (moved first) this operation — rolled from
+   * the map seed at setup. A round runs initiative-holder first, then the other
+   * side; the round boundary, and with it VP scoring and victory adjudication,
+   * therefore falls after the SECOND player's turn whichever side that is.
+   */
+  initiative: PlayerId;
   tiles: Tile[][]; // [y][x]
   formations: Record<string, Formation>;
   objectives: Objective[];

@@ -1,5 +1,6 @@
 import React from 'react';
-import { GameState, PlayerId } from '../game/types';
+import { GameState, PlayerId, otherPlayer } from '../game/types';
+import { FACTION_NAMES, FACTION_SHORT } from '../game/data';
 
 export const EndGameScreen: React.FC<{ state: GameState; you: PlayerId; onRestart: () => void }> = ({ state, you, onRestart }) => {
   const won = state.winner === you;
@@ -12,9 +13,14 @@ export const EndGameScreen: React.FC<{ state: GameState; you: PlayerId; onRestar
         <div className={`handoff-player ${draw ? '' : won ? 'result-win' : 'result-loss'}`}>
           {draw ? 'DRAW' : won ? 'VICTORY' : 'DEFEAT'}
         </div>
-        <div className="handoff-sub">{draw ? 'Both sides fought to a standstill.' : `${state.winner} secured the operation.`}</div>
-        <div className="handoff-sub">
-          Final VP — BLUEFOR {state.players.BLUEFOR.vp} : REDFOR {state.players.REDFOR.vp}
+        <div className="handoff-sub" data-testid="endgame-winner">
+          {draw
+            ? 'Both task forces fought to a standstill.'
+            : `${FACTION_NAMES[state.winner as PlayerId]} secured the operation.`}
+        </div>
+        <div className="handoff-sub" data-testid="endgame-vp">
+          Final VP — {FACTION_SHORT[you]} {state.players[you].vp} : {FACTION_SHORT[otherPlayer(you)]}{' '}
+          {state.players[otherPlayer(you)].vp}
         </div>
         <div className="handoff-note">
           You finished holding {held} of {state.objectives.length} objectives after {state.round} rounds.

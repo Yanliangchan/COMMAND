@@ -1,5 +1,6 @@
 import React from 'react';
-import { AP_CAP, MAX_ROUNDS, GameState, PlayerId, VP_WIN_THRESHOLD } from '../game/types';
+import { AP_CAP, MAX_ROUNDS, GameState, PlayerId, VP_WIN_THRESHOLD, otherPlayer } from '../game/types';
+import { FACTION_SHORT } from '../game/data';
 
 export const TopBar: React.FC<{ state: GameState; you: PlayerId; objectivesHeld: number; objectivesTotal: number }> = ({
   state,
@@ -21,8 +22,12 @@ export const TopBar: React.FC<{ state: GameState; you: PlayerId; objectivesHeld:
             <small>/{MAX_ROUNDS}</small>
           </b>
         </span>
-        <span className={`turn-chip ${myTurn ? 'turn-active' : ''}`}>{myTurn ? 'YOUR TURN' : `${state.activePlayer} MOVING`}</span>
-        <span className={`player-chip ${you.toLowerCase()}`}>{you}</span>
+        <span className={`turn-chip ${myTurn ? 'turn-active' : ''}`}>
+          {myTurn ? 'YOUR TURN' : `${FACTION_SHORT[state.activePlayer]} MOVING`}
+        </span>
+        <span className={`player-chip ${you.toLowerCase()}`} data-testid="you-chip">
+          {FACTION_SHORT[you]}
+        </span>
       </div>
       <div className="hud-group">
         <span className="hud-stat">
@@ -45,10 +50,10 @@ export const TopBar: React.FC<{ state: GameState; you: PlayerId; objectivesHeld:
         </span>
         <span className="hud-stat vp">
           <i>VP · to {VP_WIN_THRESHOLD}</i>
-          <b>
-            <span className="vp-blue">{state.players.BLUEFOR.vp}</span>
+          <b title={`${FACTION_SHORT[you]} : ${FACTION_SHORT[otherPlayer(you)]}`}>
+            <span className={you === 'SABRE' ? 'vp-blue' : 'vp-red'}>{state.players[you].vp}</span>
             <small> : </small>
-            <span className="vp-red">{state.players.REDFOR.vp}</span>
+            <span className={you === 'SABRE' ? 'vp-red' : 'vp-blue'}>{state.players[otherPlayer(you)].vp}</span>
           </b>
         </span>
       </div>

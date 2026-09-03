@@ -33,6 +33,7 @@ import { Contact, DetectionLevel, Formation, GameState, PlayerId, otherPlayer } 
 const GENERIC_SHORT: Record<Formation['type'], string> = {
   INFANTRY: 'INF',
   COMMANDO: 'CDO',
+  GUARDS: 'GDS',
   ARMOUR: 'ARM',
   ARTILLERY: 'ARTY',
   ENGINEER: 'ENGR',

@@ -164,6 +164,8 @@ export function formationGlyph(type: Formation['type']) {
       return 'IN';
     case 'COMMANDO':
       return 'CD';
+    case 'GUARDS':
+      return 'GD';
     case 'ARMOUR':
       return 'AR';
     case 'ARTILLERY':

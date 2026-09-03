@@ -70,7 +70,7 @@ export const HeroBackdrop: React.FC = () => {
           height: h,
           camera: { x: GRID_SIZE * 0.44, y: GRID_SIZE * 0.46, scale },
           state,
-          viewer: 'BLUEFOR',
+          viewer: 'SABRE',
           selected: null,
           reachable: new Map(),
           attackable: new Set(),

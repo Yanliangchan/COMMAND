@@ -478,8 +478,8 @@ export function levelRank(l: DetectionLevel): number {
  *  arcs during THEIR turn is spotted by you just the same. */
 export function refreshAllSpotting(state: GameState): Record<PlayerId, SpottingResult> {
   return {
-    BLUEFOR: refreshSpotting(state, 'BLUEFOR'),
-    REDFOR: refreshSpotting(state, 'REDFOR'),
+    SABRE: refreshSpotting(state, 'SABRE'),
+    VANGUARD: refreshSpotting(state, 'VANGUARD'),
   };
 }
 

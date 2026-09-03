@@ -9,7 +9,7 @@
 
 import { FORMATION_DEFS } from './data';
 import { distance, isInSupplyRange, movesRemaining, computeReachable } from './engine';
-import { AP_COSTS, ActionKind, Formation, GameState, PlayerId } from './types';
+import { AP_COSTS, ActionKind, Formation, GameState, PlayerId, SPECIAL_OP_TYPES } from './types';
 import { TargetMode } from '../App.types';
 
 /** Stable identifier for a UI action (1:1 with an engine ActionKind). */
@@ -107,7 +107,7 @@ export const ACTION_SPECS: ActionSpec[] = [
     shortcut: 'X',
     apCost: AP_COSTS.SPECIAL_OP,
     mode: 'SPECIAL_OP',
-    blurb: 'Commandos only. Raid a distant enemy or probe deep behind their lines.',
+    blurb: 'Commandos and Guards only. Raid a distant enemy or probe deep behind their lines.',
   },
 ];
 
@@ -166,7 +166,7 @@ export function actionAvailability(state: GameState, f: Formation, viewer: Playe
         applicable = f.type === 'ENGINEER';
         break;
       case 'SPECIAL_OP':
-        applicable = f.type === 'COMMANDO';
+        applicable = SPECIAL_OP_TYPES.includes(f.type);
         break;
       default:
         applicable = true;

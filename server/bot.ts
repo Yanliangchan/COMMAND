@@ -51,6 +51,11 @@ export type BotDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
 
 interface Weights {
   objectiveWeight: number; // how strongly to path toward uncontrolled objectives
+  /**
+   * Tiles of "shortcut" the bot credits an objective with per extra VP/round.
+   * 0 = pick the nearest objective regardless of what it is worth (EASY).
+   */
+  objectiveValueBias: number;
   attackThreshold: number; // predicted win-ratio below which an attack is considered "bad"
   isolationBonus: number; // reward per point of target weakness/isolation (combined-arms target priority)
   reconPriority: number; // baseline value of a recon sweep
@@ -77,13 +82,13 @@ interface Weights {
 const WEIGHTS: Record<BotDifficulty, Weights> = {
   // Mostly-random legal moves, weak objective/combined-arms awareness, will
   // take bad attacks and can waste AP on low-value actions.
-  EASY: { objectiveWeight: 0.4, attackThreshold: 0, isolationBonus: 0, reconPriority: 0.2, resupplyThreshold: 15, clusterWeight: 0, randomness: 0.45, minScore: -100, maxBoundsPerUnit: 1, cohesionWeight: 0, useGroupMoves: false },
+  EASY: { objectiveWeight: 0.4, objectiveValueBias: 0, attackThreshold: 0, isolationBonus: 0, reconPriority: 0.2, resupplyThreshold: 15, clusterWeight: 0, randomness: 0.45, minScore: -100, maxBoundsPerUnit: 1, cohesionWeight: 0, useGroupMoves: false },
   // Prioritizes objectives, recons before committing when AP allows, avoids
   // clearly bad attacks, keeps an eye on supply.
-  MEDIUM: { objectiveWeight: 1.1, attackThreshold: 0.42, isolationBonus: 4, reconPriority: 0.7, resupplyThreshold: 35, clusterWeight: 0.3, randomness: 0.12, minScore: 0.2, maxBoundsPerUnit: 3, cohesionWeight: 0.7, useGroupMoves: true },
+  MEDIUM: { objectiveWeight: 1.1, objectiveValueBias: 2.5, attackThreshold: 0.42, isolationBonus: 4, reconPriority: 0.7, resupplyThreshold: 35, clusterWeight: 0.3, randomness: 0.12, minScore: 0.2, maxBoundsPerUnit: 3, cohesionWeight: 0.7, useGroupMoves: true },
   // Combined-arms aware, target-prioritizes weakened/isolated formations,
   // defends held objectives, manages logistics, spends its AP efficiently.
-  HARD: { objectiveWeight: 1.4, attackThreshold: 0.5, isolationBonus: 9, reconPriority: 1.1, resupplyThreshold: 55, clusterWeight: 0.8, randomness: 0.02, minScore: 0.5, maxBoundsPerUnit: 3, cohesionWeight: 1.2, useGroupMoves: true },
+  HARD: { objectiveWeight: 1.4, objectiveValueBias: 4, attackThreshold: 0.5, isolationBonus: 9, reconPriority: 1.1, resupplyThreshold: 55, clusterWeight: 0.8, randomness: 0.02, minScore: 0.5, maxBoundsPerUnit: 3, cohesionWeight: 1.2, useGroupMoves: true },
 };
 
 interface Candidate {
@@ -96,25 +101,35 @@ function dist(x0: number, y0: number, x1: number, y1: number) {
 }
 
 /**
- * Nearest objective this formation could actually take: warships go for
- * maritime objectives, ground formations for land ones — the bot never walks a
- * frigate at a bridge or an infantry battalion at an open-sea anchorage.
+ * Best objective this formation could actually take: warships go for maritime
+ * objectives, ground formations for land ones — the bot never walks a frigate
+ * at a bridge or an infantry battalion at an open-sea anchorage.
+ *
+ * Phase 5: objectives are no longer all worth the same. The ones on the axis
+ * of advance pay two to three times a rear-area objective, so "nearest" alone
+ * would send the bot to mop up cheap ground behind its own line while the
+ * valuable middle went uncontested. Distance is discounted by VALUE — each
+ * extra VP per round is treated as `valueBias` tiles of shortcut — so the bot
+ * walks past a 1 VP depot to fight for a 5 VP town, which is exactly the
+ * behaviour the map is now designed to reward.
  */
-function nearestUncontrolledObjective(
+function bestUncontrolledObjective(
   objectives: Objective[],
   bot: PlayerId,
   x: number,
   y: number,
-  naval: boolean
+  naval: boolean,
+  valueBias: number
 ): { obj: Objective; d: number } | null {
-  let best: { obj: Objective; d: number } | null = null;
+  let best: { obj: Objective; d: number; rank: number } | null = null;
   for (const o of objectives) {
     if (o.controlledBy === bot) continue;
     if (!!o.maritime !== naval) continue;
     const d = dist(x, y, o.x, o.y);
-    if (!best || d < best.d) best = { obj: o, d };
+    const rank = d - (o.vpPerTurn - 1) * valueBias;
+    if (!best || rank < best.rank) best = { obj: o, d, rank };
   }
-  return best;
+  return best ? { obj: best.obj, d: best.d } : null;
 }
 
 // What the bot assumes about an enemy it has identified but not confirmed.
@@ -274,7 +289,7 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
       // A line battalion only sweeps when it has an actual unidentified blip in
       // front of it; the sensor units are allowed to screen speculatively.
       if (toIdentify > 0 || isReconAsset) {
-        const nearestObj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y, def.isNaval);
+        const nearestObj = bestUncontrolledObjective(state.objectives, bot, f.x, f.y, def.isNaval, w.objectiveValueBias);
         let score = w.reconPriority * (isReconAsset ? 1 : 0.4);
         score += toIdentify * 1.5 + toRefresh * 0.35;
         // A recce screen pushed onto the next objective is worth something even
@@ -302,7 +317,7 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
         let targetX = f.x;
         let targetY = f.y;
         let haveTarget = false;
-        const nearestObj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y, def.isNaval);
+        const nearestObj = bestUncontrolledObjective(state.objectives, bot, f.x, f.y, def.isNaval, w.objectiveValueBias);
         // Support elements (guns, engineers) shadow the manoeuvre formation
         // they are working with once they drift outside cohesion range —
         // artillery and engineers now have the mobility to actually do it.
@@ -381,7 +396,7 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
           dist(o.x, o.y, f.x, f.y) <= COHESION_RADIUS
       );
       if (!partner) continue;
-      const obj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y, false);
+      const obj = bestUncontrolledObjective(state.objectives, bot, f.x, f.y, false, w.objectiveValueBias);
       if (!obj) continue;
       const plan = planGroupMove(state, [f.id, partner.id], obj.obj.x, obj.obj.y);
       if (!plan.ok) continue;

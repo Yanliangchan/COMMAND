@@ -194,11 +194,11 @@ export const Lobby: React.FC<Props> = ({ status, roomCode, error, onCreate, onJo
         </main>
 
         <footer className="landing-foot">
-          <span>BLUEFOR · Singapore Armed Forces</span>
+          <span>Task Force Sabre</span>
           <span className="foot-dot" />
-          <span>REDFOR · Northern Union Forces</span>
+          <span>Task Force Vanguard</span>
           <span className="foot-dot" />
-          <span>Fictional scenario — see the field manual</span>
+          <span>Exercise Sabre Vanguard — a fictional SAF force-on-force exercise. See the field manual.</span>
         </footer>
       </div>
 

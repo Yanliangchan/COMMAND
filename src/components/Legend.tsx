@@ -1,5 +1,7 @@
 import React from 'react';
-import { TERRAIN_COLORS } from '../render/colors';
+import { PLAYER_COLORS, TERRAIN_COLORS } from '../render/colors';
+import { FACTION_SHORT } from '../game/data';
+import { PlayerId, otherPlayer } from '../game/types';
 
 /**
  * Every legend entry pairs a colour swatch with a distinct symbol, so the map
@@ -73,10 +75,25 @@ const DETECTION_STATES: Entry[] = [
   },
 ];
 
-const MARKERS: Entry[] = [
-  { symbol: 'IN', color: '#6fa8c9', label: 'Friendly formation', note: 'Blue ring. Two letters give the arm.' },
-  { symbol: 'IN', color: '#c17a5f', label: 'Enemy formation', note: 'Red ring — currently detected. The badge says how well you know it.' },
-  { symbol: '★', color: '#cf9a44', label: 'Objective', note: 'Hold it to earn Victory Points each round.' },
+/**
+ * Counter colours are per SIDE, not per allegiance, so the legend has to be
+ * built against the viewer — a Task Force Vanguard player's own counters are
+ * the red ones.
+ */
+const markersFor = (viewer: PlayerId): Entry[] => [
+  {
+    symbol: 'IN',
+    color: PLAYER_COLORS[viewer].main,
+    label: `Friendly formation (${FACTION_SHORT[viewer]})`,
+    note: 'Your own counters. Two letters give the arm.',
+  },
+  {
+    symbol: 'IN',
+    color: PLAYER_COLORS[otherPlayer(viewer)].main,
+    label: `Enemy formation (${FACTION_SHORT[otherPlayer(viewer)]})`,
+    note: 'Currently detected. The badge says how well you know it.',
+  },
+  { symbol: '★', color: '#cf9a44', label: 'Objective', note: 'Pays Victory Points each round you are still holding it after the enemy has replied. The ones between the two deployment areas are worth two to three times a rear-area objective.' },
   { symbol: '⚓', color: '#cf9a44', label: 'Anchorage', note: 'Maritime objective — only ships can hold it.' },
   { symbol: '◆', color: '#cf9a44', label: 'Supply depot', note: 'Projects supply around itself.' },
   { symbol: 'TY', color: '#93a35f', label: 'Artillery', note: 'Long-range fire missions, weak in close combat.' },
@@ -111,7 +128,7 @@ function Row({ e }: { e: Entry }) {
   );
 }
 
-export const Legend: React.FC<{ onClose: () => void }> = ({ onClose }) => (
+export const Legend: React.FC<{ viewer: PlayerId; onClose: () => void }> = ({ viewer, onClose }) => (
   <div className="floating-panel legend-panel" data-testid="legend-panel">
     <div className="floating-head">
       <span>MAP LEGEND</span>
@@ -132,7 +149,7 @@ export const Legend: React.FC<{ onClose: () => void }> = ({ onClose }) => (
           <Row key={e.label} e={e} />
         ))}
         <div className="legend-sub">MARKERS</div>
-        {MARKERS.map((e) => (
+        {markersFor(viewer).map((e) => (
           <Row key={e.label} e={e} />
         ))}
       </div>

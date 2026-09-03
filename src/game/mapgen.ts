@@ -213,11 +213,64 @@ interface Attempt {
   map?: GeneratedMap;
 }
 
+// ---------------------------------------------------------------------------
+// CONTEST GEOMETRY (phase 5)
+//
+// The two deployment areas are placed as MIRROR IMAGES of each other in the
+// map's leading diagonal (x <-> y). The sea mask opens the south-east on both
+// axes at exactly the same fraction (0.62), so reflecting a
+// point in that diagonal maps land onto land: SABRE deploys in the west,
+// VANGUARD in the north, and neither gets the better hinterland by accident.
+// This is what makes the map fair BY CONSTRUCTION rather than by luck of the
+// seed — see README, "Side balance".
+//
+// The line between the two homes is the AXIS OF ADVANCE; its midpoint is the
+// centre of the battlefield. `contestScore` is 1 there and falls to 0 in
+// either rear area, and it drives settlement siting, which river crossings and
+// hills become objectives, and what those objectives are worth. Objectives you
+// can take uncontested are boring, so the valuable ones are put where the two
+// forces have to meet to reach them.
+// ---------------------------------------------------------------------------
+
+/** Home anchor of each side, as a fraction of the grid. Mirror images. */
+const HOME_ANCHORS: Record<PlayerId, { fx: number; fy: number }> = {
+  SABRE: { fx: 0.18, fy: 0.49 },
+  VANGUARD: { fx: 0.49, fy: 0.18 },
+};
+/** Port anchors, likewise mirrored, on opposite ends of the seaboard. */
+const PORT_ANCHORS: Record<PlayerId, { fx: number; fy: number }> = {
+  SABRE: { fx: 0.18, fy: 0.82 },
+  VANGUARD: { fx: 0.82, fy: 0.18 },
+};
+/** Airfield anchors, mirrored, pulled in toward the axis of advance. */
+const AIRFIELD_ANCHORS: { fx: number; fy: number }[] = [
+  { fx: 0.22, fy: 0.40 },
+  { fx: 0.40, fy: 0.22 },
+];
+
 function generateAttempt(seed: number, attemptNo: number): Attempt {
   const rand = mulberry32(seed);
   const heightNoise = new ValueNoise(rand);
   const moistNoise = new ValueNoise(rand);
   const detailNoise = new ValueNoise(rand);
+
+  const home: Record<PlayerId, { x: number; y: number }> = {
+    SABRE: { x: Math.round(N * HOME_ANCHORS.SABRE.fx), y: Math.round(N * HOME_ANCHORS.SABRE.fy) },
+    VANGUARD: { x: Math.round(N * HOME_ANCHORS.VANGUARD.fx), y: Math.round(N * HOME_ANCHORS.VANGUARD.fy) },
+  };
+  const axisLen = Math.hypot(home.SABRE.x - home.VANGUARD.x, home.SABRE.y - home.VANGUARD.y);
+  /**
+   * 1 on the ground both sides must fight through, 0 deep in either rear area.
+   * Combines "equidistant from both homes" with "actually between them", so a
+   * point far off to one flank scores low even if it is impartially placed.
+   */
+  const contestScore = (x: number, y: number) => {
+    const ds = Math.hypot(x - home.SABRE.x, y - home.SABRE.y);
+    const dv = Math.hypot(x - home.VANGUARD.x, y - home.VANGUARD.y);
+    const balance = 1 - Math.abs(ds - dv) / axisLen;
+    const between = 1 - Math.max(0, (ds + dv - axisLen) / axisLen);
+    return Math.max(0, Math.min(1, balance * 0.5 + between * 0.5));
+  };
 
   // ---- 1. Heightfield -----------------------------------------------------
   const h = new Float32Array(N * N);
@@ -236,8 +289,12 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
       e = e * 0.68 + ridge * 0.32;
 
       // Sea mask: the south-east quadrant opens onto one continuous ocean.
-      const east = Math.max(0, (x - N * 0.60) / (N * 0.40));
-      const south = Math.max(0, (y - N * 0.64) / (N * 0.36));
+      // Phase 5: the east and south cut-ins were 0.60 / 0.64. They are now the
+      // same number, so the mask — and therefore the shape of the landmass —
+      // is symmetric under reflection in the leading diagonal, which is the
+      // symmetry the two mirrored deployment areas rely on.
+      const east = Math.max(0, (x - N * 0.62) / (N * 0.38));
+      const south = Math.max(0, (y - N * 0.62) / (N * 0.38));
       const seaMask = Math.min(1, Math.max(east, south) ** 1.25 + Math.min(east, south) * 0.5);
       // Keep the north-west shoulder solidly land so both sides have a hinterland.
       const inland = Math.max(0, 1 - Math.hypot(x / N, y / N) * 1.15);
@@ -370,9 +427,12 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     if (!isSea[pick]) isRiver[pick] = 1;
   }
 
-  // Widen only the biggest trunks by one cell so major rivers read as barriers.
+  // Widen the trunks by one cell so major rivers read as genuine barriers.
+  // Phase 5 lowered the threshold 6x -> 3x the river threshold: a wider trunk
+  // is a wider obstacle, which is what makes the handful of bridges over it
+  // worth fighting for instead of merely worth walking across.
   for (let i = 0; i < N * N; i++) {
-    if (!isRiver[i] || acc[i] < RIVER_THRESHOLD * 6) continue;
+    if (!isRiver[i] || acc[i] < RIVER_THRESHOLD * 3) continue;
     const x = i % N;
     const y = (i / N) | 0;
     const [dx, dy] = N4[(x * 7 + y * 3) % 4];
@@ -558,6 +618,11 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     s += Math.max(0, 1 - distWater[i] / 6) * 3; // near fresh water / coast
     s += terrain[i] === 'GRASS' || terrain[i] === 'OPEN' ? 1.5 : 0;
     s -= Math.max(0, 6 - Math.min(x, y, N - 1 - x, N - 1 - y)) * 0.5; // not jammed on the edge
+    // Phase 5: towns (and therefore the biggest objectives on the board) are
+    // pulled onto the axis of advance. A settlement in a rear area is a free
+    // objective for whoever starts nearest it; one on the axis has to be taken
+    // and then held against a counter-attack.
+    s += contestScore(x, y) * 4.5;
     return s;
   };
   const candidates: { x: number; y: number; s: number }[] = [];
@@ -649,14 +714,15 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
   };
 
   const ports: { x: number; y: number; owner: PlayerId }[] = [];
-  // BLUEFOR holds the south-western seaboard, REDFOR the eastern one.
-  const bluePortSite = findPortTile(Math.round(N * 0.18), Math.round(N * 0.82), Math.round(N * 0.3));
-  const redPortSite = findPortTile(Math.round(N * 0.84), Math.round(N * 0.28), Math.round(N * 0.3));
+  // SABRE holds the south-western seaboard, VANGUARD the eastern one — the two
+  // port anchors are mirror images so neither side gets the better berth.
+  const bluePortSite = findPortTile(Math.round(N * PORT_ANCHORS.SABRE.fx), Math.round(N * PORT_ANCHORS.SABRE.fy), Math.round(N * 0.3));
+  const redPortSite = findPortTile(Math.round(N * PORT_ANCHORS.VANGUARD.fx), Math.round(N * PORT_ANCHORS.VANGUARD.fy), Math.round(N * 0.3));
   if (!bluePortSite || !redPortSite) return { ok: false, reason: 'no viable port sites' };
   if (Math.hypot(bluePortSite.x - redPortSite.x, bluePortSite.y - redPortSite.y) < N * 0.4) {
     return { ok: false, reason: 'ports too close together' };
   }
-  ports.push({ ...bluePortSite, owner: 'BLUEFOR' }, { ...redPortSite, owner: 'REDFOR' });
+  ports.push({ ...bluePortSite, owner: 'SABRE' }, { ...redPortSite, owner: 'VANGUARD' });
   for (const p of ports) {
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
@@ -682,10 +748,7 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     }
     return s;
   };
-  for (const anchor of [
-    { x: Math.round(N * 0.2), y: Math.round(N * 0.3) },
-    { x: Math.round(N * 0.62), y: Math.round(N * 0.16) },
-  ]) {
+  for (const anchor of AIRFIELD_ANCHORS.map((a) => ({ x: Math.round(N * a.fx), y: Math.round(N * a.fy) }))) {
     let best: { x: number; y: number; s: number } | null = null;
     for (let y = Math.max(3, anchor.y - 13); y < Math.min(N - 3, anchor.y + 13); y++) {
       for (let x = Math.max(3, anchor.x - 13); x < Math.min(N - 3, anchor.x + 13); x++) {
@@ -718,12 +781,16 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     }
     return null;
   };
-  const blueDepot = pickLandNear(Math.round(N * 0.12), Math.round(N * 0.42));
-  const redDepot = pickLandNear(Math.round(N * 0.88), Math.round(N * 0.14));
+  // Mirrored home anchors, and closer together than the phase-3 corners: the
+  // two forces now start ~45 tiles apart on the Manhattan metric rather than
+  // ~70, which is what pulls first contact forward without making round 1 a
+  // knife fight (their leading elements still need a full bound to touch).
+  const blueDepot = pickLandNear(home.SABRE.x, home.SABRE.y);
+  const redDepot = pickLandNear(home.VANGUARD.x, home.VANGUARD.y);
   if (!blueDepot || !redDepot) return { ok: false, reason: 'no depot sites' };
   const depots = [
-    { ...blueDepot, owner: 'BLUEFOR' as PlayerId },
-    { ...redDepot, owner: 'REDFOR' as PlayerId },
+    { ...blueDepot, owner: 'SABRE' as PlayerId },
+    { ...redDepot, owner: 'VANGUARD' as PlayerId },
   ];
 
   // ---- 11. Road network: MST over key nodes, each edge routed by A* --------
@@ -741,8 +808,12 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     const t = terrain[to];
     if (t === 'WATER') {
       // Roads only cross *rivers*, and only by building a bridge there.
+      // Phase 5 raised the crossing cost 14 -> 30: bridging is expensive enough
+      // that the road network detours a long way to REUSE an existing crossing
+      // rather than build a second one, so the map ends up with a handful of
+      // heavily-used bridges instead of a permeable river line.
       if (!isRiver[to]) return Infinity;
-      return 14;
+      return isRoad[to] ? 6 : 30;
     }
     let c = 1;
     if (t === 'FOREST') c = 2.4;
@@ -824,7 +895,9 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     edges.push([best.a, best.b]);
     connected.add(best.b);
   }
-  for (let k = 0; k < 3; k++) {
+  // One redundancy edge, not three: enough that the network is not a bare tree,
+  // few enough that traffic still funnels through the same crossings and passes.
+  {
     const a = Math.floor(rand() * M);
     const b = Math.floor(rand() * M);
     if (a !== b) edges.push([a, b]);
@@ -956,7 +1029,7 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
   };
 
   const usedNaval = new Set<number>();
-  const navalSpawns: Record<PlayerId, { x: number; y: number }[]> = { BLUEFOR: [], REDFOR: [] };
+  const navalSpawns: Record<PlayerId, { x: number; y: number }[]> = { SABRE: [], VANGUARD: [] };
   for (const p of ports) {
     for (let k = 0; k < 2; k++) {
       const s = nearestNavigable(p.x, p.y, usedNaval);
@@ -967,6 +1040,14 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
   }
 
   // ---- 15. Objectives ------------------------------------------------------
+  //
+  // Phase 5 — objective VALUE follows contested-ness. Every objective has a
+  // floor worth having, but the ground on the axis of advance is worth two to
+  // three times what a rear-area objective is worth. A side that sits on its
+  // own hinterland cannot reach the victory threshold in the round limit; the
+  // only way to win is to go and take the middle, and (because each side is
+  // now paid for what it still HOLDS after the opponent's reply — see
+  // engine.tickObjectives) to keep holding it.
   const objectives: Objective[] = [];
   const addObjective = (x: number, y: number, name: string, kind: ObjectiveKind, vp: number, maritime = false) => {
     if (!inB(x, y)) return;
@@ -975,10 +1056,13 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     objectives.push(o);
     tiles[y][x].objectiveId = o.id;
   };
+  /** Floor value + a contested-ground premium, rounded to a whole VP. */
+  const contestedVp = (x: number, y: number, floor: number, premium: number) =>
+    floor + Math.round(contestScore(x, y) * premium);
 
-  for (const s of settlements) addObjective(s.x, s.y, `${s.name} District`, 'Urban District', 3);
-  ports.forEach((p, i) => addObjective(p.x, p.y, `${i === 0 ? 'Western' : 'Eastern'} Port`, 'Port', 3));
-  airfields.forEach((a, i) => addObjective(a.x, a.y, `Airfield ${String.fromCharCode(65 + i)}`, 'Airfield', 3));
+  for (const s of settlements) addObjective(s.x, s.y, `${s.name} District`, 'Urban District', contestedVp(s.x, s.y, 2, 4));
+  ports.forEach((p, i) => addObjective(p.x, p.y, `${i === 0 ? 'Western' : 'Eastern'} Port`, 'Port', 2));
+  airfields.forEach((a, i) => addObjective(a.x, a.y, `Airfield ${String.fromCharCode(65 + i)}`, 'Airfield', contestedVp(a.x, a.y, 2, 3)));
   depots.forEach((d, i) => {
     addObjective(d.x, d.y, `${i === 0 ? 'Western' : 'Eastern'} Supply Depot`, 'Supply Depot', 1);
     const o = objectives.find((oo) => oo.x === d.x && oo.y === d.y);
@@ -1013,15 +1097,17 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
       crossings.push({ x: mid % N, y: (mid / N) | 0, size: cluster.length });
     }
   }
-  // Only the major crossings are worth victory points.
-  crossings.sort((a, b) => b.size - a.size);
+  // The crossings worth victory points are the big ones ON THE AXIS OF
+  // ADVANCE. A three-tile ford in a rear area is not a chokepoint; the trunk
+  // bridge both sides have to funnel over is the whole point of the river.
+  crossings.sort((a, b) => b.size + contestScore(b.x, b.y) * 14 - (a.size + contestScore(a.x, a.y) * 14));
   const namedCrossings: typeof crossings = [];
   for (const c of crossings) {
     if (namedCrossings.length >= 3) break;
     if (namedCrossings.some((n) => Math.hypot(n.x - c.x, n.y - c.y) < 9)) continue;
     namedCrossings.push(c);
   }
-  namedCrossings.forEach((c, i) => addObjective(c.x, c.y, `Bridge ${i + 1}`, 'Bridge', 2));
+  namedCrossings.forEach((c, i) => addObjective(c.x, c.y, `Bridge ${i + 1}`, 'Bridge', contestedVp(c.x, c.y, 2, 3)));
 
   // Hills: dominant local maxima, well spread.
   const peaks: { x: number; y: number; h: number }[] = [];
@@ -1034,14 +1120,17 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
       if (isPeak) peaks.push({ x, y, h: h[i] });
     }
   }
-  peaks.sort((a, b) => b.h - a.h);
+  // Ranked by dominance AND by whether the feature actually overlooks the
+  // ground the two forces will fight over — a commanding peak behind your own
+  // start line is scenery, not an objective.
+  peaks.sort((a, b) => norm(b.h) + contestScore(b.x, b.y) * 1.6 - (norm(a.h) + contestScore(a.x, a.y) * 1.6));
   const chosenPeaks: typeof peaks = [];
   for (const p of peaks) {
     if (chosenPeaks.length >= 3) break;
     if (chosenPeaks.some((c) => Math.hypot(c.x - p.x, c.y - p.y) < 13)) continue;
     chosenPeaks.push(p);
   }
-  chosenPeaks.forEach((p) => addObjective(p.x, p.y, `Hill ${Math.round(norm(p.h) * 400 + 60)}`, 'Hill', 2));
+  chosenPeaks.forEach((p) => addObjective(p.x, p.y, `Hill ${Math.round(norm(p.h) * 400 + 60)}`, 'Hill', contestedVp(p.x, p.y, 1, 3)));
 
   // Maritime anchorages: open-sea control points, spread along the seaboard.
   const anchorCandidates = navigableTiles.filter((i) => {
@@ -1055,8 +1144,8 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
   // Anchorages are deliberately BALANCED across the seaboard: one nearer each
   // side's naval spawn plus one in the middle. Clustering them all on one
   // coast would hand that side every maritime VP for free.
-  const blueSpawn = navalSpawns.BLUEFOR[0];
-  const redSpawn = navalSpawns.REDFOR[0];
+  const blueSpawn = navalSpawns.SABRE[0];
+  const redSpawn = navalSpawns.VANGUARD[0];
   const scored = anchorCandidates
     .map((i) => {
       const x = i % N;
@@ -1073,8 +1162,8 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
       .sort((a, b) => rank(a) - rank(b));
     if (pool.length) anchors.push({ x: pool[0].x, y: pool[0].y });
   };
-  takeAnchor((c) => c.bias); // most BLUEFOR-side
-  takeAnchor((c) => -c.bias); // most REDFOR-side
+  takeAnchor((c) => c.bias); // most SABRE-side
+  takeAnchor((c) => -c.bias); // most VANGUARD-side
   takeAnchor((c) => Math.abs(c.bias)); // contested middle
   anchors.forEach((a, i) => addObjective(a.x, a.y, `Anchorage ${String.fromCharCode(65 + i)}`, 'Anchorage', 2, true));
 
@@ -1111,10 +1200,10 @@ function generateAttempt(seed: number, attemptNo: number): Attempt {
     return out;
   };
   const startZones: Record<PlayerId, { x: number; y: number }[]> = {
-    BLUEFOR: pickStartZone(depots[0].x, depots[0].y, 12),
-    REDFOR: pickStartZone(depots[1].x, depots[1].y, 12),
+    SABRE: pickStartZone(depots[0].x, depots[0].y, 12),
+    VANGUARD: pickStartZone(depots[1].x, depots[1].y, 12),
   };
-  if (startZones.BLUEFOR.length < 8 || startZones.REDFOR.length < 8) {
+  if (startZones.SABRE.length < 8 || startZones.VANGUARD.length < 8) {
     return { ok: false, reason: 'insufficient deployment ground' };
   }
 
@@ -1229,7 +1318,7 @@ export function validateMap(map: GeneratedMap): ValidationResult {
     }
     if (seen[idx(x, y)] !== main) errors.push(`${what} at (${x},${y}) is on an isolated pool`);
   };
-  (['BLUEFOR', 'REDFOR'] as PlayerId[]).forEach((side) => {
+  (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
     if (map.navalSpawns[side].length === 0) errors.push(`${side} has no naval spawn`);
     map.navalSpawns[side].forEach((s) => requireNavigable(s.x, s.y, `${side} naval spawn`));
   });
@@ -1281,7 +1370,7 @@ export function validateMap(map: GeneratedMap): ValidationResult {
     .forEach((o) => {
       if (lseen[idx(o.x, o.y)] !== mainLand) errors.push(`land objective ${o.name} is not on the main landmass`);
     });
-  (['BLUEFOR', 'REDFOR'] as PlayerId[]).forEach((side) => {
+  (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
     map.startZones[side].forEach((s) => {
       if (lseen[idx(s.x, s.y)] !== mainLand) errors.push(`${side} deployment tile (${s.x},${s.y}) is stranded`);
     });

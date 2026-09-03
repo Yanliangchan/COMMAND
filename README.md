@@ -122,8 +122,8 @@ movement, and fog-of-war in the whole codebase.
   the next Quick Match request pairs with it immediately). A room starts the
   moment its second seat fills.
 - **Side assignment.** Whoever fills each of a room's two seats gets
-  `BLUEFOR`/`REDFOR` assigned **randomly** per room (not "creator is always
-  BLUEFOR") — the server flips a coin once per room in `makeSeats()`.
+  `SABRE`/`VANGUARD` assigned **randomly** per room (not "creator is always
+  SABRE") — the server flips a coin once per room in `makeSeats()`.
 - **Server authority.** `server/index.ts` holds the one true `GameState` per
   room and is the only place `engine.ts`'s mutating functions
   (`moveFormation`, `attackAction`, `endTurn`, …) are called on that state.
@@ -201,7 +201,7 @@ screen — lobby included — with:
   labels, stat values, and UI chrome; **Inter** for longer body copy (unit
   flavor text, hints, battle-report factor lines) — loaded via a Google
   Fonts `<link>` in `index.html`.
-- **Faction colors** (BLUEFOR/REDFOR on the map and in chips) were nudged
+- **Faction colors** (Sabre/Vanguard on the map and in chips) were nudged
   toward the same muted family (`#6fa8c9` steel blue / `#c17a5f` muted
   rust) rather than the old saturated cyan/coral, for consistency with the
   ops-room tone — the terrain palette in `src/render/colors.ts`
@@ -227,8 +227,10 @@ screen — lobby included — with:
    **validated before it is served** (see "Map generation" below).
 2. Pan (drag) and zoom (scroll wheel, continuous 3.5×–28× covering
    strategic/operational/tactical framing) camera over the canvas.
-3. Ten formations per side (Infantry ×3, Commandos, Armour, Artillery,
-   Combat Engineers, C4I/ISR, Frigate squadron, Littoral combat squadron),
+3. Ten formations per side (Infantry ×3, one elite manoeuvre battalion —
+   Commandos for Sabre, Guards for Vanguard — Armour, Artillery, Combat
+   Engineers, C4I/ISR, and two RSN squadrons: one surface-combatant, one
+   littoral),
    each with strength/morale/readiness/supply/ammo stats that all affect
    combat power or movement, and each with a **per-round movement-action
    allowance** (see "Movement actions and the AP economy").
@@ -264,11 +266,14 @@ screen — lobby included — with:
    contacts up the ladder, and slower decay on what it has tracked.
 8. ~20 objectives generate VP for whoever holds them uncontested; land
    objectives are held by ground formations, the three open-sea anchorages
-   only by warships. VP are paid out once per **round** (at the end of
-   REDFOR's turn) to both holders at once, and victory is only adjudicated at
-   a round boundary, so the first player does not get half a round of free
-   scoring every round. First to 200 VP (or the higher score after 24 rounds)
-   wins, with an end-game screen driven by server-pushed `phase: 'GAME_OVER'`.
+   only by warships. Objectives on the **axis of advance** are worth two to
+   three times a rear-area objective (see "Map design for engagement"). Each
+   side is paid once per **round**, at the end of the OTHER side's turn, for
+   what it is *still* holding then — so an objective has to be held through the
+   enemy's reply to score, and neither side ever gets the last word on its own
+   payout (see "Side balance"). Victory is only adjudicated at a round
+   boundary. First to 280 VP (or the higher score after 24 rounds) wins, with
+   an end-game screen driven by server-pushed `phase: 'GAME_OVER'`.
 9. Supply is a **positional modifier, not a logistics mini-game**: a formation
    is in supply within 14 tiles of one of its side's supply sources — its
    depots, or any Port / Airfield / Supply Depot objective it currently holds.
@@ -285,12 +290,27 @@ Per the design brief, this prototype does **not** reproduce any real SAF
 organisational structure, unit counts, order of battle, or
 classified/sensitive information.
 
-### Formation naming
+### The scenario: a force-on-force exercise
 
-BLUEFOR formations use **real, publicly documented SAF naming conventions**,
-verified against public sources before being adopted:
+COMMAND is framed as a **large-scale SAF force-on-force exercise** —
+*Exercise Sabre Vanguard* — fought between two task forces drawn from the same
+armed forces over a fictional training area. That framing is deliberate: it is
+what makes it coherent for **both** sides to be genuine SAF formations, and it
+avoids depicting Singapore fighting an invented enemy. The phase 1–4
+placeholder faction naming — a blue force versus a wholly invented opposing
+force with made-up battalion designations — has been retired entirely, names
+and all.
 
-| In-game formation | Designation | Echelon | Arm |
+The two sides are `TASK FORCE SABRE` and `TASK FORCE VANGUARD` (`PlayerId` in
+`src/game/types.ts` is now `'SABRE' | 'VANGUARD'`). The existing side colours (steel blue vs
+muted rust), counters, markers and legend all still work — only the NAMES were
+retired. The legend is now viewer-aware, so it labels the blue swatch
+`Friendly formation (TF SABRE)` or `(TF VANGUARD)` depending on which seat you
+hold, rather than asserting that blue always means friendly.
+
+### Orders of battle
+
+| TASK FORCE SABRE | Designation | Echelon | Arm |
 | --- | --- | --- | --- |
 | 1st Battalion, Singapore Infantry Regiment | 1 SIR | Battalion | Infantry |
 | 2nd Battalion, Singapore Infantry Regiment | 2 SIR | Battalion | Infantry |
@@ -299,11 +319,29 @@ verified against public sources before being adopted:
 | 40th Battalion, Singapore Armoured Regiment | 40 SAR | Battalion | Armour |
 | 21st Battalion, Singapore Artillery | 21 SA | Battalion | Artillery |
 | 35th Battalion, Singapore Combat Engineers | 35 SCE | Battalion | Combat Engineers |
-| 24th C4I Battalion | 24 C4I | Battalion | C4I / Signals & ISR |
+| 10th Command, Control, Communications, Computers and Intelligence Battalion | 10 C4I Bn | Battalion | C4I / Signals & ISR |
 | 185 Squadron, Republic of Singapore Navy | 185 SQN | Squadron | RSN |
 | 188 Squadron, Republic of Singapore Navy | 188 SQN | Squadron | RSN |
 
-What was checked, and what that means:
+| TASK FORCE VANGUARD | Designation | Echelon | Arm |
+| --- | --- | --- | --- |
+| 3rd Battalion, Singapore Infantry Regiment | 3 SIR | Battalion | Infantry |
+| 8th Battalion, Singapore Infantry Regiment | 8 SIR | Battalion | Infantry |
+| 9th Battalion, Singapore Infantry Regiment | 9 SIR | Battalion | Infantry |
+| 1st Battalion, Singapore Guards | 1 GDS | Battalion | Guards |
+| 41st Battalion, Singapore Armoured Regiment | 41 SAR | Battalion | Armour |
+| 20th Battalion, Singapore Artillery | 20 SA | Battalion | Artillery |
+| 30th Battalion, Singapore Combat Engineers | 30 SCE | Battalion | Combat Engineers |
+| 11th Command, Control, Communications, Computers and Intelligence Battalion | 11 C4I Bn | Battalion | C4I / Signals & ISR |
+| 191 Squadron, Republic of Singapore Navy | 191 SQN | Squadron | RSN |
+| 189 Squadron, Republic of Singapore Navy | 189 SQN | Squadron | RSN |
+
+The two ORBATs are deliberately **equivalent in weight**: three rifle
+battalions, one elite manoeuvre battalion, one armoured battalion, one
+artillery battalion, one combat-engineer battalion, one C4I battalion and two
+RSN squadrons each.
+
+### Formation naming — what was checked
 
 - The **convention** is `<ordinal> Battalion, <Regiment/Corps name>`,
   abbreviated `<number> <initials>` — e.g. "40th Battalion, Singapore Armoured
@@ -311,33 +349,56 @@ What was checked, and what that means:
   Singapore Infantry **Regiment** and the Singapore Armoured **Regiment**, but
   the **Singapore Artillery** and the **Singapore Combat Engineers** (so the
   correct form is "21st Battalion, Singapore Artillery / 21 SA", *not*
-  "21st Battalions Singapore Artillery Regiment" — the typo'd form in the
-  original brief has been corrected here rather than copied).
+  "21st Battalions Singapore Artillery Regiment"). This distinction was
+  established in phase 1 and is unchanged.
 - The Commandos use a **battalion** designation ("1st Commando Battalion",
   1 CDO BN), not a company or squadron one.
-- The intelligence/recon formation is a **C4I battalion** — the SAF publicly
-  formed C4I battalions from earlier Signal battalions, and the convention is
-  `<number> C4I Battalion` (e.g. "10 C4I"). The number **24** used in game is
-  a fictional assignment; it is not a claim about any real unit.
-- The RSN organises ships into numbered **squadrons** (e.g. 185 Squadron for
-  the Formidable-class frigates, 188 Squadron for the Victory-class
-  corvettes), not battalions.
+- The **Guards** are a Singapore Army formation specialising in air-assault,
+  expeditionary and amphibious operations; guardsmen are publicly described as
+  proficient in heliborne and underslung operations, hover-jumping,
+  heli-rappelling and fast-roping, working with Light Strike Vehicles.
+  **1st Battalion Singapore Guards (1 Guards)** is publicly documented as
+  having been raised from the SAF Guards Unit in 1977. That real character —
+  elite, highly mobile, heliborne infantry — is what the in-game `GUARDS`
+  formation type models.
+- The intelligence/recon formations are **C4I battalions**; the SAF publicly
+  formed C4I battalions out of earlier Signal battalions. **10 C4I Bn** was
+  named explicitly in the brief and replaces the fictional "24 C4I" used in
+  phases 1–4. **11 C4I Bn** follows the same convention on the other side.
+- The RSN organises ships into numbered **squadrons**, not battalions. The
+  squadron numbers used here are all publicly attested:
+  - **185 SQN** — Formidable-class frigates.
+  - **188 SQN** — Victory-class corvettes / multi-role combat vessels.
+  - **191 SQN** — Endurance-class landing platform docks (3rd Flotilla). Its
+    real role is amphibious, **not** air defence; the game slots it as
+    VANGUARD's heavy surface group because it is the comparable-weight
+    major-surface-combatant squadron. That slotting is an exercise
+    arrangement, not a claim about the squadron's task.
+  - **189 SQN** — Fearless-class patrol vessels, publicly described as armed
+    for anti-submarine work. It fills VANGUARD's littoral slot opposite
+    188 SQN.
+  No squadron number here was invented.
 
-> **The specific battalion/squadron numbers assigned to in-game formations,
-> and the roles, stats and capabilities attached to them, are fictional
-> gameplay assignments that merely follow real SAF naming conventions.** They
-> are not, and must not be read as, a real SAF order of battle. Where a real
-> unit's actual role is not publicly documented, a plausible designation
-> following the correct convention and echelon was chosen rather than
-> inventing an "organisational fact".
+> **Which battalion or squadron is assigned to which exercise task force is a
+> FICTIONAL gameplay arrangement**, as are all stats, costs, AP values, VP
+> values and morale numbers. The exercise ORBAT above is **not** a real SAF
+> organisation and must not be read as one. Only the formation names, their
+> designations, their arm of service and the general character of each arm are
+> drawn from public sources.
 
-**REDFOR is a wholly fictional opposing force** — the "Northern Union
-Forces" — with its own coherent, deliberately non-SAF scheme (3/7/11
-Motorised Rifle Battalions, 1st Special Purpose Battalion, 22nd Tank
-Battalion, 14th Gun & Rocket Artillery Battalion, 6th Assault Engineer
-Battalion, 9th Reconnaissance & EW Battalion, 1st Guided-Missile Frigate
-Group, 5th Missile Corvette Flotilla). It is not a mirror of real SAF unit
-numbers, and its equipment text names no real platform.
+### The two elite manoeuvre battalions
+
+Each task force fields exactly one. They are **differently flavoured but
+comparably strong**, and neither is a strict upgrade of the other:
+
+| | 1 CDO BN (`COMMANDO`) | 1 GDS (`GUARDS`) |
+| --- | --- | --- |
+| Attack / Defence | 7 / 4 | 7 / 6 |
+| Movement | 6 pts × 3 bounds | 6 pts × 3 bounds |
+| Passive / recon sight | 7 / 11 tiles | 5 / 8 tiles |
+| Identify factor | 1.20 (best on the board) | 1.00 |
+| Special Op reach | 6 tiles | 4 tiles |
+| Character | raiding and deep reconnaissance; fragile in a stand-up fight | air-assault infantry that fights as formed infantry once on the ground |
 
 ### Equipment flavour
 
@@ -345,7 +406,7 @@ numbers, and its equipment text names no real platform.
   ICV, Bronco, SPIKE-LR ATGM, Leopard 2SG, Hunter AFV, Bionix, SSPH Primus,
   SLWH Pegasus, FH2000, HIMARS, F-15SG, F-16, Heron 1, Hermes 450,
   Formidable-class frigate, Victory-class corvette, Independence-class LMV —
-  appear only as descriptive flavour text on BLUEFOR formations
+  appear only as descriptive flavour text on formations
   (`ORDERS_OF_BATTLE` in `src/game/data.ts`). They do not imply any real
   organisational structure, unit strength, or capability figure, and no
   platform is attributed to any real unit.
@@ -389,12 +450,13 @@ combat/support split. `Movement Range` is the movement points one bound gets
 | --- | --- | --- | --- | --- | --- | --- |
 | Infantry (1/2/5 SIR) | 4 | 2 | 0.65 | 6 | 8 (12) | — |
 | Commandos (1 CDO BN) | 6 | 3 | 0.70 | 8 | 18 (24) | — |
-| Armour (40 SAR) | 5 | 2 | 0.50 | 10 | 10 (20) | ×1.5 |
-| Artillery (21 SA) | 4 | 2 | 0.50 | 8 | 8 (16) | ×1.25 |
-| Combat Engineers (35 SCE) | 4 | 2 | 0.50 | 8 | 8 (16) | ×1.25 |
-| C4I / ISR (24 C4I) | 6 | 3 | 0.50 | 12 | 18 (36) | — |
-| Frigate squadron (185 SQN) | 7 | 2 | — | — | 14 | — |
-| Littoral squadron (188 SQN) | 8 | 3 | — | — | 24 | — |
+| Guards (1 GDS) | 6 | 3 | 0.70 | 8 | 18 (24) | — |
+| Armour (40 / 41 SAR) | 5 | 2 | 0.50 | 10 | 10 (20) | ×1.5 |
+| Artillery (21 / 20 SA) | 4 | 2 | 0.50 | 8 | 8 (16) | ×1.25 |
+| Combat Engineers (35 / 30 SCE) | 4 | 2 | 0.50 | 8 | 8 (16) | ×1.25 |
+| C4I / ISR (10 / 11 C4I Bn) | 6 | 3 | 0.50 | 12 | 18 (36) | — |
+| Surface combatant squadron (185 / 191 SQN) | 7 | 2 | — | — | 14 | — |
+| Littoral squadron (188 / 189 SQN) | 8 | 3 | — | — | 24 | — |
 
 "Rough going" is the surcharge heavy formations pay in forest, urban and
 industrial tiles — it is what makes armour specifically fast **on roads and in
@@ -532,9 +594,10 @@ a circle, while movement and attack range stay Manhattan).
 | Formation | Passive | Recon sweep (R) | Identify factor | Confidence lost per round once sight is lost |
 | --- | --- | --- | --- | --- |
 | C4I / ISR (Recon) | 9 | 14 | ×1.40 | 10 |
-| Frigate | 8 | 11 | ×1.15 | 15 |
+| Surface combatant | 8 | 11 | ×1.15 | 15 |
 | Commando | 7 | 11 | ×1.20 | 16 |
 | Corvette | 7 | 9 | ×1.05 | 18 |
+| Guards | 5 | 8 | ×1.00 | 20 |
 | Infantry | 5 | 8 | ×1.00 | 22 |
 | Armour | 5 | 7 | ×0.95 | 24 |
 | Engineer | 4 | 6 | ×0.85 | 25 |
@@ -620,16 +683,17 @@ power, an Identified target **−12%**, a Confirmed target nothing.
 | | Phase 4a baseline | Phase 4b |
 | --- | --- | --- |
 | Rounds per game | 12.1 (10–16) | 12.1 (10–15) |
-| Win split BLUEFOR / REDFOR | 8 / 22 | 7 / 22 / 1 draw |
+| Win split, first-moving side / second | 8 / 22 | 7 / 22 / 1 draw |
 | Enemy force with any contact, per turn | 54.3% | **59.9%** |
 | Enemy force *actionable* (live / Identified+) | 23.2% | **44.0%** |
 | Enemy force at Confirmed | — | 18.2% |
 | Distinct contacts per game, both sides | 15.8 | 17.0 |
 | Recon orders per game, both sides | 28.1 | 40.0 |
 
-Game length is unchanged and the BLUEFOR/REDFOR split is identical to the
-baseline on the same seeds — the skew is a pre-existing map/first-player
-artefact, not something this pass introduced. What did change is the quality of
+Game length is unchanged and the side split is identical to the
+baseline on the same seeds — the skew is a pre-existing map/turn-order
+artefact, not something this pass introduced. (Phase 5 diagnosed and fixed it;
+see "Side balance" below.) What did change is the quality of
 the picture: the share of the enemy force a side can actually *act on* nearly
 doubled, because you no longer have to buy sight with an action.
 
@@ -660,10 +724,12 @@ each other.
   / `embarkedOn` machinery and the associated UI target-mode were all
   removed. They existed only to shuttle land units and were a micromanagement
   tax that mostly resulted in a ship sitting in a corner doing nothing.
-- **Naval forces are now purely combat assets.** Each side fields a frigate
-  squadron (Formidable-class flavour; attack range 4) and a littoral combat
-  squadron (Victory-class corvette with Independence-class LMV in company;
-  attack range 3, faster, 3 movement actions). They engage coastal targets by
+- **Naval forces are now purely combat assets.** Each side fields a
+  surface-combatant squadron (attack range 4 — 185 SQN's Formidable-class
+  frigates for Sabre, 191 SQN's Endurance-class LPDs for Vanguard) and a
+  littoral combat squadron (attack range 3, faster, 3 movement actions —
+  188 SQN's Victory-class corvettes and 189 SQN's Fearless-class patrol
+  vessels). They engage coastal targets by
   standoff fire — a standoff engagement damages but never occupies ground —
   and they contest the three open-sea **Anchorage** objectives, which only
   warships can hold.
@@ -710,10 +776,149 @@ rather than by scattering terrain tiles:
    field** — roads therefore prefer low slope, follow valleys, bundle into
    shared corridors, and cross rivers only where a **bridge** is laid.
 7. **Objectives.** Urban districts at settlement centres, ports at berths,
-   airfields on flat inland ground, the four largest river crossings, the
-   three dominant peaks, both depots, and three sea anchorages placed
-   deliberately *balanced* — one nearer each side's naval spawn plus one
-   contested middle — so neither side gets the maritime VP for free.
+   airfields on flat inland ground, the three largest river crossings on the
+   axis of advance, the three dominant peaks, both depots, and three sea
+   anchorages placed deliberately *balanced* — one nearer each side's naval
+   spawn plus one contested middle — so neither side gets the maritime VP for
+   free.
+
+### Map design for engagement (phase 5)
+
+The phase-3 board (72×72) already brought first contact forward, but the two
+forces still spent a third of the game walking, and a lot of objectives could
+be picked up without ever meeting the enemy. Phase 5 changes the *design* of
+the map rather than its size.
+
+**Mirrored deployment.** The sea mask now cuts in at the same fraction on both
+axes (0.62 east / 0.62 south instead of 0.60 / 0.64), which makes the landmass
+symmetric under reflection in the leading diagonal. The two homes are placed as
+exact mirror images in that diagonal — Sabre at (0.18 N, 0.49 N) in the west,
+Vanguard at (0.49 N, 0.18 N) in the north — as are the two port anchors
+(0.18/0.82 and 0.82/0.18) and the two airfield anchors. Deployment separation
+drops from ~70 to ~44 tiles on the Manhattan metric: close enough that leading
+elements are in sensor range on round 2–3, far enough that round 1 is still a
+movement turn, not a knife fight.
+
+**A contest axis.** The line between the two homes is the axis of advance and
+its midpoint is the centre of the battlefield. `contestScore(x, y)` is 1 there
+and falls to 0 in either rear area, and it now drives:
+
+- **where towns are** — settlement siting gets a `contestScore × 4.5` bonus, so
+  the biggest objectives on the board grow on the ground both sides have to
+  fight through rather than in someone's back yard;
+- **which crossings and hills are objectives** — river crossings are ranked by
+  `cluster size + contestScore × 14`, peaks by `height + contestScore × 1.6`;
+- **what objectives are worth** — every objective has a floor plus a
+  contested-ground premium (urban 2 + up to 4, bridges and airfields 2 + up to
+  3, hills 1 + up to 3, ports 2, depots 1). A rear-area objective pays 1–2 VP a
+  round; the contested middle pays 4–6.
+
+**Chokepoints.** Three changes make crossings scarce and worth fighting for:
+trunk rivers are widened at 3× the river threshold instead of 6× (wider
+obstacle); a road costs **30** to bridge a river instead of 14, but only 6 to
+reuse an existing crossing, so the A\* router detours a long way to share a
+bridge rather than building a second one; and the road MST gets **one**
+redundancy edge instead of three. Across 120 seeds this takes the map from
+~14 bridge tiles and ~239 road tiles to **~4.7 bridge tiles and ~180 road
+tiles** — a handful of heavily-used crossings instead of a permeable river
+line.
+
+**Discouraging passivity** is handled by two levers and no new mechanics: the
+contested-VP weighting above (a force that sits on its own hinterland cannot
+reach 280 VP inside 24 rounds), and the scoring rule in
+`engine.tickObjectives` (below) which pays you only for objectives you are
+*still* holding after the enemy's reply.
+
+`server/bot.ts` was updated to match: it used to walk to the *nearest*
+uncontrolled objective, which now means mopping up cheap rear-area ground.
+`bestUncontrolledObjective` discounts distance by value — each extra VP/round
+counts as 2.5 tiles of shortcut at MEDIUM, 4 at HARD, 0 at EASY.
+
+#### Measured, seeded bot-vs-bot, MEDIUM vs MEDIUM
+
+Before: the phase-4b tree (c8bc10d) checked out and run under the same harness,
+2 × 30 games. After: 3 × 40 games on three independent seed bases. Ranges are
+the per-batch spread.
+
+| | Before (c8bc10d) | After |
+| --- | --- | --- |
+| First detection | round 3.8 – 4.0 | **round 2.9 – 3.1** |
+| First proximity contact (≤3 tiles) | round 4.1 – 4.2 | **round 3.2 – 3.5** |
+| Engagements per game | 7.9 – 9.7 (8.8) | **12.0 – 13.2 (12.6)** |
+| Engagements per round | 0.65 – 0.79 (0.72) | **0.90 – 0.97 (0.94)** |
+| Objectives changing hands per game | 29.7 – 29.8 | **32.3 – 33.4** |
+| Fights within 3 tiles of an objective | 94 – 95% | **96 – 97%** |
+| Rounds per game | 12.1 – 12.3 | 13.3 – 13.6 |
+
+Engagements per round are up **~30%** and engagements per game **~43%**,
+objectives change hands ~10% more often, first *detection* comes about a full
+round sooner and first proximity contact about three-quarters of a round
+sooner — in games that are, if anything, slightly *longer*. HARD vs HARD is
+sharper still: first proximity contact on round **2.8 – 3.0**, **1.07 – 1.13**
+engagements per round, 14.7 – 15.0 engagements per game.
+
+### Side balance (phase 5)
+
+Phase 4b measured an 8/22 win split at MEDIUM over 30 seeded games and
+confirmed it was pre-existing. Phase 5 diagnosed it.
+
+**It was the scoring instant, not the map.** Objective control was resolved at
+the end of every turn, but VP were paid to *both* sides once per round, at the
+end of the **second** player's turn. That handed the second player the last
+word on every scoring tick: it could take or retake contested ground and bank
+it immediately, while anything the first player captured had to survive a full
+enemy turn before it paid out. The proof: flipping only the turn order in the
+phase-4b tree (second player becomes first) moved the same 30 seeds from
+**8/22 (−25.2 VP)** to **14/16 (−4.1 VP)** — the advantage followed the
+scoring slot, not the side.
+
+Two further controls on the phase-5 tree separated the remaining effects:
+paying each side at the end of its *own* turn simply mirrors the bug (+36.7 VP
+to whoever moves first), and running a mirror ORBAT (both sides given a
+commando battalion) left the bias unchanged — so it was never the Guards.
+
+**The fix has two parts.**
+
+1. **Symmetric scoring.** Each side is paid at the end of the **opponent's**
+   turn, for what it is still holding once the opponent has replied. Both
+   payouts are measured immediately after an enemy turn, so neither side ever
+   gets the last word on its own score — and it is also the rule the design
+   wants: an objective has to be *held*, not merely touched.
+2. **Rolled initiative.** Moving first is still worth something in any
+   sequential turn-based game: with symmetric scoring alone it measured at
+   roughly **+22 VP a game** to whoever moved first. So initiative is rolled
+   from the map seed, murmur3-mixed, exactly the way a wargame rolls for it,
+   and `GameState.initiative` drives the round boundary so victory is still
+   adjudicated only after the second player's turn. No human player is
+   affected either way — the server already assigns seats by a coin flip.
+   (With everything else in this pass in place, the initiative holder ends up
+   winning **120 / 240** — exactly even. The contested-objective weighting and
+   the bot's value-aware objective choice mean both sides now converge on the
+   same ground, which is where the initiative advantage went.)
+
+`VP_WIN_THRESHOLD` rose 200 → 280 to absorb the ~40% higher VP rate the
+contested-objective weighting produces, so game length is back at ~13.5 rounds.
+
+#### Win splits, before and after
+
+Each "after" cell is 3 × 40 seeded games on three independent seed bases; the
+"before" cells are the phase-4b tree run under the same harness.
+
+| | Before (c8bc10d) | After |
+| --- | --- | --- |
+| MEDIUM vs MEDIUM | 21 / 39 (**35.0%**) over 60 games | **62 / 57 / 1 draw (52.1%)** over 120 games |
+| HARD vs HARD | 28 / 32 (46.7%) over 60 games | **51 / 69 (42.5%)** over 120 games |
+| Both, combined | 49 / 71 (**40.8%**) over 120 games | **113 / 126 / 1 (47.3%)** over 240 games |
+| Mean VP difference | −25.2 / −15.7 / −8.5 / −10.1 (always the same direction) | +15.5 / −24.7 / −11.3 / +21.0 / −7.4 / −53.6 (sign varies by batch) |
+
+The systematic component is gone: before the fix, every single batch at every
+difficulty leaned the same way and the VP difference never changed sign. After
+it, the per-batch VP difference swings either way, the combined split is
+113 / 126 over 240 games (a two-sided binomial p ≈ 0.42 against an even coin),
+and the initiative holder wins exactly half its games. The individual HARD
+batches are noisier than the MEDIUM ones (17/23, 21/19, 13/27) — 40 games is a
+small sample against a ±15% per-batch spread — but they no longer favour a
+fixed side.
 
 ### Validation — a broken map can never reach a room
 
@@ -741,7 +946,7 @@ npm run mapcheck -- 200 # more
 ```
 
 It re-derives the naval-reachability claim independently (sailing from
-BLUEFOR's first ship) rather than trusting the generator, and reports a pass
+Sabre's first ship) rather than trusting the generator, and reports a pass
 rate plus terrain statistics.
 
 ### Wire size
@@ -778,7 +983,7 @@ A routine per-action broadcast is **7 KB** instead of ~440 KB.
   frigate cannot "hold" a bridge and an infantry battalion cannot hold an
   open-sea anchorage.
 - **Side assignment on room join** is randomized per room, not "creator is
-  always BLUEFOR" — called out explicitly since the brief left the choice
+  always SABRE" — called out explicitly since the brief left the choice
   open.
 - **Fog-of-war "ghost" formations are omitted, not faked.** Rather than
   sending a synthetic Formation object with placeholder stats for a stale
@@ -921,6 +1126,15 @@ away.
 
 ## Explicitly out of scope / deferred (future work)
 
+- **Turn-order advantage is distributed, not removed.** Moving first is still
+  worth roughly +22 VP a game, and the initiative holder wins about 58% of
+  bot-vs-bot games. Phase 5 removed the *systematic* part (the scoring instant)
+  and made the remaining part a fair coin per operation rather than a permanent
+  property of one task force. Genuinely neutralising it — alternating the
+  initiative round to round, or a simultaneous-orders turn structure — is a
+  turn-structure change and was out of scope for a refinement pass.
+
+
 - **Production deployment.** The server is designed to run as a single
   long-lived Node process holding in-memory rooms (e.g. on Railway or
   similar) — but no deployment was actually performed in this session, no
@@ -940,6 +1154,66 @@ away.
 
 ## Testing performed
 
+### Phase-5 refinement pass (task-force ORBATs, map design for engagement, side balance)
+
+- `npm run build` (client `tsc -b` + Vite) and
+  `npx tsc -p server/tsconfig.json --noEmit` — both clean.
+- **Map soak** (`npm run mapcheck -- 120`): **120/120 pass (100%)** on 120
+  independent seeds at 72×72 — water connectivity (one navigable body reachable
+  from every naval spawn, port berth and anchorage, re-derived independently in
+  the script by sailing from Sabre's first ship), land reachability of every
+  land objective and deployment tile, river continuity, road-network
+  connectivity and the speckle bound all hold. ~40 ms and 1.1 attempts per map.
+  The chokepoint changes show up here: **~4.7 bridge tiles and ~180 road tiles
+  per map, against ~14 and ~239 before**.
+- **Wire-redaction re-verification** (re-created suite, 12 games × both
+  viewers, all four rungs exercised — 117 Unknown, 96 Identified, 21 Confirmed,
+  6 Contact): **1,868 assertions, 0 failures.** UNKNOWN enemies are absent from
+  the payload and have no contact record; CONTACT sends a position-only record
+  with no arm and no formation object; IDENTIFIED sends `-1` in every numeric
+  field with generic identity strings, `fortified: false` and
+  `lastOrder: 'Unknown'`; CONFIRMED comes through in full. The enemy's own
+  contact table is emptied, the log is audience-filtered, and the *serialised*
+  payload is searched for the true title of every below-Confirmed formation —
+  none leaks. The ORBAT change did not regress any of this.
+- **ORBAT assertions** (same suite): both task forces field exactly 10
+  formations with unique designations, the same arm mix (3 infantry, 1 elite
+  manoeuvre battalion, 1 armour, 1 artillery, 1 engineer, 1 C4I, 2 RSN
+  squadrons), the exact designation lists above, no placeholder text anywhere,
+  and total attack+defence within 5% of each other.
+- **Playwright / chromium against the combined server** (built client served by
+  `server/index.ts` on :8787), 16 checks in the single-player run plus a
+  6-check two-client run, **0 failures**: the landing page names
+  both task forces and contains none of the retired names; the field manual
+  lists both ORBATs including 10/11 C4I Bn and 191/189 SQN; a vs-Bot (Medium)
+  game starts with the seat reported as a task force and the initiative rolled;
+  the roster lists the seat's ten designations in order and the HUD chip reads
+  `TF SABRE`; the game was then played through to `GAME_OVER` — first enemy
+  contact on round 5, first engagement on round 6, game over on round 10 — and
+  the end-game screen read *"Task Force Vanguard secured the operation."* with
+  `Final VP — TF SABRE 9 : TF VANGUARD 292`, matching the server state.
+- **Two-client room** (create + join by code, both real WebSocket clients):
+  the two seats were assigned to different task forces, both clients agreed on
+  the rolled initiative, each client's roster carried exactly its own task
+  force's ten designations, and neither client was sent a single undetected
+  enemy formation at deployment.
+- **Render frame time** re-measured through the existing
+  `__COMMAND_FRAME_MS__` hook (smoothed, full redraw every animation frame,
+  1600×950) at 4, 5, 9, 16 and 24 px/tile: **3.8 – 5.8 ms**, against the
+  phase-4b baseline of 4.9 – 6.6 ms. No regression; the sparser road/bridge
+  network is slightly cheaper to draw.
+- **Grep**: zero remaining `BLUEFOR` / `REDFOR` / `Northern Union` / `MRB` /
+  `SPB` / `TB` / `GRA` / `AEB` / `REB` / `GMF` / `MCF` / `24 C4I` references in
+  code, UI text, tutorial, help or README, other than the one line in this
+  document that records that `10 C4I Bn` replaced the fictional `24 C4I`.
+- **Simulation** — engagement and balance numbers are in "Map design for
+  engagement" and "Side balance" above; both were run on the real engine and
+  the real `decideBotAction`, with `Math.random` seeded per game so the batches
+  are reproducible. 240 games after the change (3 seed bases × 40 at each of
+  MEDIUM and HARD) plus 120 games on the phase-4b tree for the before figures,
+  and four separate controls to isolate the cause of the skew.
+
+
 ### Phase-3 refinement pass (front page, 72×72 board, map legibility)
 
 - `npm run build` (client `tsc -b` + Vite) and `npx tsc -p
@@ -947,15 +1221,15 @@ away.
 - **Map soak at the new size** (`npm run mapcheck -- 120`): 120 independent
   seeds on the 72×72 grid, **120/120 pass (100%)** — water connectivity, river
   continuity, road-network connectivity, land reachability and the independent
-  "sail from BLUEFOR's first ship to every spawn, berth and anchorage"
+  "sail from Sabre's first ship to every spawn, berth and anchorage"
   re-derivation all hold. Typical map: ~1,927 water tiles (all one navigable
   body), ~222 river tiles, ~239 road tiles, ~14 bridges, ~994 forest tiles,
   20 objectives; 1.1 attempts and ~45 ms per map (was ~75 ms at 80×80).
 - **Bot-vs-bot balance sim** over the real engine + real `decideBotAction`:
-  - MEDIUM vs MEDIUM, 30 games: **13.1 rounds** average (8–19), BLUEFOR 14 /
-    REDFOR 14 / 2 draws, average final VP difference **+4.6** to BLUEFOR.
-  - HARD vs HARD, 24 games: **12.6 rounds** average (8–15), BLUEFOR 11 /
-    REDFOR 12 / 1 draw, average VP difference −4.5.
+  - MEDIUM vs MEDIUM, 30 games: **13.1 rounds** average (8–19), 14 / 14 / 2
+    draws, average final VP difference **+4.6** to the first-moving side.
+  - HARD vs HARD, 24 games: **12.6 rounds** average (8–15), 11 / 12 / 1 draw,
+    average VP difference −4.5.
   - First contact (any two opposing formations within 3 tiles) now happens on
     **round 5.1** on average, against **round 6.0** for the same code at
     80×80 — the size cut does exactly what it was meant to do.
@@ -1026,7 +1300,7 @@ away.
   server/tsconfig.json --noEmit` — both clean.
 - **Map soak test** (`npm run mapcheck -- 80`): 80 independent seeds, **80/80
   pass (100%)**. Each map is checked by `validateMap()` *and* by an
-  independent re-derivation in the script that sails from BLUEFOR's first ship
+  independent re-derivation in the script that sails from Sabre's first ship
   and asserts it can reach every naval spawn, every port berth and every
   anchorage. Typical map: ~2,390 water tiles (all one navigable body), ~280
   river tiles, ~280 road tiles, ~15 bridge tiles, ~1,200 forest tiles, 22
@@ -1039,14 +1313,14 @@ away.
   (`npm start`), vs-Bot on Medium:
   - a game starts on an 80×80 map with 22 objectives and the correct ten
     named formations per side (1 SIR / 2 SIR / 5 SIR / 1 CDO BN / 40 SAR /
-    21 SA / 35 SCE / 24 C4I / 185 SQN / 188 SQN);
+    21 SA / 35 SCE / 10 C4I Bn / 185 SQN / 188 SQN);
   - **1 SIR performed a 2nd movement action in the same round and was then
     blocked from a 3rd** — after two bounds `computeReachable` returns zero
     tiles and the move is rejected server-side;
   - **185 SQN (frigate) sailed twice across open water** (13,66 → 18,68 →
     25,68) with 43 and then 75 reachable water tiles — no stranding;
   - the bot played four consecutive turns with no client or server errors,
-    used its full 3/3 movement allowance on 9 REB, and captured both land and
+    used its full 3/3 movement allowance on the opposing C4I battalion, and captured both land and
     maritime objectives (Bridge 4, Sungei Lanjut District, Anchorage B).
 - **Render cost measured in-browser** at the new size, forcing a full React +
   canvas redraw every animation frame (a worst case; normal play redraws only
@@ -1068,13 +1342,13 @@ away.
   contexts** (Playwright) end-to-end as two real, separate clients:
   - **Room-code flow:** context A creates a room, gets a 5-character code,
     context B joins with it; both reach the in-game screen with opposing
-    `BLUEFOR`/`REDFOR` assignments confirmed via each client's own state.
+    `SABRE`/`VANGUARD` assignments confirmed via each client's own state.
   - **Quick Match flow:** two fresh contexts both hit Quick Match around the
     same time and were auto-paired into a fresh room with correct opposing
     side assignment.
-  - **Move + fog-of-war:** drove a real `MOVE` action from BLUEFOR through
+  - **Move + fog-of-war:** drove a real `MOVE` action from Sabre through
     the wire; confirmed the server-applied result reflected back to the
-    mover, and confirmed REDFOR's own filtered state exposed **only its own
+    mover, and confirmed Vanguard's own filtered state exposed **only its own
     10 formations** at that point (not the opponent's true positions) —
     the server-side redaction holds under an actual network round trip, not
     just in isolated unit logic.
