@@ -212,18 +212,74 @@ const ICONS: Record<FormationType, IconFn> = {
 /** Every arm reduces to a bolder, simplified silhouette below this on-screen size (px). */
 const BOLD_THRESHOLD_PX = 15;
 
-/** Cached offscreen bitmaps: `${type}|${sizePx}|${color}` -> canvas. */
+/**
+ * DAMAGE-STATE OVERLAY (phase 10 §6). Below this fraction of max strength a
+ * formation's icon carries a small "hurt" cue on top of its ordinary
+ * silhouette. Deliberately restrained — a scorch smudge plus one short crack
+ * line, not a redraw of the whole shape — so it still reads at the smallest
+ * counter sizes instead of turning into mud. Drawn in the SAME -1..1 unit
+ * square as the arm icon, after it, so it always sits correctly regardless
+ * of which silhouette it is layered on.
+ */
+export const DAMAGE_STRENGTH_THRESHOLD = 40;
+
+function drawDamageOverlay(ctx: CanvasRenderingContext2D, sizePx: number) {
+  // Scorch mark — a soft dark smudge low on the silhouette. Reads at any size.
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = '#120c09';
+  ctx.beginPath();
+  ctx.arc(0.32, 0.4, 0.34, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Crack — a single jagged line, dropped below a legible size the same way
+  // the base icons drop their finer strokes (see BOLD_THRESHOLD_PX above).
+  if (sizePx >= 13) {
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = '#0d0908';
+    ctx.lineWidth = 0.11;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-0.48, -0.62);
+    ctx.lineTo(-0.12, -0.08);
+    ctx.lineTo(-0.34, 0.1);
+    ctx.lineTo(0.05, 0.78);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Smoke wisp — two small fading dots drifting up-right, only at sizes
+  // where they will not just be visual noise.
+  if (sizePx >= 17) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(140,140,138,0.5)';
+    ctx.beginPath();
+    ctx.arc(0.5, -0.55, 0.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(140,140,138,0.32)';
+    ctx.beginPath();
+    ctx.arc(0.68, -0.82, 0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+/** Cached offscreen bitmaps: `${type}|${sizePx}|${color}|${damaged}` -> canvas. */
 const cache = new Map<string, HTMLCanvasElement>();
 /** Bake extra resolution into every cached bitmap so it survives DPR<=2 upscale crisply. */
 const OVERSAMPLE = 3;
 
-function drawArmIcon(ctx: CanvasRenderingContext2D, type: FormationType, sizePx: number, color: string) {
+function drawArmIcon(ctx: CanvasRenderingContext2D, type: FormationType, sizePx: number, color: string, damaged: boolean) {
   const bold = sizePx < BOLD_THRESHOLD_PX;
   ctx.save();
   ctx.fillStyle = color;
   ctx.strokeStyle = color;
   ICONS[type](ctx, bold);
   ctx.restore();
+  if (damaged) drawDamageOverlay(ctx, sizePx);
 }
 
 /**
@@ -231,10 +287,15 @@ function drawArmIcon(ctx: CanvasRenderingContext2D, type: FormationType, sizePx:
  * `sizePx`-diameter counter, filled with `color`. Building fresh Path2D work
  * every frame for a full 22-formation battle is unnecessary work the terrain
  * raster already avoids by caching — this follows the same pattern.
+ *
+ * `damaged` (phase 10 §6) bakes the low-strength overlay into its own cached
+ * variant — callers decide whether to ask for it, and MUST only do so when
+ * the viewer has actually earned the real strength value (their own
+ * formation, or an enemy at CONFIRMED); see renderMap.ts `drawFormation`.
  */
-export function getIconBitmap(type: FormationType, sizePx: number, color: string): HTMLCanvasElement {
+export function getIconBitmap(type: FormationType, sizePx: number, color: string, damaged = false): HTMLCanvasElement {
   const roundedSize = Math.max(4, Math.round(sizePx));
-  const key = `${type}|${roundedSize}|${color}`;
+  const key = `${type}|${roundedSize}|${color}|${damaged ? 1 : 0}`;
   let bmp = cache.get(key);
   if (bmp) return bmp;
 
@@ -246,7 +307,7 @@ export function getIconBitmap(type: FormationType, sizePx: number, color: string
   ictx.translate(px / 2, px / 2);
   const scale = (px / 2) * 0.92; // small margin so strokes never clip the bitmap edge
   ictx.scale(scale, scale);
-  drawArmIcon(ictx, type, roundedSize, color);
+  drawArmIcon(ictx, type, roundedSize, color, damaged);
   cache.set(key, bmp);
   return bmp;
 }
@@ -261,6 +322,6 @@ export function paintArmIcon(ctx: CanvasRenderingContext2D, type: FormationType,
   ctx.translate(cx, cy);
   const scale = (sizePx / 2) * 0.92;
   ctx.scale(scale, scale);
-  drawArmIcon(ctx, type, sizePx, color);
+  drawArmIcon(ctx, type, sizePx, color, false);
   ctx.restore();
 }

@@ -46,7 +46,7 @@ export type ServerMsg =
   | { t: 'joined'; code: string; token: string; you: PlayerId }
   | { t: 'waiting' }
   | { t: 'searching' }
-  | { t: 'start'; state: GameState; you: PlayerId; opponentConnected: boolean }
+  | { t: 'start'; state: GameState; you: PlayerId; opponentConnected: boolean; botDifficulty?: BotDifficulty | null }
   | { t: 'state'; state: WireGameState }
   | { t: 'opponent_disconnected' }
   | { t: 'opponent_reconnected' }

@@ -11,6 +11,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GameState, PlayerId } from '../game/types';
 import { BotDifficulty, ClientMsg, GameAction, ServerMsg } from './protocol';
 
+export type MatchKind = 'bot' | 'multiplayer';
+
 // Resolution order:
 //  1. VITE_WS_URL — explicit override, handy for local dev pointed at a
 //     non-default server, or a split (non-single-process) deployment.
@@ -77,6 +79,11 @@ export function useMultiplayer() {
   const tilesRef = useRef<GameState['tiles'] | null>(null);
   const [opponentConnected, setOpponentConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Which kind of opponent this match is against, and — for a bot match — at
+  // what difficulty. Purely presentational (the pre-battle briefing, phase
+  // 10 §1) — the server is still the sole source of truth for game state.
+  const [matchKind, setMatchKind] = useState<MatchKind | null>(null);
+  const [botDifficulty, setBotDifficulty] = useState<BotDifficulty | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const sessionRef = useRef<SessionInfo | null>(null);
@@ -121,6 +128,7 @@ export function useMultiplayer() {
           setState(msg.state);
           setYou(msg.you);
           setOpponentConnected(msg.opponentConnected);
+          setBotDifficulty(msg.botDifficulty ?? null);
           setStatus('in_game');
           break;
         case 'state': {
@@ -175,22 +183,26 @@ export function useMultiplayer() {
   }, []);
 
   const createRoom = useCallback(() => {
+    setMatchKind('multiplayer');
     openSocket((ws) => ws.send(JSON.stringify({ t: 'create' } satisfies ClientMsg)));
   }, [openSocket]);
 
   const joinRoom = useCallback(
     (code: string) => {
+      setMatchKind('multiplayer');
       openSocket((ws) => ws.send(JSON.stringify({ t: 'join', code } satisfies ClientMsg)));
     },
     [openSocket]
   );
 
   const quickMatch = useCallback(() => {
+    setMatchKind('multiplayer');
     openSocket((ws) => ws.send(JSON.stringify({ t: 'quick' } satisfies ClientMsg)));
   }, [openSocket]);
 
   const vsBot = useCallback(
     (difficulty: BotDifficulty) => {
+      setMatchKind('bot');
       openSocket((ws) => ws.send(JSON.stringify({ t: 'bot', difficulty } satisfies ClientMsg)));
     },
     [openSocket]
@@ -211,6 +223,8 @@ export function useMultiplayer() {
     setRoomCode(null);
     setOpponentConnected(false);
     setError(null);
+    setMatchKind(null);
+    setBotDifficulty(null);
     setStatus('lobby');
   }, [send]);
 
@@ -231,6 +245,8 @@ export function useMultiplayer() {
     state,
     opponentConnected,
     error,
+    matchKind,
+    botDifficulty,
     createRoom,
     joinRoom,
     quickMatch,

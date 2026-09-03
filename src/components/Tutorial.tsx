@@ -436,6 +436,38 @@ const SECTIONS: Section[] = [
       );
     },
   },
+  {
+    id: 'interface',
+    nav: 'The HUD',
+    title: 'Briefings, notifications and sound',
+    render: () => (
+      <>
+        <p className="tut-lede">A few small pieces of the interface exist purely to keep you oriented — none of them cost AP.</p>
+        <ul className="tut-list">
+          <li>
+            <b>Pre-battle briefing.</b> Every match opens on a short task order — who you command, who you are up against, the
+            victory condition, and a side-by-side of both rosters' arm counts. Click <b>Begin</b> or press <K>Enter</K>/<K>Esc</K>{' '}
+            to jump straight into it; it dismisses on its own after a few seconds either way.
+          </li>
+          <li>
+            <b>SITREP banner.</b> At the start of each of your turns, a one-line summary fades in across the top of the screen —
+            new contacts, objectives that changed hands, formations lost or destroyed, artillery that rearmed — everything that
+            happened while it was not your turn. Click it to dismiss it early.
+          </li>
+          <li>
+            <b>Jump notifications.</b> The amber banner near the top of the map is clickable and centres the camera on whatever
+            it is reporting — a new contact, a kill, or an objective change. Several events landing at once are folded into one
+            banner rather than one each.
+          </li>
+          <li>
+            <b>Sound.</b> The <i>Sound</i> control in the top-right toolbar mutes or sets the volume of the game's short
+            synthesized cues (movement, weapons fire, contacts, objective capture, turn changes) — your choice is remembered on
+            this device. Sound only ever plays for something your own side has actually detected.
+          </li>
+        </ul>
+      </>
+    ),
+  },
 ];
 
 export const Tutorial: React.FC<{ onClose: () => void }> = ({ onClose }) => {

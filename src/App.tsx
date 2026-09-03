@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FACTION_SHORT } from './game/data';
+import { FACTION_SHORT, FORMATION_DEFS } from './game/data';
 import { useMultiplayer } from './net/client';
 import { TopBar } from './components/TopBar';
 import { FormationList } from './components/FormationList';
@@ -9,6 +9,8 @@ import { OverlayToggles } from './components/OverlayToggles';
 import { ActionBar } from './components/ActionBar';
 import { BattleReportModal } from './components/BattleReportModal';
 import { EndGameScreen } from './components/EndGameScreen';
+import { Briefing } from './components/Briefing';
+import { TurnSummaryBanner } from './components/TurnSummaryBanner';
 import { Legend } from './components/Legend';
 import { HelpPanel } from './components/HelpPanel';
 import { Lobby } from './components/Lobby';
@@ -20,7 +22,8 @@ import { TargetMode } from './App.types';
 import { ActionAvailability, actionAvailability, ACTION_BY_SHORTCUT, formationsWithActions } from './game/actions';
 import { computeReachable, formationAt, previewAttack } from './game/engine';
 import { cohesionAdvisory, planGroupMove, planMove } from './game/movement';
-import { AP_COSTS, Contact, DETECTION_LEVEL_LABEL, DetectionLevel, Formation, GRID_SIZE, gridRef } from './game/types';
+import { AP_COSTS, Contact, DetectionLevel, Formation, GRID_SIZE, PlayerId, gridRef } from './game/types';
+import { sound } from './audio/sound';
 
 const TARGET_HINTS: Record<string, string> = {
   MOVE: 'Click a highlighted tile to move there. Shift-click friendly formations to group them for a formation move.',
@@ -39,17 +42,21 @@ const TARGET_HINTS: Record<string, string> = {
 const LEVEL_RANK: Record<DetectionLevel, number> = { UNKNOWN: 0, CONTACT: 1, IDENTIFIED: 2, CONFIRMED: 3 };
 
 /**
- * A batched "you have just spotted something" report. Passive spotting fires
- * constantly — during your own bounds AND all the way through the opponent's
- * turn — so contacts are collapsed into ONE banner per state push rather than
- * one notification per unit. The banner is clickable and jumps the camera to
- * the nearest new contact; the map pings the tiles regardless.
+ * A batched "something decisive just happened" notification (phase 4b's
+ * contact-detected banner, generalised in phase 10 §3 to cover every event
+ * the player's side has legitimately detected: new/upgraded contacts, a
+ * formation destroyed on either side, and an objective changing hands).
+ * Everything that qualifies on ONE state push is collapsed into a single
+ * clickable banner rather than one notification per event — the same
+ * batching discipline the original contact ping used. Clicking jumps the
+ * camera to whichever qualifying event is nearest to the player's own
+ * forces; the map also pings/flashes the tiles regardless of whether the
+ * banner itself is ever clicked.
  */
-interface ContactAlert {
+interface EventAlert {
   id: number;
-  fresh: number;
-  upgraded: number;
-  nearest: { x: number; y: number; distance: number; level: DetectionLevel } | null;
+  parts: string[];
+  nearest: { x: number; y: number } | null;
 }
 
 /** True when the keystroke belongs to a text field and must not act as a shortcut. */
@@ -77,16 +84,57 @@ export default function App() {
   const [logCollapsed, setLogCollapsed] = useState(true);
   const [endTurnWarn, setEndTurnWarn] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [contactAlert, setContactAlert] = useState<ContactAlert | null>(null);
+  const [eventAlert, setEventAlert] = useState<EventAlert | null>(null);
   const [pings, setPings] = useState<ContactPing[]>([]);
   const [killMarkers, setKillMarkers] = useState<KillMarker[]>([]);
   const knownKillIdsRef = useRef<Set<string>>(new Set());
   const knownContactsRef = useRef<Record<string, DetectionLevel> | null>(null);
+  const prevObjectivesRef = useRef<Record<string, PlayerId | null> | null>(null);
   const alertTimer = useRef<number | undefined>(undefined);
   const alertSeq = useRef(0);
   const shownRef = useRef<string | null>(null);
   const lastRoundRef = useRef<number | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
+  // Pre-battle briefing (phase 10 §1/§4).
+  const [briefingDismissed, setBriefingDismissed] = useState(false);
+  // Turn-start "what changed" summary (phase 10 §2).
+  const [turnSummary, setTurnSummary] = useState<{ id: number; text: string } | null>(null);
+  const turnSummarySeq = useRef(0);
+  const turnPrevActiveRef = useRef<PlayerId | null>(null);
+  const turnSnapshotRef = useRef<{
+    contacts: Record<string, DetectionLevel>;
+    objectives: Record<string, PlayerId | null>;
+    ammo: Record<string, number>;
+    killIds: Set<string>;
+  } | null>(null);
+
+  // Reset the briefing for each fresh match (a new room code) — the hook
+  // that owns `net` lives for the whole browser session, so without this a
+  // second vs-Bot game in the same tab would never show it again.
+  useEffect(() => {
+    setBriefingDismissed(false);
+  }, [net.roomCode]);
+
+  const briefingOpen = !!state && !!you && state.round === 1 && !briefingDismissed;
+
+  // Unlock the (lazily-created) AudioContext from the FIRST genuine user
+  // gesture the page sees, whatever it is — a menu click, a keypress. This
+  // satisfies the browser autoplay policy for every later, possibly async,
+  // sound call (an opponent's move arriving over the wire is not itself a
+  // gesture) without ever prompting the player or blocking on page load.
+  useEffect(() => {
+    const unlock = () => {
+      sound.unlock();
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+    window.addEventListener('pointerdown', unlock, true);
+    window.addEventListener('keydown', unlock, true);
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+  }, []);
 
   const selected = state && selectedId ? state.formations[selectedId] ?? null : null;
 
@@ -126,64 +174,165 @@ export default function App() {
     if (state?.lastBattleReport && state.lastBattleReport.id !== shownRef.current) {
       shownRef.current = state.lastBattleReport.id;
       setShowReportId(state.lastBattleReport.id);
+      // A battle report only ever names the viewer's own formation as
+      // attacker or defender (there is no third-party spectator report in a
+      // 2-player game) — always something this side legitimately witnessed,
+      // so the weapons-fire transient is safe regardless of fog.
+      sound.play('attack');
     }
   }, [state?.lastBattleReport]);
 
-  // ---- Contact reporting ---------------------------------------------------
-  // Diff the contact table on every push. Anything that appeared, or climbed a
-  // rung, is worth telling the player about — batched into one line.
+  // ---- Combined event notification + sound (phase 10 §3, §5) --------------
+  // Diffs the contact table, the kill feed and objective ownership on every
+  // push and folds whatever is new into ONE clickable banner + ping/marker
+  // set + sound cue, rather than one of each per event — the same batching
+  // discipline the original phase-4b contact ping used, now generalised to
+  // every "something decisive happened that you detected" case named in the
+  // spec. Every source read here is already fog-filtered for `you` by the
+  // server (contacts, killFeed — see fog.ts) or was never fog-gated in the
+  // first place (objectives are terrain-held control points, never redacted).
   useEffect(() => {
     if (!state || !you) return;
+    const now = performance.now();
+
+    // Contacts.
     const contacts = state.players[you].contacts as Record<string, Contact>;
     const snapshot: Record<string, DetectionLevel> = {};
     Object.values(contacts).forEach((c) => {
       snapshot[c.formationId] = c.level;
     });
-    const prev = knownContactsRef.current;
+    const prevContacts = knownContactsRef.current;
     knownContactsRef.current = snapshot;
-    if (!prev) return; // first push (join / reconnect) — nothing is "new"
-
-    const fresh: Contact[] = [];
-    const upgraded: Contact[] = [];
-    Object.values(contacts).forEach((c) => {
-      const before = prev[c.formationId];
-      if (before === undefined) fresh.push(c);
-      else if (LEVEL_RANK[c.level] > LEVEL_RANK[before]) upgraded.push(c);
-    });
-    if (fresh.length === 0 && upgraded.length === 0) return;
-
-    const mine = Object.values(state.formations).filter((f) => f.owner === you);
-    const measure = (c: Contact) =>
-      mine.reduce((best, f) => Math.min(best, Math.abs(f.x - c.x) + Math.abs(f.y - c.y)), Infinity);
-    const pool = fresh.length ? fresh : upgraded;
-    let nearest: ContactAlert['nearest'] = null;
-    for (const c of pool) {
-      const d = measure(c);
-      if (!nearest || d < nearest.distance) nearest = { x: c.x, y: c.y, distance: d, level: c.level };
+    const freshContacts: Contact[] = [];
+    const upgradedContacts: Contact[] = [];
+    if (prevContacts) {
+      Object.values(contacts).forEach((c) => {
+        const before = prevContacts[c.formationId];
+        if (before === undefined) freshContacts.push(c);
+        else if (LEVEL_RANK[c.level] > LEVEL_RANK[before]) upgradedContacts.push(c);
+      });
     }
 
-    alertSeq.current += 1;
-    setContactAlert({ id: alertSeq.current, fresh: fresh.length, upgraded: upgraded.length, nearest });
-    window.clearTimeout(alertTimer.current);
-    alertTimer.current = window.setTimeout(() => setContactAlert(null), 9000);
+    // Kills — state.killFeed is already fog-redacted per viewer.
+    const freshKills = state.killFeed.filter((k) => !knownKillIdsRef.current.has(k.id));
+    freshKills.forEach((k) => knownKillIdsRef.current.add(k.id));
 
-    const now = performance.now();
-    const added: ContactPing[] = [...fresh, ...upgraded].map((c) => ({ x: c.x, y: c.y, at: now, level: c.level }));
-    setPings((ps) => [...ps.filter((p) => now - p.at < PING_LIFETIME_MS), ...added].slice(-24));
+    // Objectives — never fog-gated, so a straight ownership diff is safe.
+    const prevObjectives = prevObjectivesRef.current;
+    const objSnapshot: Record<string, PlayerId | null> = {};
+    state.objectives.forEach((o) => {
+      objSnapshot[o.id] = o.controlledBy;
+    });
+    prevObjectivesRef.current = objSnapshot;
+    const objectiveChanges = prevObjectives
+      ? state.objectives.filter((o) => prevObjectives[o.id] !== undefined && prevObjectives[o.id] !== o.controlledBy)
+      : [];
+
+    // Map-side visuals: pings for contacts, wreck markers for kills.
+    if (freshContacts.length || upgradedContacts.length) {
+      const added: ContactPing[] = [...freshContacts, ...upgradedContacts].map((c) => ({ x: c.x, y: c.y, at: now, level: c.level }));
+      setPings((ps) => [...ps.filter((p) => now - p.at < PING_LIFETIME_MS), ...added].slice(-24));
+    }
+    if (freshKills.length) {
+      const added: KillMarker[] = freshKills.map((k) => ({ id: k.id, x: k.x, y: k.y, at: now, owner: k.owner, type: k.type }));
+      setKillMarkers((ks) => [...ks.filter((k) => now - k.at < 8000), ...added].slice(-16));
+    }
+
+    // Sound — one cue per category present in this push, never per event.
+    if (freshContacts.length || upgradedContacts.length) sound.play('contact');
+    if (freshKills.length) sound.play('kill');
+    if (objectiveChanges.some((o) => o.controlledBy === you)) sound.play('objective');
+
+    if (!prevContacts) return; // first push (join / reconnect) — nothing is "new" yet
+
+    const parts: string[] = [];
+    if (freshContacts.length) parts.push(`${freshContacts.length} new contact${freshContacts.length === 1 ? '' : 's'}`);
+    if (upgradedContacts.length) parts.push(`${upgradedContacts.length} contact${upgradedContacts.length === 1 ? '' : 's'} upgraded`);
+    if (objectiveChanges.length) parts.push(`${objectiveChanges.length} objective${objectiveChanges.length === 1 ? '' : 's'} changed hands`);
+    const enemyKills = freshKills.filter((k) => k.owner !== you).length;
+    const ownKills = freshKills.filter((k) => k.owner === you).length;
+    if (enemyKills) parts.push(`${enemyKills} enemy formation${enemyKills === 1 ? '' : 's'} destroyed`);
+    if (ownKills) parts.push(`${ownKills} of your formations lost`);
+    if (!parts.length) return;
+
+    const mine = Object.values(state.formations).filter((f) => f.owner === you);
+    const dist = (x: number, y: number) => mine.reduce((best, f) => Math.min(best, Math.abs(f.x - x) + Math.abs(f.y - y)), Infinity);
+    const candidates = [
+      ...freshKills.map((k) => ({ x: k.x, y: k.y })),
+      ...objectiveChanges.map((o) => ({ x: o.x, y: o.y })),
+      ...[...freshContacts, ...upgradedContacts].map((c) => ({ x: c.x, y: c.y })),
+    ];
+    let nearest: EventAlert['nearest'] = null;
+    let bestD = Infinity;
+    candidates.forEach((c) => {
+      const d = dist(c.x, c.y);
+      if (d < bestD) {
+        bestD = d;
+        nearest = { x: c.x, y: c.y };
+      }
+    });
+
+    alertSeq.current += 1;
+    setEventAlert({ id: alertSeq.current, parts, nearest });
+    window.clearTimeout(alertTimer.current);
+    alertTimer.current = window.setTimeout(() => setEventAlert(null), 9000);
   }, [state, you]);
 
-  // ---- Kill markers (phase 7) ----------------------------------------------
-  // state.killFeed is already fog-redacted per viewer by the server; anything
-  // not yet seen this session becomes a brief wreck marker on the map.
+  // ---- Turn-start "what changed" summary (phase 10 §2) ---------------------
+  // Fires exactly once per turn boundary — the render where activePlayer
+  // flips TO the viewer — comparing a snapshot taken at the START of the
+  // viewer's own last turn against one taken now, so it reports everything
+  // that happened across the opponent's whole intervening turn (not just the
+  // latest push). Every field diffed here is the viewer's own already
+  // fog-filtered view, so nothing here can leak information they have not
+  // legitimately earned.
   useEffect(() => {
-    if (!state) return;
-    const fresh = state.killFeed.filter((k) => !knownKillIdsRef.current.has(k.id));
-    if (!fresh.length) return;
-    fresh.forEach((k) => knownKillIdsRef.current.add(k.id));
-    const now = performance.now();
-    const added: KillMarker[] = fresh.map((k) => ({ id: k.id, x: k.x, y: k.y, at: now, owner: k.owner, type: k.type }));
-    setKillMarkers((ks) => [...ks.filter((k) => now - k.at < 8000), ...added].slice(-16));
-  }, [state]);
+    if (!state || !you) return;
+    const prevActive = turnPrevActiveRef.current;
+    turnPrevActiveRef.current = state.activePlayer;
+    if (state.activePlayer !== you || prevActive === you) return;
+
+    const contacts: Record<string, DetectionLevel> = {};
+    Object.values(state.players[you].contacts).forEach((c) => {
+      contacts[c.formationId] = c.level;
+    });
+    const objectives: Record<string, PlayerId | null> = {};
+    state.objectives.forEach((o) => {
+      objectives[o.id] = o.controlledBy;
+    });
+    const ammo: Record<string, number> = {};
+    Object.values(state.formations).forEach((f) => {
+      if (f.owner === you && FORMATION_DEFS[f.type].maxAmmo !== null) ammo[f.id] = f.ammo;
+    });
+    const killIds = new Set(state.killFeed.map((k) => k.id));
+    const snap = { contacts, objectives, ammo, killIds };
+    const prevSnap = turnSnapshotRef.current;
+    turnSnapshotRef.current = snap;
+    if (!prevSnap) return; // first turn this session — nothing to compare against
+
+    const freshContacts = Object.keys(contacts).filter((id) => prevSnap.contacts[id] === undefined).length;
+    const objChanges = state.objectives.filter(
+      (o) => prevSnap.objectives[o.id] !== undefined && prevSnap.objectives[o.id] !== o.controlledBy
+    ).length;
+    const reloaded = Object.entries(ammo).filter(([id, v]) => (prevSnap.ammo[id] ?? 0) < v).length;
+    const freshKills = state.killFeed.filter((k) => !prevSnap.killIds.has(k.id));
+    const enemyKills = freshKills.filter((k) => k.owner !== you).length;
+    const ownKills = freshKills.filter((k) => k.owner === you).length;
+
+    const parts: string[] = [];
+    if (freshContacts) parts.push(`${freshContacts} new contact${freshContacts === 1 ? '' : 's'}`);
+    if (objChanges) parts.push(`${objChanges} objective${objChanges === 1 ? '' : 's'} changed hands`);
+    if (enemyKills) parts.push(`${enemyKills} enemy formation${enemyKills === 1 ? '' : 's'} destroyed`);
+    if (ownKills) parts.push(`you lost ${ownKills} formation${ownKills === 1 ? '' : 's'}`);
+    if (reloaded) parts.push(`${reloaded} formation${reloaded === 1 ? '' : 's'} rearmed`);
+
+    turnSummarySeq.current += 1;
+    setTurnSummary({
+      id: turnSummarySeq.current,
+      text: parts.length ? parts.join(' · ') : 'Nothing significant since your last turn.',
+    });
+    sound.play('turn');
+  }, [state, you]);
 
   useEffect(() => {
     if (!state || !you) return;
@@ -346,6 +495,7 @@ export default function App() {
       return;
     }
     setEndTurnWarn(false);
+    sound.play('ui');
     net.endTurn();
   }, [state, you, readyFormations, endTurnWarn, net]);
 
@@ -359,6 +509,12 @@ export default function App() {
       // (its own nav buttons, or just typing) from preventDefault-ing browser
       // defaults (e.g. Space activating a focused button) for no reason.
       if (!state || !you) return;
+      // The pre-battle briefing (phase 10 §1) is a capture-phase modal with
+      // its own self-contained Escape/Enter handling (see Briefing.tsx) —
+      // bailing here, the same way legendOpen/helpOpen are handled a few
+      // lines down, is what stops a shortcut like M/A/E from ever reaching
+      // the board while it is up.
+      if (briefingOpen) return;
       // Never steal keys from a text field (the room-code input in particular).
       if (isTypingTarget(e)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -473,7 +629,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [targetMode, legendOpen, helpOpen, endTurnWarn, selected, actions, runAction, nextReady, centreOn, doEndTurn, myTurn, flash, groupIds, state, you]);
+  }, [targetMode, legendOpen, helpOpen, endTurnWarn, selected, actions, runAction, nextReady, centreOn, doEndTurn, myTurn, flash, groupIds, state, you, briefingOpen]);
 
   if (!state || !you) {
     return (
@@ -527,6 +683,7 @@ export default function App() {
         return;
       }
       net.sendAction({ type: 'MOVE_GROUP', formationIds: plan.members.filter((m) => m.ok).map((m) => m.id), x, y });
+      sound.play('move');
       clearMode();
       return;
     }
@@ -546,6 +703,7 @@ export default function App() {
           return;
         }
         net.sendAction({ type: 'MOVE', formationId: selected.id, x, y });
+        sound.play('move');
         clearMode();
         break;
       }
@@ -749,33 +907,29 @@ export default function App() {
         </button>
       </div>
 
-      {contactAlert && (
+      {eventAlert && (
         <button
           className="contact-alert"
           data-testid="contact-alert"
           onClick={() => {
-            if (contactAlert.nearest) centreOn(contactAlert.nearest);
-            setContactAlert(null);
+            if (eventAlert.nearest) centreOn(eventAlert.nearest);
+            setEventAlert(null);
           }}
-          title="Jump to the nearest new contact"
+          title="Jump to the nearest event"
         >
           <span className="contact-alert-dot" />
           <span className="contact-alert-body">
-            <b>
-              {contactAlert.fresh > 0
-                ? `Enemy contact — ${contactAlert.fresh} new`
-                : `Contact upgraded — ${contactAlert.upgraded}`}
-              {contactAlert.fresh > 0 && contactAlert.upgraded > 0 ? `, ${contactAlert.upgraded} upgraded` : ''}
-            </b>
-            {contactAlert.nearest && (
+            <b>{eventAlert.parts.join(' · ')}</b>
+            {eventAlert.nearest && (
               <i>
-                {DETECTION_LEVEL_LABEL[contactAlert.nearest.level].toUpperCase()} · nearest{' '}
-                {contactAlert.nearest.distance} tile{contactAlert.nearest.distance === 1 ? '' : 's'} · grid{' '}
-                {gridRef(contactAlert.nearest.x, contactAlert.nearest.y)} — click to jump
+                grid {gridRef(eventAlert.nearest.x, eventAlert.nearest.y)} — click to jump
               </i>
             )}
           </span>
         </button>
+      )}
+      {turnSummary && (
+        <TurnSummaryBanner id={turnSummary.id} text={turnSummary.text} onDone={() => setTurnSummary(null)} />
       )}
       {toast && <div className="toast">{toast}</div>}
       {legendOpen && you && <Legend viewer={you} onClose={() => setLegendOpen(false)} />}
@@ -788,6 +942,15 @@ export default function App() {
         />
       )}
       {state.phase === 'GAME_OVER' && <EndGameScreen state={state} you={you} onRestart={net.leaveToLobby} />}
+      {briefingOpen && (
+        <Briefing
+          state={state}
+          you={you}
+          matchKind={net.matchKind}
+          botDifficulty={net.botDifficulty}
+          onDismiss={() => setBriefingDismissed(true)}
+        />
+      )}
     </div>
   );
 }

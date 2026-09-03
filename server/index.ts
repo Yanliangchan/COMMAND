@@ -368,7 +368,7 @@ wss.on('connection', (ws) => {
         if (bothConnected(room)) {
           (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((pid) => {
             const s = room.seats[pid];
-            send(s.ws, { t: 'start', state: filterStateForPlayer(room.state, pid), you: pid, opponentConnected: true });
+            send(s.ws, { t: 'start', state: filterStateForPlayer(room.state, pid), you: pid, opponentConnected: true, botDifficulty: room.botDifficulty });
           });
         }
         break;
@@ -388,6 +388,7 @@ wss.on('connection', (ws) => {
           state: filterStateForPlayer(room.state, humanSeat.playerId),
           you: humanSeat.playerId,
           opponentConnected: true,
+          botDifficulty: room.botDifficulty,
         });
         scheduleBotStep(room); // in case the bot drew SABRE and moves first
         break;
@@ -407,7 +408,7 @@ wss.on('connection', (ws) => {
           send(ws, { t: 'joined', code: room.code, token: seatB.token, you: seatB.playerId });
           (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((pid) => {
             const s = room.seats[pid];
-            send(s.ws, { t: 'start', state: filterStateForPlayer(room.state, pid), you: pid, opponentConnected: true });
+            send(s.ws, { t: 'start', state: filterStateForPlayer(room.state, pid), you: pid, opponentConnected: true, botDifficulty: room.botDifficulty });
           });
         } else {
           quickMatchWaiting = ws;
@@ -436,6 +437,7 @@ wss.on('connection', (ws) => {
           state: filterStateForPlayer(room.state, seat.playerId),
           you: seat.playerId,
           opponentConnected: other.connected,
+          botDifficulty: room.botDifficulty,
         });
         break;
       }

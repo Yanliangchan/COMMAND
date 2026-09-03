@@ -1,5 +1,6 @@
 import React from 'react';
 import { Overlays } from '../render/renderMap';
+import { SoundControl } from './SoundControl';
 
 /** Compact overlay switches, floating over the sheet's top-right corner. */
 export const OverlayToggles: React.FC<{
@@ -28,6 +29,8 @@ export const OverlayToggles: React.FC<{
       <button className={`chip-toggle ${helpOpen ? 'on' : ''}`} onClick={onHelp} title="Field manual (?)" data-testid="help-btn">
         ? Help
       </button>
+      <span className="hud-sep" />
+      <SoundControl />
     </div>
   );
 };

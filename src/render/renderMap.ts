@@ -14,7 +14,7 @@
 import { FORMATION_DEFS } from '../game/data';
 import { Contact, DetectionLevel, Formation, GameState, GRID_SIZE, Objective, PlayerId, Tile, gridRef } from '../game/types';
 import { PLAYER_COLORS, TERRAIN_COLORS, UI } from './colors';
-import { getIconBitmap } from './icons';
+import { DAMAGE_STRENGTH_THRESHOLD, getIconBitmap } from './icons';
 
 /** Contour interval, as a fraction of the full 0..1 height range. */
 const CONTOUR_BANDS = 20;
@@ -1681,7 +1681,14 @@ function drawFormation(rc: RenderContext, f: Formation) {
   // drawContactMarker below with a generic '?', never an arm icon.
   {
     const iconSize = r * 1.5;
-    const bmp = getIconBitmap(f.type, iconSize, pc.light);
+    // Damage-state overlay (phase 10 §6): only when the viewer has actually
+    // earned the real strength value — their own formation, or an enemy at
+    // CONFIRMED. An IDENTIFIED enemy's strength is the -1 redaction
+    // sentinel (fog.ts) and CONTACT enemies never reach this function at
+    // all (drawContactMarker handles those with no arm icon), so
+    // `identifiedOnly` alone is the correct — and only needed — gate here.
+    const damaged = !identifiedOnly && f.strength >= 0 && f.strength < DAMAGE_STRENGTH_THRESHOLD;
+    const bmp = getIconBitmap(f.type, iconSize, pc.light, damaged);
     ctx.drawImage(bmp, sx - iconSize / 2, sy - iconSize / 2, iconSize, iconSize);
   }
 
