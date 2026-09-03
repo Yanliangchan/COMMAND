@@ -457,7 +457,11 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
 const httpServer = createServer((req, res) => {
   void serveStatic(req, res);
 });
-const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+// Caps guard against a single client exhausting server memory: an oversized
+// message (maxPayload) or an unbounded flood of rooms (MAX_ROOMS, checked
+// before every room-creating message below).
+const wss = new WebSocketServer({ server: httpServer, path: '/ws', maxPayload: 64 * 1024 });
+const MAX_ROOMS = 2000;
 
 wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
@@ -471,6 +475,10 @@ wss.on('connection', (ws) => {
 
     switch (msg.t) {
       case 'create': {
+        if (rooms.size >= MAX_ROOMS) {
+          send(ws, { t: 'error', message: 'Server is at capacity — please try again shortly.' });
+          return;
+        }
         const resolved = resolveCreateRules(msg.rules);
         if (!resolved.ok) {
           send(ws, { t: 'error', message: resolved.reason });
@@ -534,6 +542,10 @@ wss.on('connection', (ws) => {
         break;
       }
       case 'bot': {
+        if (rooms.size >= MAX_ROOMS) {
+          send(ws, { t: 'error', message: 'Server is at capacity — please try again shortly.' });
+          return;
+        }
         const room = createRoom();
         const humanSeat = firstOpenSeat(room)!;
         humanSeat.ws = ws;
@@ -555,6 +567,10 @@ wss.on('connection', (ws) => {
       }
       case 'quick': {
         if (quickMatchWaiting && quickMatchWaiting.readyState === WebSocket.OPEN && quickMatchWaiting !== ws) {
+          if (rooms.size >= MAX_ROOMS) {
+            send(ws, { t: 'error', message: 'Server is at capacity — please try again shortly.' });
+            return;
+          }
           const waitingWs = quickMatchWaiting;
           quickMatchWaiting = null;
           const room = createRoom();
