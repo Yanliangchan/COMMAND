@@ -77,14 +77,14 @@ const SECTIONS: Section[] = [
           <ul className="tut-list">
             <li>
               <b>Terrain sets the cost.</b> Open ground and grass are cheap, forest and hills expensive, climbing uphill
-              costs extra — and roads are much cheaper than any of it. Infantry cover 4 tiles cross-country but 6 along a
-              road; armour, artillery, engineers and recce roughly double their reach on one.
+              costs extra — and roads are much cheaper than any of it. Infantry cover roughly 3&ndash;4 tiles cross-country but
+              around 5 along a road; armour, artillery, engineers and recce roughly double their reach on one.
             </li>
             <li>
               <b>Water stops land units</b> unless there is a bridge. Ships may only travel on navigable water.
             </li>
             <li>
-              <b>You may move more than once a round.</b> The unit card publishes both numbers — "Movement: 4 tiles" and
+              <b>You may move more than once a round.</b> The unit card publishes both numbers — "Movement: 3.6 tiles" and
               "Movement Actions: 2 / 2", dropping to "1 / 2" once you have moved. Move, fight, then move again to break
               contact.
             </li>

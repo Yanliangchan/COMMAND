@@ -185,16 +185,21 @@ export interface MobilityProfile {
   mobilityLabel: string;
 }
 
+// moveRange values are the per-action movement-point budget (see movement.ts) —
+// each spent against terrain cost / roadCost, not a flat tile count. All nine
+// were cut 10% at the user's request (e.g. infantry 4 -> 3.6) to slow the
+// overall pace of manoeuvre uniformly; relative mobility between unit types
+// is unchanged since every value scaled by the same factor.
 export const MOBILITY: Record<FormationType, MobilityProfile> = {
-  INFANTRY: { moveRange: 4, movesPerRound: 2, roadCost: 0.65, roughMultiplier: 1, mobilityLabel: 'Foot / motorised' },
-  COMMANDO: { moveRange: 6, movesPerRound: 3, roadCost: 0.7, roughMultiplier: 1, mobilityLabel: 'Light / heliborne' },
-  GUARDS: { moveRange: 6, movesPerRound: 3, roadCost: 0.7, roughMultiplier: 1, mobilityLabel: 'Air-assault / heliborne' },
-  ARMOUR: { moveRange: 5, movesPerRound: 2, roadCost: 0.5, roughMultiplier: 1.5, mobilityLabel: 'Tracked / mechanised' },
-  ARTILLERY: { moveRange: 4, movesPerRound: 2, roadCost: 0.5, roughMultiplier: 1.25, mobilityLabel: 'Self-propelled / towed' },
-  ENGINEER: { moveRange: 4, movesPerRound: 2, roadCost: 0.5, roughMultiplier: 1.25, mobilityLabel: 'Mechanised plant' },
-  RECON: { moveRange: 6, movesPerRound: 3, roadCost: 0.5, roughMultiplier: 1, mobilityLabel: 'Wheeled recce' },
-  FRIGATE: { moveRange: 7, movesPerRound: 2, roadCost: 1, roughMultiplier: 1, mobilityLabel: 'Blue-water' },
-  CORVETTE: { moveRange: 8, movesPerRound: 3, roadCost: 1, roughMultiplier: 1, mobilityLabel: 'Littoral' },
+  INFANTRY: { moveRange: 3.6, movesPerRound: 2, roadCost: 0.65, roughMultiplier: 1, mobilityLabel: 'Foot / motorised' },
+  COMMANDO: { moveRange: 5.4, movesPerRound: 3, roadCost: 0.7, roughMultiplier: 1, mobilityLabel: 'Light / heliborne' },
+  GUARDS: { moveRange: 5.4, movesPerRound: 3, roadCost: 0.7, roughMultiplier: 1, mobilityLabel: 'Air-assault / heliborne' },
+  ARMOUR: { moveRange: 4.5, movesPerRound: 2, roadCost: 0.5, roughMultiplier: 1.5, mobilityLabel: 'Tracked / mechanised' },
+  ARTILLERY: { moveRange: 3.6, movesPerRound: 2, roadCost: 0.5, roughMultiplier: 1.25, mobilityLabel: 'Self-propelled / towed' },
+  ENGINEER: { moveRange: 3.6, movesPerRound: 2, roadCost: 0.5, roughMultiplier: 1.25, mobilityLabel: 'Mechanised plant' },
+  RECON: { moveRange: 5.4, movesPerRound: 3, roadCost: 0.5, roughMultiplier: 1, mobilityLabel: 'Wheeled recce' },
+  FRIGATE: { moveRange: 6.3, movesPerRound: 2, roadCost: 1, roughMultiplier: 1, mobilityLabel: 'Blue-water' },
+  CORVETTE: { moveRange: 7.2, movesPerRound: 3, roadCost: 1, roughMultiplier: 1, mobilityLabel: 'Littoral' },
 };
 
 /** Back-compat view of the movement-action allowance (see MOBILITY). */

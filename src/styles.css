@@ -723,7 +723,12 @@ canvas { display: block; touch-action: none; }
 /* ---------- Landing page ---------- */
 .landing {
   position: relative;
-  min-height: 100vh;
+  /* A bounded height (not min-height) makes this element itself the scroll
+     container — body has `overflow: hidden` for the in-game canvas view, so
+     without a bound here this box just grew taller than the viewport with
+     nothing able to scroll it, silently clipping whatever fell past the
+     bottom edge (e.g. the footer, or the custom-rules form once expanded). */
+  height: 100vh;
   width: 100vw;
   overflow-x: hidden;
   overflow-y: auto;
@@ -780,9 +785,13 @@ canvas { display: block; touch-action: none; }
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 34px;
-  padding: 56px clamp(28px, 8vw, 120px);
+  /* `safe center`: centers when the content fits, but falls back to
+     start-alignment instead of clipping equally off both edges once the
+     menu grows taller than the viewport — without this, overflow was
+     unreachable by scrolling (the footer effectively vanished). */
+  justify-content: safe center;
+  gap: clamp(14px, 2.6vh, 26px);
+  padding: clamp(20px, 4.5vh, 44px) clamp(28px, 8vw, 120px);
   max-width: 1240px;
 }
 
@@ -798,7 +807,7 @@ canvas { display: block; touch-action: none; }
   letter-spacing: 0.32em;
   text-transform: uppercase;
   color: var(--olive-bright);
-  margin-bottom: 18px;
+  margin-bottom: 10px;
 }
 .landing-eyebrow-rule { width: 46px; height: 1px; background: var(--olive-dim); flex-shrink: 0; }
 .landing-title {
@@ -807,7 +816,7 @@ canvas { display: block; touch-action: none; }
      its fill entirely. */
   display: inline-block;
   font-family: var(--font-display);
-  font-size: clamp(54px, 9.5vw, 124px);
+  font-size: clamp(40px, 6.4vw, 88px);
   font-weight: 700;
   line-height: 0.94;
   letter-spacing: 0.13em;
@@ -823,29 +832,29 @@ canvas { display: block; touch-action: none; }
 }
 .landing-tagline {
   font-family: var(--font-display);
-  font-size: clamp(15px, 1.55vw, 21px);
+  font-size: clamp(14px, 1.4vw, 19px);
   font-weight: 600;
   letter-spacing: 0.19em;
   text-transform: uppercase;
   color: var(--text);
-  margin: 18px 0 0;
+  margin: 10px 0 0;
 }
 .landing-blurb {
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 13.5px;
+  line-height: 1.6;
   color: var(--text-dim);
-  margin: 14px 0 0;
+  margin: 8px 0 0;
   max-width: 500px;
 }
 
 /* --- Menu --- */
-.landing-menu { display: flex; flex-direction: column; gap: 18px; max-width: 760px; width: 100%; }
+.landing-menu { display: flex; flex-direction: column; gap: 12px; max-width: 760px; width: 100%; }
 .menu-block {
   background: linear-gradient(180deg, rgba(24, 30, 36, 0.82), rgba(19, 24, 29, 0.86));
   border: 1px solid rgba(90, 106, 118, 0.34);
   border-left: 2px solid rgba(90, 106, 118, 0.5);
   border-radius: 4px;
-  padding: 16px 20px 18px;
+  padding: 12px 18px 14px;
   backdrop-filter: blur(7px);
   -webkit-backdrop-filter: blur(7px);
 }
@@ -861,7 +870,7 @@ canvas { display: block; touch-action: none; }
   letter-spacing: 0.26em;
   text-transform: uppercase;
   color: var(--text-faint);
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 .menu-block-primary .menu-kicker { color: var(--amber); }
 .menu-primary-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
@@ -896,13 +905,16 @@ canvas { display: block; touch-action: none; }
 .diff-btn:focus-visible { outline: 2px solid var(--amber-bright); outline-offset: -3px; }
 .diff-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.menu-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+/* auto-fit (not a fixed 3-col) so the 4th tile (Spectate) joins the first
+   row on wide viewports instead of wrapping into a tall second row, and
+   still collapses gracefully on narrow ones. */
+.menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 10px; }
 .menu-tile {
   text-align: left;
   background: rgba(33, 40, 48, 0.7);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 13px 14px;
+  padding: 10px 12px;
   color: var(--text);
   cursor: pointer;
   transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
@@ -971,7 +983,11 @@ canvas { display: block; touch-action: none; }
 }
 .room-rules-summary li { list-style: none; }
 
-.menu-links { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding-left: 2px; }
+.menu-links { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-left: 2px; }
+/* The italic subtitles read nicely but three of them together are wider than
+   the menu column, which was wrapping this row onto 2-3 lines and adding a
+   lot of height; the title+icon alone still says enough at a glance. */
+.menu-links .link-btn i { display: none; }
 .link-btn {
   display: inline-flex;
   align-items: baseline;

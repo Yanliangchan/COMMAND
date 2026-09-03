@@ -124,11 +124,11 @@ const CONCEPTS: Topic[] = [
   },
   {
     title: 'Movement',
-    body: 'Every formation publishes two numbers on its unit card: Movement — how many tiles one bound covers over ordinary ground — and Movement Actions — how many bounds it may make per round, e.g. "2 / 2", dropping to "1 / 2" once it has moved. Infantry cover 4 tiles a bound, armour and the fast units more, artillery and engineers 4 as well so the guns and the bridging plant can keep pace with the formations they support. Each bound also costs 1 AP. Arm Move with M and hover a tile: the preview names the grid reference, the distance, how hard the going is, the road bonus and how many movement actions the bound needs, before you commit.',
+    body: 'Every formation publishes two numbers on its unit card: Movement — how many tiles one bound covers over ordinary ground — and Movement Actions — how many bounds it may make per round, e.g. "2 / 2", dropping to "1 / 2" once it has moved. Infantry cover roughly 3.6 tiles a bound, armour and the fast units more, artillery and engineers about the same so the guns and the bridging plant can keep pace with the formations they support. Each bound also costs 1 AP. Arm Move with M and hover a tile: the preview names the grid reference, the distance, how hard the going is, the road bonus and how many movement actions the bound needs, before you commit.',
   },
   {
     title: 'Roads',
-    body: 'Roads are a real operational advantage, not a rounding error. A road tile costs a flat, published price instead of its terrain cost: infantry manage 4 tiles cross-country but 6 along a road, and mechanised formations — armour, artillery, engineers, recce — roughly double their reach on a road. Armour and the heavy support units also pay a surcharge in forest and built-up ground, so tanks are fastest exactly where you would expect: roads and open country.',
+    body: 'Roads are a real operational advantage, not a rounding error. A road tile costs a flat, published price instead of its terrain cost: infantry manage roughly 3&ndash;4 tiles cross-country but around 5 along a road, and mechanised formations — armour, artillery, engineers, recce — roughly double their reach on a road. Armour and the heavy support units also pay a surcharge in forest and built-up ground, so tanks are fastest exactly where you would expect: roads and open country.',
   },
   {
     title: 'Move Formation',
