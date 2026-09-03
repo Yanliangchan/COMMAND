@@ -13,6 +13,14 @@
 // never targets or reasons about an enemy formation its side hasn't
 // legitimately detected.
 //
+// Phase 4b: that view is now redacted BY DETECTION LEVEL, so an enemy the bot
+// has only IDENTIFIED arrives with -1 in every numeric field. The bot fills
+// those with the same neutral estimate a human would have to guess at
+// (ESTIMATED_*) rather than peeking at the authoritative state — see
+// `estimateEnemy`. Spotting itself is passive, so the bot no longer spends AP
+// on Recon merely to see; it spends it to IDENTIFY contacts it already holds,
+// to see further, and to keep tracking what it has found.
+//
 // Difficulty is a set of scoring weights over a shared candidate-generation
 // pass (per formation: move / attack / recon / fortify / resupply / air),
 // each candidate scored by a small utility function, best score wins. This
@@ -24,7 +32,19 @@ import * as engine from '../src/game/engine';
 import { filterStateForPlayer } from '../src/game/fog';
 import { FORMATION_DEFS } from '../src/game/data';
 import { MANOEUVRE_TYPES, isSupportType, planGroupMove } from '../src/game/movement';
-import { ActionKind, AP_COSTS, AP_PER_TURN, COHESION_RADIUS, Formation, GameState, Objective, PlayerId } from '../src/game/types';
+import { currentDetectionRange } from '../src/game/detection';
+import {
+  ActionKind,
+  AP_COSTS,
+  AP_PER_TURN,
+  COHESION_RADIUS,
+  Contact,
+  DETECTION,
+  Formation,
+  GameState,
+  Objective,
+  PlayerId,
+} from '../src/game/types';
 import { GameAction } from '../src/net/protocol';
 
 export type BotDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
@@ -97,16 +117,53 @@ function nearestUncontrolledObjective(
   return best;
 }
 
-/** Predicted attacker-favor ratio (0..1), same formula as engine.attackAction, with no side effects. */
-function predictRatio(state: GameState, attacker: Formation, target: Formation): number {
-  const attackerTile = state.tiles[attacker.y][attacker.x];
-  const defenderTile = state.tiles[target.y][target.x];
-  const atk = engine.computePower(state, attacker, 'attack', attackerTile, [], { revealed: true });
-  const def = engine.computePower(state, target, 'defense', defenderTile, []);
+// What the bot assumes about an enemy it has identified but not confirmed.
+// A human in the same seat has exactly this much to go on: the arm, and the
+// knowledge that a battalion in the field is usually in decent shape.
+const ESTIMATED_STRENGTH = 80;
+const ESTIMATED_READINESS = 85;
+const ESTIMATED_SUPPLY = 80;
+const ESTIMATED_AMMO = 80;
+
+/**
+ * Replace the -1 sentinels fog.ts writes into a redacted enemy with a neutral
+ * estimate, so the scoring maths has numbers to work with WITHOUT ever reading
+ * the authoritative state. A confirmed enemy is returned untouched — the bot
+ * has earned those numbers.
+ */
+function estimateEnemy(f: Formation): Formation {
+  if (!f.redacted) return f;
+  return {
+    ...f,
+    strength: ESTIMATED_STRENGTH,
+    morale: 'Steady',
+    moraleValue: 70,
+    moraleBaseline: 70,
+    readiness: ESTIMATED_READINESS,
+    supply: ESTIMATED_SUPPLY,
+    ammo: ESTIMATED_AMMO,
+  };
+}
+
+/**
+ * Predicted attacker-favour ratio (0..1), same formula as engine.attackAction,
+ * with no side effects. `view` is the bot's fog-filtered world with redacted
+ * enemies already estimated — never the authoritative state.
+ */
+function predictRatio(view: GameState, attacker: Formation, target: Formation): number {
+  const attackerTile = view.tiles[attacker.y][attacker.x];
+  const defenderTile = view.tiles[target.y][target.x];
+  const atk = engine.computePower(view, attacker, 'attack', attackerTile, [], { intel: target.intel ?? 'CONFIRMED' });
+  const def = engine.computePower(view, target, 'defense', defenderTile, []);
   return atk / (atk + def);
 }
 
-/** How weak / unsupported a (visible) enemy target looks — the combined-arms target-priority signal. */
+/**
+ * How weak / unsupported a (visible) enemy target looks — the combined-arms
+ * target-priority signal. Reads the ESTIMATED view: an identified-but-not-
+ * confirmed enemy contributes its estimated strength, so the bot cannot
+ * target-prioritise on damage it has no way of knowing about.
+ */
 function isolationScore(view: GameState, target: Formation): number {
   const friendsNearby = Object.values(view.formations).filter(
     (f) => f.owner === target.owner && f.id !== target.id && dist(f.x, f.y, target.x, target.y) <= 2
@@ -146,8 +203,21 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
 
   // The bot's fog-of-war-legitimate view of the world — exactly what a real
   // player in this seat would have been sent over the wire.
-  const view = filterStateForPlayer(state, bot);
+  const rawView = filterStateForPlayer(state, bot);
+  // Fill the redaction sentinels with estimates so the scoring maths works on
+  // the bot's *belief* about the enemy, not on facts it has not earned.
+  const view: GameState = {
+    ...rawView,
+    formations: Object.fromEntries(
+      Object.entries(rawView.formations).map(([id, f]) => [id, f.owner === bot ? f : estimateEnemy(f)])
+    ),
+  };
   const visibleEnemies = Object.values(view.formations).filter((f) => f.owner !== bot);
+  // Contacts the bot holds but has NOT identified — the things a recon sweep
+  // would actually turn into targets.
+  const contacts = Object.values(rawView.players[bot].contacts);
+  const unidentified: Contact[] = contacts.filter((c) => c.level === 'CONTACT');
+  const stale: Contact[] = contacts.filter((c) => !c.live);
   const mine = Object.values(state.formations).filter((f) => f.owner === bot);
   if (mine.length === 0) return null;
 
@@ -171,7 +241,7 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
       for (const e of visibleEnemies) {
         const d = dist(f.x, f.y, e.x, e.y);
         if (d === 0 || d > range) continue;
-        const ratio = predictRatio(state, f, e);
+        const ratio = predictRatio(view, f, e);
         const iso = isolationScore(view, e);
         let score = (ratio - 0.5) * 10 + iso * w.isolationBonus;
         if (ratio < w.attackThreshold && iso < 0.6) score -= 8; // a clearly bad attack into a supported, healthy position
@@ -192,17 +262,33 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
       }
     }
 
-    // --- RECON: reveal before committing, when there's AP surplus to spend on it.
-    if (majorAvailable && (f.type === 'RECON' || f.type === 'COMMANDO') && affordable(state, 'RECON') && state.players[bot].ap > 4) {
-      const nearestObj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y, def.isNaval);
-      let score = w.reconPriority;
-      if (nearestObj && nearestObj.d <= def.reconRadius + 2) score += 1.5;
-      candidates.push({ action: { type: 'RECON', formationId: f.id }, score });
+    // --- RECON: no longer how the bot SEES (spotting is passive now) — it is
+    // how the bot IDENTIFIES. A sweep is only worth AP when there is something
+    // to resolve: an unidentified contact or a stale one inside sweep range, or
+    // a push onto an objective the bot cannot yet see into.
+    if (majorAvailable && affordable(state, 'RECON') && state.players[bot].ap > 4) {
+      const sweepRange = currentDetectionRange(state, f, true);
+      const toIdentify = unidentified.filter((c) => dist(f.x, f.y, c.x, c.y) <= sweepRange).length;
+      const toRefresh = stale.filter((c) => dist(f.x, f.y, c.x, c.y) <= sweepRange).length;
+      const isReconAsset = DETECTION[f.type].identifyFactor >= 1.15;
+      // A line battalion only sweeps when it has an actual unidentified blip in
+      // front of it; the sensor units are allowed to screen speculatively.
+      if (toIdentify > 0 || isReconAsset) {
+        const nearestObj = nearestUncontrolledObjective(state.objectives, bot, f.x, f.y, def.isNaval);
+        let score = w.reconPriority * (isReconAsset ? 1 : 0.4);
+        score += toIdentify * 1.5 + toRefresh * 0.35;
+        // A recce screen pushed onto the next objective is worth something even
+        // with nothing on the plot — that is what finds the enemy's main body.
+        if (isReconAsset && nearestObj && nearestObj.d <= sweepRange + 2) score += 1.2;
+        // But burning the sweep on empty ground with nothing to resolve is not.
+        if (toIdentify === 0 && toRefresh === 0) score -= 1.2;
+        candidates.push({ action: { type: 'RECON', formationId: f.id }, score });
+      }
     }
 
     // --- FORTIFY: defend an objective already held when the enemy is in sight.
     const heldNearby = state.objectives.find((o) => o.controlledBy === bot && dist(o.x, o.y, f.x, f.y) <= 1);
-    if (majorAvailable && !def.isNaval && heldNearby && !f.fortified && affordable(state, 'FORTIFY') && visibleEnemies.some((e) => dist(e.x, e.y, f.x, f.y) <= def.sightRadius)) {
+    if (majorAvailable && !def.isNaval && heldNearby && !f.fortified && affordable(state, 'FORTIFY') && visibleEnemies.some((e) => dist(e.x, e.y, f.x, f.y) <= currentDetectionRange(state, f))) {
       candidates.push({ action: { type: 'FORTIFY', formationId: f.id }, score: 1.5 + w.objectiveWeight * 0.5 });
     }
 
@@ -231,6 +317,13 @@ export function decideBotAction(state: GameState, bot: PlayerId, difficulty: Bot
           haveTarget = true;
         } else if (visibleEnemies.length && difficulty !== 'EASY') {
           const closest = visibleEnemies.reduce((a, b) => (dist(f.x, f.y, a.x, a.y) <= dist(f.x, f.y, b.x, b.y) ? a : b));
+          targetX = closest.x;
+          targetY = closest.y;
+          haveTarget = true;
+        } else if (contacts.length && difficulty !== 'EASY') {
+          // Nothing identified, but something is out there: manoeuvre onto the
+          // nearest contact marker and let passive spotting do the rest.
+          const closest = contacts.reduce((a, b) => (dist(f.x, f.y, a.x, a.y) <= dist(f.x, f.y, b.x, b.y) ? a : b));
           targetX = closest.x;
           targetY = closest.y;
           haveTarget = true;

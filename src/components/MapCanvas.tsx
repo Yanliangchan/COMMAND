@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { computeReachable, distance, formationAt, supplySources, SUPPLY_RADIUS } from '../game/engine';
 import { FORMATION_DEFS } from '../game/data';
 import { Formation, GameState, GRID_SIZE, PlayerId } from '../game/types';
-import { Camera, MapLabel, Overlays, render, screenToTile } from '../render/renderMap';
+import { Camera, ContactPing, MapLabel, Overlays, render, screenToTile } from '../render/renderMap';
 
 interface Props {
   state: GameState;
@@ -22,6 +22,8 @@ interface Props {
   /** True when the previewed destination is refused, so the path draws in red. */
   pathInvalid?: boolean;
   onHoverTile?: (t: { x: number; y: number } | null) => void;
+  /** Transient "new contact" pings raised by passive spotting. */
+  pings?: ContactPing[];
   /** Reports the smoothed frame time of the render loop, for the perf readout. */
   onFrameTime?: (ms: number) => void;
 }
@@ -70,6 +72,7 @@ export const MapCanvas: React.FC<Props> = ({
   pathInvalid,
   onHoverTile,
   onFrameTime,
+  pings,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -116,7 +119,7 @@ export const MapCanvas: React.FC<Props> = ({
     [overlays.supply, state.formations, state.objectives, viewer]
   );
 
-  propsRef.current = { state, viewer, selected, reachable, attackable, overlays, supplySet, labels, flashTiles, size, camera, groupIds, pathPreview, pathInvalid };
+  propsRef.current = { state, viewer, selected, reachable, attackable, overlays, supplySet, labels, flashTiles, size, camera, groupIds, pathPreview, pathInvalid, pings };
 
   // ---- Animation / render loop -------------------------------------------
   useEffect(() => {
@@ -182,6 +185,7 @@ export const MapCanvas: React.FC<Props> = ({
         groupIds: p.groupIds,
         pathPreview: p.pathPreview,
         pathInvalid: p.pathInvalid,
+        pings: p.pings,
         pulse: (t % 1800) / 1800,
       });
       const dt = performance.now() - t0;

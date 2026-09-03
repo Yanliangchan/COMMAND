@@ -151,8 +151,8 @@ const SECTIONS: Section[] = [
   },
   {
     id: 'recon',
-    nav: 'Recon',
-    title: 'Recon — press R',
+    nav: 'Spotting',
+    title: 'Spotting & Recon — press R',
     render: () => {
       const markers: Marker[] = [
         { x: 1, y: 0, kind: 'recon' },
@@ -173,29 +173,50 @@ const SECTIONS: Section[] = [
       return (
         <>
           <p className="tut-lede">
-            <b>Recon means gathering information about enemy forces.</b> Use Recon to reveal hidden units and improve your
-            understanding of the battlefield. Press <K>R</K> — no target needed, it sweeps everything around the unit.
+            <b>You do not need an order to see the enemy.</b> Every formation watches its surroundings continuously and for
+            free: if it has line of sight and an enemy comes inside its detection range, you spot it — on your turn or in the
+            middle of the opponent's. <K>R</K> is what makes you see <i>further</i>, <i>sooner</i>, and with <i>certainty</i>.
           </p>
           <TutorialDiagram
             rows={['.ggfg.g.', 'g.g.gg..', '.gg.ffg.', 'gg..g.gg']}
             markers={markers}
-            caption="Inside the sweep the enemy armour becomes a solid, trustworthy marker. Outside it, all you have is a dashed '?' — a contact from an earlier sighting."
+            caption="The amber area is what this recce battalion picks up on its own, with no AP spent. A Recon sweep reaches much further still, pushes through the wood on the right, and turns a '?' blip into a named formation."
           />
           <ul className="tut-list">
             <li>
-              <b>Fog of war:</b> you only see what your formations can see. Everything else is either unknown or remembered.
+              <b>Detection range depends on the formation.</b> Recon (C4I / ISR) about 9 tiles, commandos 7, warships 7–8,
+              infantry and armour 5, engineers 4, artillery 3. Move a battalion next to an enemy in the open and you will
+              always see it — no order required.
             </li>
             <li>
-              <b>Unknown contacts</b> are the dashed circles with a "?". They show where something <i>was</i>. Their confidence
-              decays each round — an old contact may have moved, or may not be what you think.
+              <b>Terrain and height change that range in both directions.</b> Standing on a hill or in open ground extends
+              your picture (×1.35 / ×1.15); sitting in a wood or a housing estate cuts it roughly in half. The same terrain
+              hides the enemy: a battalion in a town is found at about half the distance it would be on a beach.
             </li>
             <li>
-              <b>Recon range beats sight range.</b> Every unit sees a little; a Recon (C4I/ISR) formation sweeps eight tiles, and
-              commandos six.
+              <b>Sight is a ray, not a circle.</b> The game walks the height profile between you and the target — higher
+              ground in between closes the line completely, and forest and city fabric pile up haze that shortens it. A unit
+              on a ridge sees <i>over</i> the low ground; a unit in a valley wood is nearly blind.
             </li>
             <li>
-              <b>Recon pays off in combat.</b> Attacking a target you have properly identified is materially more effective than
-              attacking blind.
+              <b>Four detection states.</b> Nothing at all (Unknown) · a hollow dashed "?" blip with a grid reference and a
+              confidence, e.g. "CONTACT · Unknown Enemy · Grid F-42 · Confidence 58%" · a dashed counter that names the arm
+              ("IDENTIFIED · Enemy Infantry · 91%") · and a solid "✓" counter with the real designation (Confirmed).
+            </li>
+            <li>
+              <b>Confidence rises and falls.</b> Closer, clearer and repeated observation climbs the ladder — once per round,
+              so sustained watching is what confirms a formation. Lose sight and confidence decays every round until a
+              Confirmed battalion is back to a stale last-known-position marker, then nothing.
+            </li>
+            <li>
+              <b>What Recon buys you.</b> A much longer sensor range, the ability to see through cover, a flat confidence
+              bonus that jumps contacts up the ladder in one go, contacts that decay far more slowly once tracked, and a
+              re-fix on the stale contacts you are about to lose. Normal troops detect nearby enemies; recon sees further,
+              sooner, and knows what it is looking at.
+            </li>
+            <li>
+              <b>Recon pays off in combat.</b> Attacking something you have only made contact with costs you 40% of your
+              combat power. Identified costs 12%. Confirmed costs nothing at all.
             </li>
           </ul>
         </>

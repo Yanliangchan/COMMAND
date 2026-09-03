@@ -29,10 +29,53 @@ const TERRAIN: Entry[] = [
   { symbol: '⌒', color: '#6b4a1e', label: 'Contour line', note: 'Equal height. Thick lines every fifth contour.' },
 ];
 
+/**
+ * The four detection states. Each is separated by SYMBOL as well as colour —
+ * a hollow "?" blip, a dashed counter with a "?" badge, a solid counter with a
+ * "✓" badge — so the ladder reads without relying on colour perception.
+ */
+const DETECTION_STATES: Entry[] = [
+  {
+    symbol: '·',
+    color: '#3d4348',
+    label: 'Unknown',
+    note: 'Nothing detected. Not drawn at all — the server does not even tell your client the formation exists.',
+  },
+  {
+    symbol: '?',
+    color: '#b2703c',
+    label: 'Contact',
+    note: 'Hollow dashed blip. Something is at that grid; type, strength and identity are unknown. Shows the grid reference and confidence, e.g. "F-42 · 58%".',
+  },
+  {
+    symbol: '?',
+    color: '#cf7a4a',
+    label: 'Identified',
+    note: 'Dashed counter with the arm glyph and a "?" badge. You know it is, say, enemy infantry — not which battalion, nor its strength (the bar is hatched).',
+  },
+  {
+    symbol: '✓',
+    color: '#c17a5f',
+    label: 'Confirmed',
+    note: 'Solid counter with a "✓" badge, full strength bar and the real designation. High confidence — and attacks against it lose no combat power.',
+  },
+  {
+    symbol: '↖',
+    color: '#8a6244',
+    label: 'Stale contact',
+    note: 'A small tick on the blip means nobody is watching it now. Confidence decays each round and the contact slides back down the ladder.',
+  },
+  {
+    symbol: '◉',
+    color: '#e0a05c',
+    label: 'Contact ping',
+    note: 'Expanding rings on a tile just spotted. Click the banner at the top of the screen to jump there.',
+  },
+];
+
 const MARKERS: Entry[] = [
   { symbol: 'IN', color: '#6fa8c9', label: 'Friendly formation', note: 'Blue ring. Two letters give the arm.' },
-  { symbol: 'IN', color: '#c17a5f', label: 'Enemy formation', note: 'Red ring — currently in sight.' },
-  { symbol: '?', color: '#c1524a', label: 'Unknown contact', note: 'Dashed circle: last known position, fading confidence.' },
+  { symbol: 'IN', color: '#c17a5f', label: 'Enemy formation', note: 'Red ring — currently detected. The badge says how well you know it.' },
   { symbol: '★', color: '#cf9a44', label: 'Objective', note: 'Hold it to earn Victory Points each round.' },
   { symbol: '⚓', color: '#cf9a44', label: 'Anchorage', note: 'Maritime objective — only ships can hold it.' },
   { symbol: '◆', color: '#cf9a44', label: 'Supply depot', note: 'Projects supply around itself.' },
@@ -84,6 +127,10 @@ export const Legend: React.FC<{ onClose: () => void }> = ({ onClose }) => (
         ))}
       </div>
       <div>
+        <div className="legend-sub">DETECTION STATES</div>
+        {DETECTION_STATES.map((e) => (
+          <Row key={e.label} e={e} />
+        ))}
         <div className="legend-sub">MARKERS</div>
         {MARKERS.map((e) => (
           <Row key={e.label} e={e} />

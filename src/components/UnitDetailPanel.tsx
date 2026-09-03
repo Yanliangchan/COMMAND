@@ -2,7 +2,8 @@ import React from 'react';
 import { FORMATION_DEFS } from '../game/data';
 import { isInSupplyRange, movesRemaining } from '../game/engine';
 import { movementProfile, nearbyFriendlies, supportedFormation } from '../game/movement';
-import { COHESION_RADIUS, Formation, GameState, gridRef } from '../game/types';
+import { currentDetectionRange, detectionModifiers } from '../game/detection';
+import { COHESION_RADIUS, DETECTION, Formation, GameState, gridRef } from '../game/types';
 
 const MORALE_COLOR: Record<string, string> = {
   Elite: 'var(--olive-bright)',
@@ -40,6 +41,11 @@ export const UnitDetailPanel: React.FC<{
   const mv = movementProfile(f);
   const friends = nearbyFriendlies(state, f).slice(0, 3);
   const partner = supportedFormation(state, f);
+  // Passive detection is situational — the number quoted is what this formation
+  // actually achieves from the ground it is standing on right now.
+  const detect = currentDetectionRange(state, f);
+  const sweep = currentDetectionRange(state, f, true);
+  const detectMods = detectionModifiers(state, f);
   const partnerDistance = partner ? Math.abs(partner.x - f.x) + Math.abs(partner.y - f.y) : 0;
   const separated = !!partner && partnerDistance > COHESION_RADIUS;
 
@@ -121,9 +127,15 @@ export const UnitDetailPanel: React.FC<{
           <span className="v">{def.attackRange} tiles</span>
         </div>
         <div>
-          <span className="k">Sight / recon</span>
-          <span className="v">
-            {def.sightRadius} / {def.reconRadius}
+          <span className="k">Detection range</span>
+          <span className="v" data-testid="detection-range" title="Passive spotting range from this tile — no order or AP required.">
+            {detect} tiles {detect !== DETECTION[f.type].baseRange && <em>(base {DETECTION[f.type].baseRange})</em>}
+          </span>
+        </div>
+        <div>
+          <span className="k">Recon sweep (R)</span>
+          <span className="v" data-testid="recon-range" title="Range of a deliberate Recon order — sees through cover and identifies contacts.">
+            {sweep} tiles
           </span>
         </div>
       </div>
@@ -145,6 +157,15 @@ export const UnitDetailPanel: React.FC<{
           </div>
         )}
       </div>
+      <div className="unit-detect-block" data-testid="unit-detection">
+        <div className="unit-move-note">{DETECTION[f.type].sensorLabel}</div>
+        {detectMods.map((m) => (
+          <div className={`unit-move-note ${m.good ? 'good' : 'warn'}`} key={m.label} data-testid="detection-modifier">
+            {m.good ? '▲' : '▼'} {m.label}
+          </div>
+        ))}
+      </div>
+
       <div className="unit-card-order">
         <span className="k">Current orders</span> {f.lastOrder}
       </div>

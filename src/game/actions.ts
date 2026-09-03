@@ -51,7 +51,7 @@ export const ACTION_SPECS: ActionSpec[] = [
     shortcut: 'R',
     apCost: AP_COSTS.RECON,
     mode: null,
-    blurb: 'Sweep the surrounding area and reveal enemy formations you cannot currently see.',
+    blurb: 'Your formations already spot nearby enemies on their own. A Recon sweep goes further: a much longer sensor range, it pushes through forest and built-up ground, and it jumps contacts up the detection ladder — Contact to Identified to Confirmed — and keeps tracking them long after you lose sight.',
   },
   {
     id: 'FORTIFY',
@@ -123,6 +123,12 @@ export interface ActionAvailability extends ActionSpec {
   reason: string;
 }
 
+/**
+ * Enemies this side can actually shoot at. `state.formations` on the client is
+ * already fog-filtered, so an enemy only appears here once passive spotting (or
+ * recon) has taken it to IDENTIFIED or better — a Contact-only blip is a
+ * position, not a target.
+ */
 function enemiesInRange(state: GameState, f: Formation): number {
   const range = FORMATION_DEFS[f.type].attackRange;
   return Object.values(state.formations).filter(
@@ -174,11 +180,12 @@ export function actionAvailability(state: GameState, f: Formation, viewer: Playe
     else if (ap < spec.apCost) reason = `Not enough AP — needs ${spec.apCost}, you have ${ap}.`;
     else if (spec.id === 'MOVE' && computeReachable(state, f.id).size === 0) reason = 'No reachable tile from here.';
     else if (spec.id === 'ATTACK' && enemiesInRange(state, f) === 0)
-      reason = `No visible enemy within attack range (${def.attackRange} tiles).`;
+      reason = `No identified enemy within attack range (${def.attackRange} tiles). Your formations spot nearby enemies automatically — close the distance, or use Recon (R) to identify a contact.`;
     else if (spec.id === 'RESUPPLY' && !supplied) reason = 'Out of supply range — move closer to a depot or a held port/airfield.';
     else if (spec.id === 'ARTILLERY' && f.ammo < 10) reason = 'Out of ammunition — resupply first.';
     else if (spec.id === 'AIR' && state.players[viewer].airSorties < 1) reason = 'No air sorties left this turn.';
-    else if (spec.id === 'AIR' && visibleEnemies(state, f.owner) === 0) reason = 'No spotted enemy to strike — send a recon unit forward.';
+    else if (spec.id === 'AIR' && visibleEnemies(state, f.owner) === 0)
+      reason = 'No identified enemy to strike — push a formation forward until it spots one, or Recon (R) an existing contact to identify it.';
 
     return { ...spec, applicable, enabled: reason === '', reason };
   });

@@ -312,6 +312,10 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
     default:
       return { error: 'Unknown action.', mapChanged: false };
   }
+  // Backstop: spotting is passive and symmetric, so both sides re-look after
+  // ANY accepted action, whatever it was. The engine actions already do this;
+  // repeating it here means a future action can never forget to.
+  engine.refreshAllFog(state);
   room.lastActivity = Date.now();
   return { error: null, mapChanged: action.type === 'ENGINEER_BRIDGE' };
 }

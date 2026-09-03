@@ -12,6 +12,7 @@ import {
   planGroupMove,
   planMove,
 } from './movement';
+import { deepProbe, reconSweep, refreshAllSpotting, refreshSpotting } from './detection';
 import {
   COHESION_RADIUS,
   MORALE_BASELINE,
@@ -31,13 +32,14 @@ import {
   ActionKind,
   BattleFactor,
   BattleReport,
-  Contact,
+  DetectionLevel,
   Formation,
   GameState,
   LossLevel,
   Morale,
   Objective,
   PlayerId,
+  SPECIAL_OP_RANGE,
   Tile,
   otherPlayer,
 } from './types';
@@ -107,14 +109,13 @@ export function initGame(seed = 1337): GameState {
       BLUEFOR: { id: 'BLUEFOR', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {} },
       REDFOR: { id: 'REDFOR', ap: AP_PER_TURN, vp: 0, airSorties: AIR_SORTIES_PER_TURN, contacts: {} },
     },
-    log: ['Operation begins. BLUEFOR moves first.'],
+    log: [{ text: 'Operation begins. BLUEFOR moves first.', audience: 'ALL' as const }],
     phase: 'PLAYING',
     winner: null,
     lastBattleReport: null,
   };
 
-  refreshFogOfWar(state, 'BLUEFOR');
-  refreshFogOfWar(state, 'REDFOR');
+  refreshAllSpotting(state);
   return state;
 }
 
@@ -167,8 +168,13 @@ function spendAP(state: GameState, kind: ActionKind) {
   state.players[state.activePlayer].ap -= AP_COSTS[kind];
 }
 
-function log(state: GameState, msg: string) {
-  state.log.unshift(msg);
+/**
+ * Append an operations-log line. `audience` defaults to the side that acted —
+ * fog.ts only sends a player the entries addressed to them or to 'ALL', so the
+ * log can never narrate an enemy move the player has not detected.
+ */
+function log(state: GameState, msg: string, audience: PlayerId | 'ALL' = state.activePlayer) {
+  state.log.unshift({ text: msg, audience });
   if (state.log.length > 60) state.log.pop();
 }
 
@@ -197,7 +203,7 @@ export function moveFormation(state: GameState, formationId: string, x: number, 
   f.lastOrder = `Moved to grid ${ref} — bound ${f.movesUsed}/${f.movesMax}`;
   log(state, `${f.shortName} moved to grid ${ref} [${f.movesUsed}/${f.movesMax} bounds].`);
   if (advisory) log(state, advisory.message);
-  refreshFogOfWar(state, state.activePlayer);
+  refreshAllSpotting(state);
   return state;
 }
 
@@ -231,7 +237,7 @@ export function moveGroup(state: GameState, formationIds: string[], x: number, y
   );
   plan.advisories.forEach((a) => log(state, a));
   plan.excluded.forEach((e) => log(state, `${e.shortName} could not join the formation move — ${e.reason}.`));
-  refreshFogOfWar(state, state.activePlayer);
+  refreshAllSpotting(state);
   return state;
 }
 
@@ -261,7 +267,7 @@ export function applyMoraleShock(state: GameState, f: Formation, points: number,
   const before = f.morale;
   setMorale(f, f.moraleValue + applied);
   if (f.morale !== before) {
-    log(state, `${f.shortName} morale ${before} → ${f.morale} (${reason}).`);
+    log(state, `${f.shortName} morale ${before} → ${f.morale} (${reason}).`, f.owner);
     return true;
   }
   return false;
@@ -342,7 +348,7 @@ function tickMorale(state: GameState, owner: PlayerId) {
     if (friends.length === 0) recovery = recovery / 2; // nobody to reorganise around
     const before = f.morale;
     setMorale(f, Math.min(f.moraleBaseline, f.moraleValue + recovery));
-    if (f.morale !== before) log(state, `${f.shortName} morale recovered to ${f.morale}.`);
+    if (f.morale !== before) log(state, `${f.shortName} morale recovered to ${f.morale}.`, f.owner);
   });
 }
 
@@ -350,76 +356,47 @@ function tickMorale(state: GameState, owner: PlayerId) {
 // Fog of war
 // ---------------------------------------------------------------------------
 
+/**
+ * Passive spotting refresh for one side. Kept under the old name so every
+ * existing call site still reads correctly, but the work now lives in
+ * detection.ts: line of sight over the heightfield, situational detection
+ * range, and the four-rung confidence ladder.
+ */
 export function refreshFogOfWar(state: GameState, player: PlayerId) {
-  const ps = state.players[player];
-  const enemy = otherPlayer(player);
-  const visibleNow = new Set<string>();
-
-  Object.values(state.formations)
-    .filter((f) => f.owner === player)
-    .forEach((f) => {
-      const def = FORMATION_DEFS[f.type];
-      Object.values(state.formations)
-        .filter((e) => e.owner === enemy)
-        .forEach((e) => {
-          if (distance(f.x, f.y, e.x, e.y) <= def.sightRadius) {
-            visibleNow.add(e.id);
-          }
-        });
-    });
-
-  visibleNow.forEach((id) => {
-    const e = state.formations[id];
-    ps.contacts[id] = {
-      formationId: id,
-      owner: e.owner,
-      type: e.type,
-      x: e.x,
-      y: e.y,
-      confidence: 100,
-      lastSeenTurn: state.round,
-      source: 'Visual Contact',
-    };
-  });
-
-  // Decay confidence on contacts not currently visible.
-  Object.values(ps.contacts).forEach((c) => {
-    if (!visibleNow.has(c.formationId)) {
-      const turnsSince = state.round - c.lastSeenTurn;
-      c.confidence = Math.max(0, 100 - turnsSince * 20);
-      if (c.confidence <= 0) delete ps.contacts[c.formationId];
-    }
-  });
+  refreshSpotting(state, player);
 }
 
+/**
+ * Spotting is PASSIVE and symmetric: whatever moved, both sides re-look. This
+ * is the function every action calls, and the server calls it again after any
+ * action as a backstop.
+ */
+export function refreshAllFog(state: GameState) {
+  refreshAllSpotting(state);
+}
+
+/**
+ * The Recon order. It is no longer how you see the enemy — passive spotting
+ * already does that — it is how you see FURTHER, SOONER and with CERTAINTY.
+ */
 export function reconAction(state: GameState, formationId: string): GameState {
   const f = state.formations[formationId];
   if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn) return state;
   if (!canAfford(state, 'RECON')) return state;
   spendAP(state, 'RECON');
-  const def = FORMATION_DEFS[f.type];
-  const enemy = otherPlayer(f.owner);
-  const ps = state.players[f.owner];
-  const source = f.type === 'COMMANDO' ? 'Commando Recon' : 'Recon Sweep';
-  Object.values(state.formations)
-    .filter((e) => e.owner === enemy)
-    .forEach((e) => {
-      if (distance(f.x, f.y, e.x, e.y) <= def.reconRadius) {
-        ps.contacts[e.id] = {
-          formationId: e.id,
-          owner: e.owner,
-          type: e.type,
-          x: e.x,
-          y: e.y,
-          confidence: f.type === 'COMMANDO' ? 100 : 90,
-          lastSeenTurn: state.round,
-          source,
-        };
-      }
-    });
+  const res = reconSweep(state, f);
   f.hasActedThisTurn = true;
-  f.lastOrder = 'Conducted recon sweep';
-  log(state, `${f.name} conducted a recon sweep.`);
+  f.lastOrder = `Recon sweep — ${res.found} contact${res.found === 1 ? '' : 's'} out to ${res.range} tiles`;
+  if (res.found === 0) {
+    log(state, `${f.name} swept out to ${res.range} tiles — no enemy found.`);
+  } else {
+    log(
+      state,
+      `${f.name} recon sweep (${res.range} tiles): ${res.found} contact${res.found === 1 ? '' : 's'}` +
+        (res.identified ? `, ${res.identified} upgraded on the detection ladder.` : '.')
+    );
+  }
+  refreshAllSpotting(state);
   return state;
 }
 
@@ -532,9 +509,15 @@ function lossFromDelta(delta: number): LossLevel {
   return 'Destroyed';
 }
 
-function isRevealed(state: GameState, attacker: PlayerId, target: Formation): boolean {
+/**
+ * How well the attacker actually knows what it is attacking. Passive spotting
+ * means you can nearly always SEE the enemy you are next to; the ladder is
+ * what decides whether you are attacking a known formation or a shape in the
+ * treeline. Recon is what buys the top rung.
+ */
+function intelLevel(state: GameState, attacker: PlayerId, target: Formation): DetectionLevel {
   const c = state.players[attacker].contacts[target.id];
-  return !!c && c.confidence >= 40;
+  return c ? c.level : 'UNKNOWN';
 }
 
 function hasSupportingUnits(state: GameState, f: Formation): { infantry: boolean; armour: boolean; recon: boolean } {
@@ -554,7 +537,7 @@ export function computePower(
   role: 'attack' | 'defense',
   tile: Tile,
   factors: BattleFactor[],
-  opts: { revealed?: boolean; artillerySupport?: boolean; airSupport?: boolean } = {}
+  opts: { intel?: DetectionLevel; artillerySupport?: boolean; airSupport?: boolean } = {}
 ): number {
   const def = FORMATION_DEFS[f.type];
   const base = role === 'attack' ? def.baseAttack : def.baseDefense;
@@ -591,9 +574,18 @@ export function computePower(
     }
   }
 
-  if (role === 'attack' && opts.revealed === false) {
-    power *= 0.6;
-    factors.push({ label: 'Target not fully revealed by recon', positive: false, magnitude: 40 });
+  if (role === 'attack' && opts.intel) {
+    // Attacking what you have merely *detected* is materially worse than
+    // attacking a formation you have identified, or confirmed with recon.
+    if (opts.intel === 'CONTACT' || opts.intel === 'UNKNOWN') {
+      power *= 0.6;
+      factors.push({ label: 'Target unidentified — contact only', positive: false, magnitude: 40 });
+    } else if (opts.intel === 'IDENTIFIED') {
+      power *= 0.88;
+      factors.push({ label: 'Target identified but not confirmed', positive: false, magnitude: 12 });
+    } else {
+      factors.push({ label: 'Target confirmed by reconnaissance', positive: true, magnitude: 0 });
+    }
   }
 
   const support = hasSupportingUnits(state, f);
@@ -634,11 +626,11 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
 
   const attackerFactors: BattleFactor[] = [];
   const defenderFactors: BattleFactor[] = [];
-  const revealed = isRevealed(state, attacker.owner, target);
+  const intel = intelLevel(state, attacker.owner, target);
   const attackerTile = state.tiles[attacker.y][attacker.x];
   const defenderTile = state.tiles[target.y][target.x];
 
-  const attackerPower = computePower(state, attacker, 'attack', attackerTile, attackerFactors, { revealed });
+  const attackerPower = computePower(state, attacker, 'attack', attackerTile, attackerFactors, { intel });
   const defenderPower = computePower(state, target, 'defense', defenderTile, defenderFactors);
 
   const roll = Math.round((Math.random() * 2 - 1) * 15); // -15..+15
@@ -747,9 +739,8 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
     defenderY: defenderTile.y,
   };
   state.lastBattleReport = report;
-  log(state, `${report.attackerName} attacked ${report.defenderName}: ${outcome}.`);
-  refreshFogOfWar(state, state.activePlayer);
-  refreshFogOfWar(state, otherPlayer(state.activePlayer));
+  log(state, `${report.attackerName} attacked ${report.defenderName}: ${outcome}.`, 'ALL');
+  refreshAllSpotting(state);
   return state;
 }
 
@@ -782,12 +773,12 @@ export function artilleryAction(state: GameState, formationId: string, x: number
   // Indirect fire is harassing: it carries half the morale weight of a
   // stand-up assault, and a light stonk carries none at all.
   applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'under artillery fire');
-  log(state, `${f.name} fire mission struck ${target.name} at grid ${gridRef(x, y)} — ${lossFromDelta(delta)} losses.`);
+  log(state, `${f.name} fire mission struck ${target.name} at grid ${gridRef(x, y)} — ${lossFromDelta(delta)} losses.`, 'ALL');
   if (target.strength <= 0) {
     mourn(state, target);
     delete state.formations[target.id];
   }
-  refreshFogOfWar(state, otherPlayer(f.owner));
+  refreshAllSpotting(state);
   return state;
 }
 
@@ -802,12 +793,12 @@ export function airStrikeAction(state: GameState, x: number, y: number): GameSta
   target.strength = Math.max(0, target.strength + delta);
   target.lastEngagedRound = state.round;
   applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'under air attack');
-  log(state, `Air strike (F-15SG/F-16 flight) hit ${target.name} at grid ${gridRef(x, y)} — ${lossFromDelta(delta)} losses.`);
+  log(state, `Air strike (F-15SG/F-16 flight) hit ${target.name} at grid ${gridRef(x, y)} — ${lossFromDelta(delta)} losses.`, 'ALL');
   if (target.strength <= 0) {
     mourn(state, target);
     delete state.formations[target.id];
   }
-  refreshFogOfWar(state, otherPlayer(state.activePlayer));
+  refreshAllSpotting(state);
   return state;
 }
 
@@ -816,8 +807,7 @@ export function specialOpAction(state: GameState, formationId: string, x: number
   if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn || f.type !== 'COMMANDO') return state;
   if (!canAfford(state, 'SPECIAL_OP')) return state;
   const d = distance(f.x, f.y, x, y);
-  const def = FORMATION_DEFS['COMMANDO'];
-  if (d > def.reconRadius) return state;
+  if (d > SPECIAL_OP_RANGE) return state;
   spendAP(state, 'SPECIAL_OP');
   f.hasActedThisTurn = true;
   const target = formationAt(state, x, y);
@@ -827,23 +817,20 @@ export function specialOpAction(state: GameState, formationId: string, x: number
     target.lastEngagedRound = state.round;
     applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'raided behind the lines');
     f.lastOrder = `Special op raid on grid ${gridRef(x, y)}`;
-    log(state, `${f.name} conducted a special-ops raid on ${target.name} — ${lossFromDelta(delta)} losses.`);
+    log(state, `${f.name} conducted a special-ops raid on ${target.name} — ${lossFromDelta(delta)} losses.`, 'ALL');
     if (target.strength <= 0) {
       mourn(state, target);
       delete state.formations[target.id];
     }
   } else {
-    const enemy = otherPlayer(f.owner);
-    const ps = state.players[f.owner];
-    Object.values(state.formations)
-      .filter((e) => e.owner === enemy && distance(e.x, e.y, x, y) <= 3)
-      .forEach((e) => {
-        ps.contacts[e.id] = { formationId: e.id, owner: e.owner, type: e.type, x: e.x, y: e.y, confidence: 100, lastSeenTurn: state.round, source: 'Commando Recon' };
-      });
-    f.lastOrder = `Deep recon at grid ${gridRef(x, y)}`;
+    // A deep probe: the patrol is treated as observing from the target tile,
+    // so it confirms whatever is around the objective it was sent to look at.
+    const spotter: Formation = { ...f, x, y };
+    const res = deepProbe(state, spotter, 3);
+    f.lastOrder = `Deep recon at grid ${gridRef(x, y)} — ${res} contact${res === 1 ? '' : 's'}`;
     log(state, `${f.name} conducted a deep-recon special operation near grid ${gridRef(x, y)}.`);
   }
-  refreshFogOfWar(state, otherPlayer(f.owner));
+  refreshAllSpotting(state);
   return state;
 }
 
@@ -865,7 +852,7 @@ function tickObjectives(state: GameState, awardVp: boolean) {
       if (o.controlledBy !== side) {
         const previous = o.controlledBy;
         o.controlledBy = side;
-        log(state, `${side} secured objective: ${o.name} (grid ${gridRef(o.x, o.y)}).`);
+        log(state, `${side} secured objective: ${o.name} (grid ${gridRef(o.x, o.y)}).`, 'ALL');
         // Taking ground lifts the units that took it; losing an objective you
         // held is one of the few things that genuinely knocks a force back.
         occupants
@@ -921,11 +908,11 @@ function checkVictory(state: GameState, roundComplete: boolean) {
   if (b >= VP_WIN_THRESHOLD || r >= VP_WIN_THRESHOLD) {
     state.phase = 'GAME_OVER';
     state.winner = b === r ? 'DRAW' : b > r ? 'BLUEFOR' : 'REDFOR';
-    log(state, `Victory point threshold reached. Winner: ${state.winner}.`);
+    log(state, `Victory point threshold reached. Winner: ${state.winner}.`, 'ALL');
   } else if (state.round > MAX_ROUNDS) {
     state.phase = 'GAME_OVER';
     state.winner = b === r ? 'DRAW' : b > r ? 'BLUEFOR' : 'REDFOR';
-    log(state, `Final round complete. Winner: ${state.winner}.`);
+    log(state, `Final round complete. Winner: ${state.winner}.`, 'ALL');
   }
 }
 
@@ -947,10 +934,10 @@ export function endTurn(state: GameState): GameState {
   state.players[nextPlayer].ap = carry;
   state.players[nextPlayer].airSorties = AIR_SORTIES_PER_TURN;
   state.activePlayer = nextPlayer;
-  refreshFogOfWar(state, nextPlayer);
+  refreshAllSpotting(state);
   checkVictory(state, finishing === 'REDFOR');
   if (state.phase !== 'GAME_OVER') state.phase = 'TURN_HANDOFF';
-  log(state, `Turn passed to ${nextPlayer}. Round ${state.round}.`);
+  log(state, `Turn passed to ${nextPlayer}. Round ${state.round}.`, 'ALL');
   return state;
 }
 

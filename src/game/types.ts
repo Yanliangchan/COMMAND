@@ -125,8 +125,15 @@ export interface FormationDef {
   moveRange: number; // movement points per movement action (fictional, balance-driven)
   /** Direct/indirect engagement range in tiles (1 = must be adjacent). */
   attackRange: number;
-  sightRadius: number; // fog-of-war reveal radius (tiles)
-  reconRadius: number; // radius when performing an explicit Recon action
+  /**
+   * Nominal passive detection radius (tiles) over level, open ground. The real
+   * spotting rules live in detection.ts and modify this by terrain, elevation
+   * and line of sight; this mirrors DETECTION[type].baseRange so the unit card
+   * and the bot can quote one number without importing the detection model.
+   */
+  sightRadius: number;
+  /** Nominal radius of a deliberate Recon sweep — mirrors DETECTION[type].reconRange. */
+  reconRadius: number;
   isNaval: boolean;
   maxAmmo: number | null; // null = doesn't consume ammo
   /** Movement actions this formation may take per round (see MOVES_PER_ROUND). */
@@ -309,20 +316,137 @@ export interface Formation {
   hasActedThisTurn: boolean;
   fortified: boolean; // dug in — bonus defense while true, cleared if it moves
   lastOrder: string; // human-readable description of the last action taken
+  /**
+   * Set by fog.ts on ENEMY formations only: the rung of the detection ladder
+   * this viewer has reached. Undefined on your own formations. When it is
+   * 'IDENTIFIED' the numeric fields above are REDACTED placeholders (-1) and
+   * the identity strings are generic — never render them as facts.
+   */
+  intel?: DetectionLevel;
+  /** True when this object was redacted for the viewer (intel below CONFIRMED). */
+  redacted?: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// Fog of war
+// DETECTION MODEL (phase 4b)
+//
+// Spotting is PASSIVE and CONTINUOUS. Every friendly formation permanently
+// watches its surroundings: if it has line of sight to an enemy and that enemy
+// is inside its detection range, the enemy is detected — no action, no AP.
+// The Recon order is an *amplifier* on top of that, not the way you see at all.
+//
+// What a side knows about a given enemy is a four-rung ladder:
+//
+//   UNKNOWN     nothing detected — the enemy is absent from the wire payload
+//               entirely, not merely hidden in the UI.
+//   CONTACT     something is there. Position only. Type, strength, identity
+//               are NOT sent to the client (see fog.ts).
+//   IDENTIFIED  the arm is known ("Enemy Infantry"). Strength, morale, supply
+//               and the true unit title are still withheld.
+//   CONFIRMED   the exact formation is known, in full.
+//
+// The rung is derived from a 0-100 CONFIDENCE number, which rises with closer,
+// better and repeated observation and decays once contact is lost.
 // ---------------------------------------------------------------------------
 
+export type DetectionLevel = 'UNKNOWN' | 'CONTACT' | 'IDENTIFIED' | 'CONFIRMED';
+
+/** Lower confidence bound of each rung. */
+export const DETECTION_THRESHOLDS = {
+  CONTACT: 1,
+  IDENTIFIED: 55,
+  CONFIRMED: 85,
+} as const;
+
+export function detectionLevelFor(confidence: number): DetectionLevel {
+  if (confidence >= DETECTION_THRESHOLDS.CONFIRMED) return 'CONFIRMED';
+  if (confidence >= DETECTION_THRESHOLDS.IDENTIFIED) return 'IDENTIFIED';
+  if (confidence >= DETECTION_THRESHOLDS.CONTACT) return 'CONTACT';
+  return 'UNKNOWN';
+}
+
+export const DETECTION_LEVEL_LABEL: Record<DetectionLevel, string> = {
+  UNKNOWN: 'Unknown',
+  CONTACT: 'Contact',
+  IDENTIFIED: 'Identified',
+  CONFIRMED: 'Confirmed',
+};
+
+export interface DetectionProfile {
+  /** Passive detection range in tiles over open, level ground. */
+  baseRange: number;
+  /** Range of a deliberate Recon sweep (the R order). */
+  reconRange: number;
+  /**
+   * Multiplier on observation QUALITY — how quickly this formation climbs the
+   * ladder from Contact to Identified to Confirmed. Recon and commandos not
+   * only see further, they know what they are looking at sooner.
+   */
+  identifyFactor: number;
+  /**
+   * Confidence lost per round once contact is lost. Recon assets keep track of
+   * a contact far longer than a line battalion does.
+   */
+  decayPerRound: number;
+  /** Short player-facing description of this formation's sensor picture. */
+  sensorLabel: string;
+}
+
+/**
+ * Passive detection ranges. Recon and commandos see furthest; artillery, whose
+ * crews are looking at their own gun line rather than the enemy, sees least.
+ * Warships have good sensors but only over water and coast.
+ */
+export const DETECTION: Record<FormationType, DetectionProfile> = {
+  INFANTRY: { baseRange: 5, reconRange: 8, identifyFactor: 1.0, decayPerRound: 22, sensorLabel: 'Eyes-on / battalion scouts' },
+  COMMANDO: { baseRange: 7, reconRange: 11, identifyFactor: 1.2, decayPerRound: 16, sensorLabel: 'Deep recce patrols' },
+  ARMOUR: { baseRange: 5, reconRange: 7, identifyFactor: 0.95, decayPerRound: 24, sensorLabel: 'Vehicle optics / thermal' },
+  ARTILLERY: { baseRange: 3, reconRange: 5, identifyFactor: 0.8, decayPerRound: 26, sensorLabel: 'Gun-line observation only' },
+  ENGINEER: { baseRange: 4, reconRange: 6, identifyFactor: 0.85, decayPerRound: 25, sensorLabel: 'Route and obstacle recce' },
+  RECON: { baseRange: 9, reconRange: 14, identifyFactor: 1.4, decayPerRound: 10, sensorLabel: 'Ground sensors, EW and UAV feed' },
+  FRIGATE: { baseRange: 8, reconRange: 11, identifyFactor: 1.15, decayPerRound: 15, sensorLabel: 'Naval surveillance radar' },
+  CORVETTE: { baseRange: 7, reconRange: 9, identifyFactor: 1.05, decayPerRound: 18, sensorLabel: 'Littoral surface search' },
+};
+
+/** Reach of a commando SPECIAL_OP (raid / deep probe), in tiles. */
+export const SPECIAL_OP_RANGE = 6;
+
+/**
+ * What a side knows about one enemy formation. Stored per player on the server.
+ * `type` / `shortName` are populated ONLY at the rung that legitimately reveals
+ * them — fog.ts refuses to put anything else on the wire.
+ */
 export interface Contact {
   formationId: string;
   owner: PlayerId;
-  type: FormationType;
+  /** Current rung of the ladder. Never 'UNKNOWN' — those contacts are deleted. */
+  level: DetectionLevel;
+  /** 0-100. Rises with better/repeated observation, decays once sight is lost. */
+  confidence: number;
+  /** Last known position (NOT updated while contact is lost). */
   x: number;
   y: number;
-  confidence: number; // 0-100, decays each turn since last seen
+  /** True when at least one friendly formation is observing it right now. */
+  live: boolean;
+  /** Round of the most recent live observation. */
   lastSeenTurn: number;
+  /**
+   * Round the confidence decay was last applied from. Separate from
+   * lastSeenTurn so decay ticks exactly ONCE per round however many times the
+   * spotting pass runs, while "last seen" stays truthful for the UI.
+   */
+  decayAnchorRound: number;
+  /** Round in which confidence was last allowed to rise (once per round). */
+  lastRiseRound: number;
+  /** Confidence ceiling the best current observer can support. */
+  ceiling: number;
+  /** Confidence lost per round while contact is lost. */
+  decayPerRound: number;
+  /** Arm — present only at IDENTIFIED or better. */
+  type?: FormationType;
+  /** Short designation of the observing formation, for the contact report. */
+  spottedBy?: string;
+  /** How it was detected, e.g. "Visual contact", "ISR sweep". */
   source: string;
 }
 
@@ -439,6 +563,19 @@ export interface PlayerState {
   contacts: Record<string, Contact>;
 }
 
+/**
+ * One line of the operations log. `audience` is what makes the log safe to
+ * broadcast: an entry describing a formation's own orders is only ever sent to
+ * that side, while genuinely public events (turn changes, objective changes,
+ * air strikes both sides watched) go to 'ALL'. Before phase 4b the log was a
+ * plain string array sent verbatim to both players, which quietly narrated
+ * every enemy move over the wire.
+ */
+export interface LogEntry {
+  text: string;
+  audience: PlayerId | 'ALL';
+}
+
 export interface GameState {
   round: number;
   activePlayer: PlayerId;
@@ -446,7 +583,7 @@ export interface GameState {
   formations: Record<string, Formation>;
   objectives: Objective[];
   players: Record<PlayerId, PlayerState>;
-  log: string[];
+  log: LogEntry[];
   phase: 'PLAYING' | 'TURN_HANDOFF' | 'GAME_OVER';
   winner: PlayerId | 'DRAW' | null;
   lastBattleReport: BattleReport | null;

@@ -12,12 +12,12 @@ import { Legend } from './components/Legend';
 import { HelpPanel } from './components/HelpPanel';
 import { Lobby } from './components/Lobby';
 import { GroupMovePreview, MovementPreview } from './components/MovementPreview';
-import { Camera, Overlays } from './render/renderMap';
+import { Camera, ContactPing, Overlays, PING_LIFETIME_MS } from './render/renderMap';
 import { TargetMode } from './App.types';
 import { ActionAvailability, actionAvailability, ACTION_BY_SHORTCUT, formationsWithActions } from './game/actions';
 import { computeReachable, formationAt } from './game/engine';
 import { cohesionAdvisory, planGroupMove, planMove } from './game/movement';
-import { AP_COSTS, Formation, GRID_SIZE } from './game/types';
+import { AP_COSTS, Contact, DETECTION_LEVEL_LABEL, DetectionLevel, Formation, GRID_SIZE, gridRef } from './game/types';
 
 const TARGET_HINTS: Record<string, string> = {
   MOVE: 'Click a highlighted tile to move there. Shift-click friendly formations to group them for a formation move.',
@@ -29,6 +29,23 @@ const TARGET_HINTS: Record<string, string> = {
   ENGINEER_CLEAR: 'Click an adjacent tile to clear its obstacles and dug-in defences.',
   SPECIAL_OP: 'Click a tile within commando reach to raid or probe it.',
 };
+
+/** Ladder rank, for spotting an upgrade between two state pushes. */
+const LEVEL_RANK: Record<DetectionLevel, number> = { UNKNOWN: 0, CONTACT: 1, IDENTIFIED: 2, CONFIRMED: 3 };
+
+/**
+ * A batched "you have just spotted something" report. Passive spotting fires
+ * constantly — during your own bounds AND all the way through the opponent's
+ * turn — so contacts are collapsed into ONE banner per state push rather than
+ * one notification per unit. The banner is clickable and jumps the camera to
+ * the nearest new contact; the map pings the tiles regardless.
+ */
+interface ContactAlert {
+  id: number;
+  fresh: number;
+  upgraded: number;
+  nearest: { x: number; y: number; distance: number; level: DetectionLevel } | null;
+}
 
 /** True when the keystroke belongs to a text field and must not act as a shortcut. */
 function isTypingTarget(e: KeyboardEvent): boolean {
@@ -54,6 +71,11 @@ export default function App() {
   const [rosterCollapsed, setRosterCollapsed] = useState(false);
   const [endTurnWarn, setEndTurnWarn] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [contactAlert, setContactAlert] = useState<ContactAlert | null>(null);
+  const [pings, setPings] = useState<ContactPing[]>([]);
+  const knownContactsRef = useRef<Record<string, DetectionLevel> | null>(null);
+  const alertTimer = useRef<number | undefined>(undefined);
+  const alertSeq = useRef(0);
   const shownRef = useRef<string | null>(null);
   const lastRoundRef = useRef<number | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -78,6 +100,49 @@ export default function App() {
       setShowReportId(state.lastBattleReport.id);
     }
   }, [state?.lastBattleReport]);
+
+  // ---- Contact reporting ---------------------------------------------------
+  // Diff the contact table on every push. Anything that appeared, or climbed a
+  // rung, is worth telling the player about — batched into one line.
+  useEffect(() => {
+    if (!state || !you) return;
+    const contacts = state.players[you].contacts as Record<string, Contact>;
+    const snapshot: Record<string, DetectionLevel> = {};
+    Object.values(contacts).forEach((c) => {
+      snapshot[c.formationId] = c.level;
+    });
+    const prev = knownContactsRef.current;
+    knownContactsRef.current = snapshot;
+    if (!prev) return; // first push (join / reconnect) — nothing is "new"
+
+    const fresh: Contact[] = [];
+    const upgraded: Contact[] = [];
+    Object.values(contacts).forEach((c) => {
+      const before = prev[c.formationId];
+      if (before === undefined) fresh.push(c);
+      else if (LEVEL_RANK[c.level] > LEVEL_RANK[before]) upgraded.push(c);
+    });
+    if (fresh.length === 0 && upgraded.length === 0) return;
+
+    const mine = Object.values(state.formations).filter((f) => f.owner === you);
+    const measure = (c: Contact) =>
+      mine.reduce((best, f) => Math.min(best, Math.abs(f.x - c.x) + Math.abs(f.y - c.y)), Infinity);
+    const pool = fresh.length ? fresh : upgraded;
+    let nearest: ContactAlert['nearest'] = null;
+    for (const c of pool) {
+      const d = measure(c);
+      if (!nearest || d < nearest.distance) nearest = { x: c.x, y: c.y, distance: d, level: c.level };
+    }
+
+    alertSeq.current += 1;
+    setContactAlert({ id: alertSeq.current, fresh: fresh.length, upgraded: upgraded.length, nearest });
+    window.clearTimeout(alertTimer.current);
+    alertTimer.current = window.setTimeout(() => setContactAlert(null), 9000);
+
+    const now = performance.now();
+    const added: ContactPing[] = [...fresh, ...upgraded].map((c) => ({ x: c.x, y: c.y, at: now, level: c.level }));
+    setPings((ps) => [...ps.filter((p) => now - p.at < PING_LIFETIME_MS), ...added].slice(-24));
+  }, [state, you]);
 
   useEffect(() => {
     if (!state || !you) return;
@@ -438,6 +503,7 @@ export default function App() {
         pathPreview={targetMode === 'MOVE' ? movePlan?.path : undefined}
         pathInvalid={targetMode === 'MOVE' ? movePlan?.ok === false : false}
         onHoverTile={setHoverTile}
+        pings={pings}
       />
 
       <TopBar state={state} you={you} objectivesHeld={objectivesHeld} objectivesTotal={state.objectives.length} />
@@ -553,6 +619,34 @@ export default function App() {
         </button>
       </div>
 
+      {contactAlert && (
+        <button
+          className="contact-alert"
+          data-testid="contact-alert"
+          onClick={() => {
+            if (contactAlert.nearest) centreOn(contactAlert.nearest);
+            setContactAlert(null);
+          }}
+          title="Jump to the nearest new contact"
+        >
+          <span className="contact-alert-dot" />
+          <span className="contact-alert-body">
+            <b>
+              {contactAlert.fresh > 0
+                ? `Enemy contact — ${contactAlert.fresh} new`
+                : `Contact upgraded — ${contactAlert.upgraded}`}
+              {contactAlert.fresh > 0 && contactAlert.upgraded > 0 ? `, ${contactAlert.upgraded} upgraded` : ''}
+            </b>
+            {contactAlert.nearest && (
+              <i>
+                {DETECTION_LEVEL_LABEL[contactAlert.nearest.level].toUpperCase()} · nearest{' '}
+                {contactAlert.nearest.distance} tile{contactAlert.nearest.distance === 1 ? '' : 's'} · grid{' '}
+                {gridRef(contactAlert.nearest.x, contactAlert.nearest.y)} — click to jump
+              </i>
+            )}
+          </span>
+        </button>
+      )}
       {toast && <div className="toast">{toast}</div>}
       {legendOpen && <Legend onClose={() => setLegendOpen(false)} />}
       {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}

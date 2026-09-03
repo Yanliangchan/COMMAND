@@ -29,7 +29,7 @@ const UNITS: Topic[] = [
   },
   {
     title: 'Recon',
-    body: 'Recon units gather information about enemy forces. Use Recon to reveal hidden units and improve your understanding of the battlefield. They fight badly; their value is what they show you.',
+    body: 'The 24th C4I Battalion (and, on the other side, the 9th Recce & EW Battalion) is your sensor. It spots passively out to about 9 tiles where a rifle battalion manages 5 and a gun battalion 3, it identifies what it sees far faster, and it holds on to a contact for many rounds after everyone else has lost it. Its Recon order sweeps 14 tiles. It fights badly; its value is what it shows you.',
   },
   {
     title: 'Air support',
@@ -79,8 +79,20 @@ const CONCEPTS: Topic[] = [
     body: 'The marked locations — districts, bridges, ports, airfields, depots, anchorages. Occupy one to take control; every round you hold it, it pays Victory Points. First to 200 VP, or the higher score after 24 rounds, wins.',
   },
   {
-    title: 'Fog of war',
-    body: 'You only see what your units can see. A dashed circle with a "?" is an old contact: something was there, and the older it gets the less you should trust it. Recon turns guesses into facts.',
+    title: 'Spotting — you do NOT need to Recon to see',
+    body: 'Every formation watches its surroundings all the time, for free. If it has line of sight and an enemy comes inside its detection range, you see that enemy — on your turn or in the middle of the opponent\u2019s. Detection range depends on the formation (recon 9 tiles, commandos 7, warships 7-8, infantry and armour 5, engineers 4, artillery 3), on the ground you are standing on, on the ground the enemy is hiding in, and on height. A banner at the top of the screen tells you when something new is spotted and the map pings the tile — click either to jump there.',
+  },
+  {
+    title: 'Line of sight and elevation',
+    body: 'Sight is a ray across the map, not a circle. The game walks the height profile between the two tiles: ground higher than the sightline blocks it outright, and forest, housing and industrial fabric both raise that skyline and pile up haze that shortens your effective range. So elevation matters twice over — a battalion on a ridge sees roughly a third further AND sees over the low ground in between, while the same battalion in a valley wood is nearly blind. Open ground and hilltops are good places to watch from (×1.15 and ×1.35); forest and urban districts are bad ones (×0.55 and ×0.50). The same terrain conceals: an enemy sitting in a town is found at about half the distance it would be in the open, and digging in helps it hide too.',
+  },
+  {
+    title: 'Detection states',
+    body: 'What you know about an enemy is a four-rung ladder. UNKNOWN — nothing; the game does not even tell your client it exists. CONTACT — a hollow dashed "?" blip: something is at that grid, and that is all, e.g. "CONTACT · Unknown Enemy · Grid F-42 · Confidence 58%". IDENTIFIED — a dashed counter with the arm and a "?" badge: enemy infantry, say, but not which battalion and not how strong. CONFIRMED — a solid counter with a "✓" badge and the real designation. Confidence rises with closer, clearer and repeated observation (once per round), and with recon assets; it decays every round once you lose sight, sliding a Confirmed formation back down to a stale last-known-position marker. Attacking something you have only made Contact with costs you 40% of your combat power; Identified costs 12%; Confirmed costs nothing.',
+  },
+  {
+    title: 'Recon vs normal spotting',
+    body: 'Ordinary troops detect nearby enemies. Recon sees further, sooner, and knows what it is looking at. The R order is worth its AP because it does five things passive spotting does not: it uses a much longer sensor range (14 tiles for C4I, 11 for commandos, against 9 and 7 passively), it pushes through forest and built-up ground instead of being stopped by it, it adds a flat confidence bonus that jumps contacts up the ladder in one go, it marks what it finds as recon-tracked so those contacts decay far more slowly, and it re-fixes stale contacts you are about to lose. A commando Special Op can also probe deep behind the lines and confirm whatever is around the objective it walks onto.',
   },
 ];
 

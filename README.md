@@ -134,21 +134,33 @@ movement, and fog-of-war in the whole codebase.
   `state.activePlayer === playerId` up front, since several engine actions
   like `airStrikeAction` don't check the caller's identity themselves — the
   server closes that gap rather than trusting the client's declared turn).
-- **Fog of war, enforced server-side.** After every action the server calls
-  `filterStateForPlayer(state, viewer)` (`src/game/fog.ts`) once per seat and
-  sends each player only their own redacted view over the wire: their own
-  formations in full, plus any enemy formation currently under **live**
-  visual contact this exact refresh (`confidence === 100 &&
-  lastSeenTurn === state.round`). A decaying/stale "suspected contact" is
-  **not** sent as a formation object at all — the client only ever gets the
-  contact's last-known `x,y,type,confidence` via the player's own
-  `contacts` map (already rendered as the dashed "?" marker), never the
-  enemy's true live position or stats. The enemy player's own `contacts`
-  map (what *they've* spotted of *you*) is also zeroed before sending, so
-  it can't be read as a side-channel. This is why the client's local
-  `src/game/store.ts` reducer from the old hotseat build was deleted
-  outright rather than kept dormant — a real client that computed fog
-  itself would necessarily have held the true, unredacted state in memory.
+- **Fog of war, enforced server-side, redacted BY DETECTION LEVEL.** After
+  every action the server calls `filterStateForPlayer(state, viewer)`
+  (`src/game/fog.ts`) once per seat and sends each player only their own
+  redacted view over the wire. Since phase 4b that redaction is a four-rung
+  ladder rather than a visibility flag, and each rung reveals strictly more:
+  - **Unknown** — the enemy formation is absent from the payload *entirely*:
+    no formation object, no contact record, no id, nothing. The client is not
+    told the unit exists.
+  - **Contact** — a contact record only: position, confidence, level. No
+    `type`, no strength, no designation, no formation object. "Something is at
+    F-42" is the whole of what is sent.
+  - **Identified** — a *redacted* formation object: id, owner, arm, position,
+    a generic title ("Enemy Infantry"), and `-1` in every numeric field. The
+    true designation, strength, morale, supply, ammo, readiness, dug-in state,
+    equipment and last order never leave the server.
+  - **Confirmed** — the real formation object, untouched.
+
+  The redacted object is built from an explicit field list rather than by
+  deleting fields off a spread of the real one, so a field added to
+  `Formation` later fails *closed* (absent) instead of leaking. The enemy
+  player's own `contacts` map (what *they've* spotted of *you*) is zeroed
+  before sending, so it can't be read as a side-channel, and the shared
+  operations log is filtered by a per-entry `audience` tag so it can no longer
+  narrate an enemy move the viewer has not detected. This is why the client's
+  local `src/game/store.ts` reducer from the old hotseat build was deleted
+  outright rather than kept dormant — a real client that computed fog itself
+  would necessarily have held the true, unredacted state in memory.
 - **Reconnect.** The client stores `{ code, token }` in `sessionStorage` on
   join/create. On mount it tries a `reconnect` handshake automatically, so a
   page refresh mid-game resumes the same seat rather than losing it. If a
@@ -236,12 +248,20 @@ screen — lobby included — with:
    all resolved on the server. Produces a full battle report modal on
    **both** clients: outcome, a bulleted +/- factor list, and
    Light/Moderate/Heavy/Destroyed loss levels for both sides.
-7. Fog of war, enforced server-side (see above): enemy formations are
-   hidden unless within a friendly unit's sight radius or revealed by a
-   Recon/Special-Op action this refresh. Out-of-sight contacts persist as
-   "Suspected Contact" markers with a confidence value that decays over
-   turns since last seen — a client literally cannot query the server for
-   what it isn't allowed to know.
+7. Fog of war, enforced server-side (see above). Spotting is **passive and
+   continuous**: every formation watches its surroundings for free, and an
+   enemy inside its detection range with line of sight is detected without any
+   order or AP being spent, on either side's turn. Detection range comes from
+   the formation type (`DETECTION` in `src/game/types.ts`) and is modified by
+   the observer's terrain, the target's concealment and the height difference
+   between them; line of sight is a height-profile ray across the map's
+   continuous `Tile.height`, so relief blocks sightlines and a unit on a ridge
+   sees over the low ground. What you know is a Contact → Identified →
+   Confirmed ladder carried as a 0-100 confidence that rises with closer,
+   better and repeated observation (at most once per round) and decays every
+   round once sight is lost. The Recon order is an amplifier on top: longer
+   sensor range, sees through cover, a flat confidence bonus that jumps
+   contacts up the ladder, and slower decay on what it has tracked.
 8. ~20 objectives generate VP for whoever holds them uncontested; land
    objectives are held by ground formations, the three open-sea anchorages
    only by warships. VP are paid out once per **round** (at the end of
@@ -494,6 +514,125 @@ plus being driven off its position still walks an infantry battalion
 quiet rounds in supply beside friendly forces bring it back to 72. Five light
 contacts (−12 strength each) move it **not at all**.
 
+## Detection model (phase 4b)
+
+Spotting used to require spending a Recon action, which meant a player could
+stand next to an enemy battalion and not see it. It is now **passive and
+continuous** — every formation watches its arcs for free, refreshed for both
+sides after anything that moves a unit — and the Recon order became an
+amplifier rather than a prerequisite. The whole model lives in
+`src/game/detection.ts`; the rung-by-rung wire redaction lives in
+`src/game/fog.ts`.
+
+### Detection range by formation
+
+Base range is over level, open ground, in tiles (euclidean — sight falls off in
+a circle, while movement and attack range stay Manhattan).
+
+| Formation | Passive | Recon sweep (R) | Identify factor | Confidence lost per round once sight is lost |
+| --- | --- | --- | --- | --- |
+| C4I / ISR (Recon) | 9 | 14 | ×1.40 | 10 |
+| Frigate | 8 | 11 | ×1.15 | 15 |
+| Commando | 7 | 11 | ×1.20 | 16 |
+| Corvette | 7 | 9 | ×1.05 | 18 |
+| Infantry | 5 | 8 | ×1.00 | 22 |
+| Armour | 5 | 7 | ×0.95 | 24 |
+| Engineer | 4 | 6 | ×0.85 | 25 |
+| Artillery | 3 | 5 | ×0.80 | 26 |
+
+### Situational modifiers
+
+Effective range = base × observer-terrain × target-concealment × elevation,
+clamped to ×0.30 … ×2.40.
+
+| Terrain | Seeing FROM it | Hiding IN it |
+| --- | --- | --- |
+| High ground (hills) | ×1.35 | ×0.90 |
+| Open | ×1.15 | ×1.10 |
+| Airfield | ×1.10 | ×1.05 |
+| Water | ×1.10 | ×1.15 |
+| Beach | ×1.05 | ×1.05 |
+| Grass | ×1.00 | ×1.00 |
+| Port | ×0.95 | ×0.90 |
+| Industrial | ×0.60 | ×0.60 |
+| Forest | ×0.55 | ×0.55 |
+| Urban | ×0.50 | ×0.50 |
+
+Elevation is taken off the generator's continuous `Tile.height` (0…1):
+`1 + clamp(observerHeight − targetHeight, −0.35, +0.60) × 1.1 + observerHeight × 0.30`.
+Looking down on someone extends the picture, looking up into higher ground
+shortens it, and simply being high is worth something on its own. A dug-in
+target is a further ×0.85 to conceal.
+
+### Line of sight
+
+Not a radius test. `lineOfSight()` walks the tiles between observer and target
+and compares each one's **skyline** — ground height plus what is built or grown
+on it (forest +0.055, urban +0.075, industrial +0.05) — against the height of
+the straight ray from the observer's eye (their ground +0.03) to the target's
+exposure. Anything above the ray closes the line outright. Surviving tiles
+accumulate *obscurance* (forest 1.0, urban 1.3, industrial 0.9 each); 3.2 total
+blocks, and whatever is below that shortens the usable range by up to half.
+Relief is deliberately **not** counted as obscurance — the height profile
+already handles it, and double-counting made a unit on a ridge blind along its
+own ridge.
+
+Cost, measured over 30 bot-vs-bot games (39,144 one-sided passes, 3.06M
+observer/target pairs): an integer bounding box on the observer's best-case
+radius rejects **83%** of pairs, the situational euclidean range another
+**12%**, so fewer than one pair in twenty reaches the ray. A full one-sided
+pass is **~9 µs**; a complete player turn, including every refresh inside it,
+averages **0.037 ms**.
+
+### The four detection states
+
+| State | Confidence | Sent over the wire | Drawn as |
+| --- | --- | --- | --- |
+| Unknown | — | nothing at all | nothing |
+| Contact | 1–54 | position + confidence only | hollow dashed blip, "?", grid ref + % |
+| Identified | 55–84 | arm + position, everything else redacted | dashed counter, arm glyph, "?" badge, hatched strength bar |
+| Confirmed | 85–100 | the real formation | solid counter, "✓" badge, real designation + % |
+
+Each observation supports a **ceiling** derived from proximity within the
+observer's envelope, the observer's identify factor, the target's concealment
+and the obscurance along the line. First sighting lands at 80% of that ceiling;
+each further **round** of observation closes 70% of the remaining gap — at most
+once per round, so it is sustained watching that confirms a formation, not the
+number of orders you happen to issue. Losing sight decays confidence by the
+observer's per-round figure above, walking a Confirmed formation back down to a
+stale last-known-position marker and finally deleting it.
+
+Combat reads the rung directly: attacking a Contact costs **−40%** attack
+power, an Identified target **−12%**, a Confirmed target nothing.
+
+### Recon vs passive spotting
+
+| | Passive | Recon order (1 AP) |
+| --- | --- | --- |
+| Range | base | the much longer sweep range |
+| Cover | forest/urban shorten and can block | obscurance halved; only relief still blocks |
+| Confidence | ceiling from the observation | ceiling **+22**, and 85% of the gap closed at once |
+| Tracking | decay at the observer's rate | marks the contact recon-tracked, so decay stays at the sweeping unit's (much slower) rate |
+| Ladder | climbs a rung per round | can jump straight to Confirmed |
+
+### Simulation, 30 games MEDIUM vs MEDIUM, same seeds
+
+| | Phase 4a baseline | Phase 4b |
+| --- | --- | --- |
+| Rounds per game | 12.1 (10–16) | 12.1 (10–15) |
+| Win split BLUEFOR / REDFOR | 8 / 22 | 7 / 22 / 1 draw |
+| Enemy force with any contact, per turn | 54.3% | **59.9%** |
+| Enemy force *actionable* (live / Identified+) | 23.2% | **44.0%** |
+| Enemy force at Confirmed | — | 18.2% |
+| Distinct contacts per game, both sides | 15.8 | 17.0 |
+| Recon orders per game, both sides | 28.1 | 40.0 |
+
+Game length is unchanged and the BLUEFOR/REDFOR split is identical to the
+baseline on the same seeds — the skew is a pre-existing map/first-player
+artefact, not something this pass introduced. What did change is the quality of
+the picture: the share of the enemy force a side can actually *act on* nearly
+doubled, because you no longer have to buy sight with an action.
+
 ### What was changed and why
 
 | Change | Before | After | Why |
@@ -502,8 +641,9 @@ contacts (−12 strength each) move it **not at all**.
 | AP carry cap | 25 | **34** | Scaled with the per-turn figure; still low enough to discourage hoarding for an alpha strike. |
 | Moving blocks the unit's action | yes | **no** | The single biggest source of "nothing left worth doing". |
 | Engineer "Clear Obstacle" | 2 AP | **1 AP** | It was never worth 2; now it is a genuine AP sink. |
-| Sight radii | 2–4 | **2–5** | The map is much larger; the old radii made a 6,400-tile board unreadable. |
+| Sight radii | 2–4 | **3–9 (phase 4b), passive** | The map is much larger, and spotting no longer costs an action — see the detection table below. |
 | Artillery range | 6 | **8** | Ditto — gun battalions must still matter at map scale. |
+| Spotting | costs a Recon action | **passive, continuous, free** | A player should not have to spend AP to notice a battalion standing next to them. |
 | Objective count | 8 | **~22** | Fighting develops in several places at once instead of one blob. |
 | VP threshold / rounds | 150 / 20 | **200 / 24** | Rebalanced against the new objective count; games resolve in ~12–15 rounds in simulation. |
 | VP payout | per player-turn | **once per round, both sides together** | The first player was banking half a round of free scoring every round. |

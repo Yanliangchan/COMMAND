@@ -12,7 +12,7 @@
 // ============================================================================
 
 import { FORMATION_DEFS } from '../game/data';
-import { Formation, GameState, GRID_SIZE, Objective, PlayerId, Tile, gridRef } from '../game/types';
+import { Contact, DetectionLevel, Formation, GameState, GRID_SIZE, Objective, PlayerId, Tile, gridRef } from '../game/types';
 import { PLAYER_COLORS, TERRAIN_COLORS, UI } from './colors';
 
 /** Contour interval, as a fraction of the full 0..1 height range. */
@@ -36,6 +36,22 @@ export interface Overlays {
   objectives: boolean;
 }
 
+/**
+ * A transient "new contact here" marker. The map pings the tile for a few
+ * seconds so a spotting event during the opponent's turn is impossible to miss
+ * without stopping the player mid-order.
+ */
+export interface ContactPing {
+  x: number;
+  y: number;
+  /** performance.now() timestamp the ping was raised at. */
+  at: number;
+  level: DetectionLevel;
+}
+
+/** How long a contact ping stays on the sheet. */
+export const PING_LIFETIME_MS = 7000;
+
 export interface MapLabel {
   x: number;
   y: number;
@@ -57,6 +73,8 @@ export interface RenderContext {
   hoverTile: { x: number; y: number } | null;
   /** Settlement names to letter onto the sheet at sufficient zoom. */
   labels?: MapLabel[];
+  /** Transient new-contact pings. */
+  pings?: ContactPing[];
   /** Tiles to flash (e.g. the two ends of the engagement a battle report describes). */
   flashTiles?: { x: number; y: number }[];
   /** Formation ids currently grouped for a Move Formation order. */
@@ -959,36 +977,17 @@ export function render(rc: RenderContext) {
     });
   }
 
-  // ---- Contacts (suspected enemy) ----
+  // ---- Contacts (position-only blips; IDENTIFIED+ draw as counters below) ----
   if (rc.overlays.intel) {
     const contacts = state.players[rc.viewer].contacts;
     Object.values(contacts).forEach((c) => {
-      if (state.formations[c.formationId]) return; // live-visible, drawn solid below
+      if (state.formations[c.formationId]) return; // identified/confirmed — drawn as a counter
       if (c.x < x0 || c.x > x1 || c.y < y0 || c.y > y1) return;
-      const { sx, sy } = worldToScreen(camera, width, height, c.x, c.y);
-      const alpha = Math.max(0.25, c.confidence / 100);
-      ctx.fillStyle = `rgba(193,82,74,${alpha * 0.45})`;
-      ctx.beginPath();
-      ctx.arc(sx, sy, s * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = `rgba(193,82,74,${alpha})`;
-      ctx.setLineDash([3, 2]);
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.setLineDash([]);
-      if (s >= 9) {
-        ctx.fillStyle = `rgba(255,225,215,${alpha})`;
-        ctx.font = `bold ${Math.max(8, s * 0.3)}px monospace`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('?', sx, sy + 1);
-      }
-      if (s >= 15) {
-        // Same lettered grid reference the rest of the UI uses.
-        drawLabel(rc, sx, sy + s * 0.55, gridRef(c.x, c.y), Math.max(8, s * 0.24), `rgba(224,140,130,${alpha})`, 0.06);
-      }
+      drawContactMarker(rc, c);
     });
   }
+
+  drawPings(rc);
 
   // ---- Formations ----
   Object.values(state.formations).forEach((f) => {
@@ -1449,12 +1448,120 @@ function drawRoad(rc: RenderContext, tile: Tile) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Detection states
+//
+// Every rung is distinguished by SYMBOL as well as colour, so the four states
+// stay separable without relying on colour perception:
+//
+//   CONTACT     dashed circle, hollow, "?"          (amber-red)
+//   IDENTIFIED  dashed counter, arm glyph, "?" badge (orange)
+//   CONFIRMED   solid counter, arm glyph, "✓" badge  (full enemy red)
+//
+// UNKNOWN draws nothing at all — the client is never sent it.
+// ---------------------------------------------------------------------------
+
+export const DETECTION_COLORS: Record<'CONTACT' | 'IDENTIFIED' | 'CONFIRMED', string> = {
+  CONTACT: '#b2703c',
+  IDENTIFIED: '#cf7a4a',
+  CONFIRMED: '#c17a5f',
+};
+
+export const DETECTION_BADGE: Record<'CONTACT' | 'IDENTIFIED' | 'CONFIRMED', string> = {
+  CONTACT: '?',
+  IDENTIFIED: '?',
+  CONFIRMED: '✓',
+};
+
+/** Position-only blip: something is there, and that is all the player is told. */
+function drawContactMarker(rc: RenderContext, c: Contact) {
+  const { ctx, width, height, camera } = rc;
+  const s = camera.scale;
+  const { sx, sy } = worldToScreen(camera, width, height, c.x, c.y);
+  const alpha = Math.max(0.3, Math.min(1, c.confidence / 70));
+  const col = DETECTION_COLORS.CONTACT;
+  const r = Math.max(5, s * 0.34);
+
+  ctx.beginPath();
+  ctx.arc(sx, sy, r + Math.max(1.4, r * 0.2), 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(9,12,16,${0.5 * alpha})`;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(70,40,26,${alpha * 0.55})`;
+  ctx.fill();
+  ctx.setLineDash([3.5, 3]);
+  ctx.lineWidth = Math.max(1.4, r * 0.2);
+  ctx.strokeStyle = col;
+  ctx.globalAlpha = alpha;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+
+  if (s >= 9) {
+    ctx.fillStyle = `rgba(255,228,208,${alpha})`;
+    ctx.font = `bold ${Math.max(8, r * 0.95)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', sx, sy + 1);
+  }
+  if (s >= 15) {
+    drawLabel(
+      rc,
+      sx,
+      sy + r + Math.max(7, s * 0.32),
+      `${gridRef(c.x, c.y)} · ${Math.round(c.confidence)}%`,
+      Math.max(8, s * 0.22),
+      `rgba(226,164,124,${alpha})`,
+      0.04
+    );
+  }
+  // A contact you no longer have eyes on gets a "stale" tick so the player can
+  // see at a glance which markers are memory rather than observation.
+  if (!c.live && s >= 12) {
+    ctx.strokeStyle = `rgba(226,164,124,${alpha * 0.9})`;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(sx - r * 1.5, sy - r * 1.5);
+    ctx.lineTo(sx - r * 0.9, sy - r * 0.9);
+    ctx.stroke();
+  }
+}
+
+/** Expanding ring on a tile where something was just spotted. */
+function drawPings(rc: RenderContext) {
+  if (!rc.pings?.length) return;
+  const { ctx, width, height, camera } = rc;
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  for (const p of rc.pings) {
+    const age = now - p.at;
+    if (age < 0 || age > PING_LIFETIME_MS) continue;
+    const { sx, sy } = worldToScreen(camera, width, height, p.x, p.y);
+    const fade = 1 - age / PING_LIFETIME_MS;
+    // Three rings chasing each other outward — reads as a sensor return.
+    for (let k = 0; k < 3; k++) {
+      const t = ((age / 1400 + k / 3) % 1);
+      const rr = camera.scale * (0.5 + t * 1.9);
+      ctx.beginPath();
+      ctx.arc(sx, sy, rr, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(240,196,112,${(1 - t) * 0.75 * fade})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+}
+
 function drawFormation(rc: RenderContext, f: Formation) {
   const { ctx, width, height, camera } = rc;
   const s = camera.scale;
   const { sx, sy } = worldToScreen(camera, width, height, f.x, f.y);
   const pc = PLAYER_COLORS[f.owner];
   const r = Math.max(6, s * 0.34);
+  // Enemy counters carry their detection rung. Own formations have none.
+  const intel = f.owner === rc.viewer ? null : f.intel ?? 'CONFIRMED';
+  const identifiedOnly = intel === 'IDENTIFIED';
+  const contact = rc.state.players[rc.viewer].contacts[f.id];
 
   // A dark halo under every counter. This is what guarantees a formation reads
   // over forest, urban fabric, a hillshade shadow or the movement wash — the
@@ -1469,8 +1576,12 @@ function drawFormation(rc: RenderContext, f: Formation) {
   ctx.fillStyle = pc.dark;
   ctx.fill();
   ctx.lineWidth = Math.max(1.8, r * 0.22);
-  ctx.strokeStyle = pc.main;
+  ctx.strokeStyle = identifiedOnly ? DETECTION_COLORS.IDENTIFIED : pc.main;
+  // An identified-but-unconfirmed formation is ringed in DASHES: you know what
+  // arm it is, you do not know which formation or what state it is in.
+  if (identifiedOnly) ctx.setLineDash([4, 3]);
   ctx.stroke();
+  ctx.setLineDash([]);
 
   if (s >= 8) {
     ctx.fillStyle = pc.light;
@@ -1494,13 +1605,48 @@ function drawFormation(rc: RenderContext, f: Formation) {
     const by = sy - r - Math.max(4, s * 0.16);
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(bx, by, bw, 3);
-    const pct = Math.max(0, Math.min(1, f.strength / 100));
-    ctx.fillStyle = pct > 0.6 ? '#93a35f' : pct > 0.3 ? '#cf9a44' : '#c1524a';
-    ctx.fillRect(bx, by, bw * pct, 3);
+    if (identifiedOnly) {
+      // Strength is NOT known at this rung — hatch the bar rather than draw a
+      // number the server never sent.
+      ctx.fillStyle = 'rgba(207,122,74,0.6)';
+      for (let i = 0; i < bw; i += 4) ctx.fillRect(bx + i, by, 2, 3);
+    } else {
+      const pct = Math.max(0, Math.min(1, f.strength / 100));
+      ctx.fillStyle = pct > 0.6 ? '#93a35f' : pct > 0.3 ? '#cf9a44' : '#c1524a';
+      ctx.fillRect(bx, by, bw * pct, 3);
+    }
+  }
+
+  // Detection badge: '?' identified, '✓' confirmed — symbol as well as colour.
+  if (intel && s >= 11) {
+    const bx = sx + r * 0.85;
+    const by = sy - r * 0.85;
+    ctx.beginPath();
+    ctx.arc(bx, by, Math.max(4, r * 0.4), 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(9,12,16,0.85)';
+    ctx.fill();
+    ctx.strokeStyle = DETECTION_COLORS[intel === 'IDENTIFIED' ? 'IDENTIFIED' : 'CONFIRMED'];
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = intel === 'IDENTIFIED' ? '#f0b083' : '#b8dca8';
+    ctx.font = `bold ${Math.max(6, r * 0.52)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(DETECTION_BADGE[intel === 'IDENTIFIED' ? 'IDENTIFIED' : 'CONFIRMED'], bx, by + 0.5);
   }
 
   if (s >= 16 && f.owner === rc.viewer) {
     drawLabel(rc, sx, sy + r + Math.max(7, s * 0.34), f.shortName, Math.max(8, s * 0.24), 'rgba(232,238,236,0.9)', 0.04);
+  } else if (s >= 16 && intel && contact) {
+    drawLabel(
+      rc,
+      sx,
+      sy + r + Math.max(7, s * 0.34),
+      `${f.shortName} · ${Math.round(contact.confidence)}%`,
+      Math.max(8, s * 0.22),
+      identifiedOnly ? 'rgba(240,176,131,0.95)' : 'rgba(232,200,190,0.95)',
+      0.04
+    );
   }
 }
 
