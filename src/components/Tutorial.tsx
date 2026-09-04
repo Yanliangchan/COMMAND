@@ -439,8 +439,11 @@ const SECTIONS: Section[] = [
               <b>Anchorages are maritime</b> — only a ship can hold one.
             </li>
             <li>
-              <b>Winning:</b> first task force to 280 VP wins immediately; otherwise the higher score after 24 rounds takes the
-              operation.
+              <b>Winning:</b> the match ends the instant either task force reaches the VP threshold (280 VP by default) —
+              it does <b>not</b> run to the round limit if that happens sooner, which it usually does. Watch the VP meter in
+              the HUD, not just the round counter: the round counter shows the <i>ceiling</i>, the VP meter shows how close
+              the match actually is to ending right now. Only a match that never reaches the threshold runs the full 24
+              rounds, at which point the higher score takes the operation.
             </li>
           </ul>
         </>

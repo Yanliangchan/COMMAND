@@ -66,6 +66,14 @@ class SoundEngine {
   private ctx: AudioContext | null = null;
   private listeners = new Set<Listener>();
   private noiseBufferCache: AudioBuffer | null = null;
+  private ambienceBufferCache: AudioBuffer | null = null;
+  // Part 2 §4 — a quiet, CONTINUOUS ambience bed, distinct from the 7 short
+  // one-shot cues above: a looping low-pass-filtered noise floor with a very
+  // slow LFO drifting its cutoff, meant to sit almost below the threshold of
+  // conscious notice. Exactly one instance ever runs; start/stop are
+  // idempotent so callers never have to track whether it's already going.
+  private ambience: { src: AudioBufferSourceNode; gain: GainNode; lfo: OscillatorNode } | null = null;
+  private ambienceWanted = false;
 
   getSettings(): AudioSettings {
     return this.settings;
@@ -84,17 +92,116 @@ class SoundEngine {
     this.settings = { ...this.settings, muted };
     saveSettings(this.settings);
     this.notify();
+    this.syncAmbienceVolume();
   }
 
   setVolume(volume: number) {
     this.settings = { ...this.settings, volume: Math.max(0, Math.min(1, volume)) };
     saveSettings(this.settings);
     this.notify();
+    this.syncAmbienceVolume();
   }
 
   /** Create (or resume) the AudioContext. Call ONLY from inside a real user-gesture handler. */
   unlock() {
     this.ensureContext();
+    // A match may already be under way (e.g. reconnect) by the time the
+    // first real gesture reaches the page — pick the ambience bed back up
+    // the instant the context is actually allowed to make sound.
+    if (this.ambienceWanted) this.startAmbience();
+  }
+
+  private brownNoiseBuffer(ctx: AudioContext): AudioBuffer {
+    if (this.ambienceBufferCache && this.ambienceBufferCache.sampleRate === ctx.sampleRate) return this.ambienceBufferCache;
+    // A few seconds of looping brown-ish noise (integrated white noise, DC-
+    // corrected) — a soft, low rumble rather than white noise's harsh hiss,
+    // the right texture for "quiet ambience bed" rather than another cue.
+    const len = Math.floor(ctx.sampleRate * 6);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) {
+      const white = Math.random() * 2 - 1;
+      last = (last + 0.02 * white) / 1.02;
+      data[i] = last * 3.2; // renormalize — the running integral drifts quiet
+    }
+    this.ambienceBufferCache = buf;
+    return buf;
+  }
+
+  /**
+   * Start the continuous ambience bed if it isn't already running. Idempotent
+   * and safe to call any number of times (e.g. every render) — a no-op if
+   * already running, muted, silenced, or the AudioContext isn't unlocked yet
+   * (in which case `unlock()` picks it back up on the next real gesture).
+   */
+  startAmbience() {
+    this.ambienceWanted = true;
+    if (this.ambience) return;
+    const ctx = this.ensureContext();
+    if (!ctx || ctx.state !== 'running') return;
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = this.brownNoiseBuffer(ctx);
+      src.loop = true;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(340, ctx.currentTime);
+      filter.Q.setValueAtTime(0.4, ctx.currentTime);
+      // A very slow LFO on the cutoff — the only thing that keeps this from
+      // reading as a static hiss. ~50-second period: deliberately far too
+      // slow to consciously track, just enough that it never sits static.
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(1 / 50, ctx.currentTime);
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.setValueAtTime(90, ctx.currentTime);
+      lfo.connect(lfoGain).connect(filter.frequency);
+      lfo.start();
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, ctx.currentTime);
+      src.connect(filter).connect(gain).connect(ctx.destination);
+      src.start();
+      this.ambience = { src, gain, lfo };
+      this.syncAmbienceVolume(1.4); // fade in
+    } catch {
+      // Ambience is pure atmosphere — never let synthesis trouble surface.
+    }
+  }
+
+  /** Stop the ambience bed (fade out, then release the nodes). Idempotent. */
+  stopAmbience() {
+    this.ambienceWanted = false;
+    const amb = this.ambience;
+    if (!amb || !this.ctx) return;
+    try {
+      const t = this.ctx.currentTime;
+      amb.gain.gain.cancelScheduledValues(t);
+      amb.gain.gain.setValueAtTime(amb.gain.gain.value, t);
+      amb.gain.gain.linearRampToValueAtTime(0, t + 1.2);
+      amb.src.stop(t + 1.3);
+      amb.lfo.stop(t + 1.3);
+    } catch {
+      // ignore — worst case the nodes free themselves once GC'd
+    }
+    this.ambience = null;
+  }
+
+  /** Re-target the ambience gain to the current mute/volume settings. */
+  private syncAmbienceVolume(rampSeconds = 0.6) {
+    const amb = this.ambience;
+    if (!amb || !this.ctx) return;
+    // Kept deliberately far quieter than any one-shot cue — "barely
+    // perceptible", per the brief, not a mix element competing with them.
+    const target = this.settings.muted ? 0 : 0.05 * this.settings.volume;
+    try {
+      const t = this.ctx.currentTime;
+      amb.gain.gain.cancelScheduledValues(t);
+      amb.gain.gain.setValueAtTime(amb.gain.gain.value, t);
+      amb.gain.gain.linearRampToValueAtTime(target, t + rampSeconds);
+    } catch {
+      // ignore
+    }
   }
 
   private ensureContext(): AudioContext | null {

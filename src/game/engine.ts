@@ -210,6 +210,7 @@ export function initGame(
     log: [{ text: `${EXERCISE_NAME} begins. ${FACTION_NAMES[first]} has the initiative.`, audience: 'ALL' as const, round: 1 }],
     phase: 'PLAYING',
     winner: null,
+    winReason: null,
     lastBattleReport: null,
     killFeed: [],
     combatEvents: [],
@@ -1496,10 +1497,12 @@ function checkVictory(state: GameState, roundComplete: boolean) {
   if (b >= state.rules.vpToWin || r >= state.rules.vpToWin) {
     state.phase = 'GAME_OVER';
     state.winner = b === r ? 'DRAW' : b > r ? 'SABRE' : 'VANGUARD';
+    state.winReason = 'VP_THRESHOLD';
     log(state, `Victory point threshold reached. Winner: ${winnerLabel(state.winner)}.`, 'ALL');
   } else if (state.round > state.rules.roundLimit) {
     state.phase = 'GAME_OVER';
     state.winner = b === r ? 'DRAW' : b > r ? 'SABRE' : 'VANGUARD';
+    state.winReason = 'ROUND_LIMIT';
     log(state, `Final round complete. Winner: ${winnerLabel(state.winner)}.`, 'ALL');
   }
 }

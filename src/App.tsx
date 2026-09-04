@@ -35,10 +35,11 @@ import {
   PING_LIFETIME_MS,
 } from './render/renderMap';
 import { TargetMode } from './App.types';
+import { useMountTransition } from './hooks/useMountTransition';
 import { ActionAvailability, actionAvailability, ACTION_BY_SHORTCUT, formationsWithActions } from './game/actions';
 import { computeReachable, formationAt, previewAttack } from './game/engine';
 import { cohesionAdvisory, planGroupMove, planMove, planWithdraw } from './game/movement';
-import { AP_COSTS, Contact, DetectionLevel, Formation, GRID_SIZE, PlayerId, gridRef } from './game/types';
+import { AP_COSTS, Contact, DetectionLevel, Formation, GameState, GRID_SIZE, PlayerId, gridRef } from './game/types';
 import { sound } from './audio/sound';
 
 const TARGET_HINTS: Record<string, string> = {
@@ -187,6 +188,40 @@ export default function App() {
   }, []);
 
   const selected = state && selectedId ? state.formations[selectedId] ?? null : null;
+  const reportActive = !!(showReportId && state?.lastBattleReport?.id === showReportId);
+  // Part 2 §3 — smooth panel transitions for the unit-detail panel and the
+  // battle report card (the roster's own expand/collapse gets a CSS-only
+  // treatment instead, see FormationList.tsx — it never fully unmounts, so
+  // it doesn't need this hook). Called unconditionally, above every early
+  // `return` in this component, per the rules of hooks. This only changes
+  // how the panel's DOM node animates in/out — it adds no delay whatsoever
+  // to the actual gameplay feedback (arming an order, move/attack preview),
+  // which is driven by completely separate state.
+  const unitPanelT = useMountTransition(!!selected, 150);
+  const reportT = useMountTransition(reportActive, 150);
+
+  // Ambient audio layer (Part 2 §4) — runs only while a live match is in
+  // progress (not the lobby, not the end screen, not sandbox/replay, which
+  // never reach this component with state.phase set). startAmbience() is a
+  // no-op until sound.unlock() has actually run from a real user gesture
+  // (see the effect above); it self-resumes from there. Stops on unmount,
+  // on phase change, and is fully governed by the existing mute/volume
+  // control (SoundEngine.syncAmbienceVolume) — nothing new to wire up here.
+  useEffect(() => {
+    if (state?.phase === 'PLAYING') {
+      sound.startAmbience();
+      return () => sound.stopAmbience();
+    }
+    sound.stopAmbience();
+  }, [state?.phase]);
+  // Keep the last real value around through the exit animation — the trigger
+  // (selected / report) goes null/falsy the instant selection is cleared,
+  // but the panel needs something to actually render while it fades/slides
+  // out over unitPanelT.phase === 'exit'.
+  const lastSelectedRef = useRef<typeof selected>(null);
+  if (selected) lastSelectedRef.current = selected;
+  const lastReportRef = useRef<GameState['lastBattleReport']>(null);
+  if (reportActive) lastReportRef.current = state?.lastBattleReport ?? null;
 
   const flash = useCallback((msg: string) => {
     setToast(msg);
@@ -1045,8 +1080,14 @@ export default function App() {
         groupIds={groupIds}
       />
 
-      {selected && (
-        <UnitDetailPanel state={state} formation={selected} onCentre={() => centreOn(selected)} onClose={() => setSelectedId(null)} />
+      {unitPanelT.mounted && lastSelectedRef.current && (
+        <UnitDetailPanel
+          state={state}
+          formation={lastSelectedRef.current}
+          onCentre={() => centreOn(lastSelectedRef.current!)}
+          onClose={() => setSelectedId(null)}
+          className={`panel-anim panel-anim-${unitPanelT.phase}`}
+        />
       )}
 
       <OpsLog state={state} collapsed={logCollapsed} onToggle={() => setLogCollapsed((v) => !v)} />
@@ -1179,11 +1220,12 @@ export default function App() {
       {toast && <div className="toast">{toast}</div>}
       {legendOpen && you && <Legend viewer={you} onClose={() => setLegendOpen(false)} />}
       {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}
-      {report && (
+      {reportT.mounted && lastReportRef.current && (
         <BattleReportModal
-          report={report}
+          report={lastReportRef.current}
           onClose={() => setShowReportId(null)}
-          onFocus={() => centreOn({ x: report.defenderX, y: report.defenderY })}
+          onFocus={() => centreOn({ x: lastReportRef.current!.defenderX, y: lastReportRef.current!.defenderY })}
+          className={`panel-anim panel-anim-${reportT.phase}`}
         />
       )}
       {state.phase === 'GAME_OVER' && (

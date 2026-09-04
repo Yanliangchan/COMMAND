@@ -133,6 +133,33 @@ export const MapCanvas: React.FC<Props> = ({
   const [size, setSize] = useState({ w: 800, h: 600 });
   const hoverRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef({ dragging: false, lastX: 0, lastY: 0, moved: false });
+  // ---- Touch input (Part 2 §1) ---------------------------------------------
+  // Pointer Events already unify mouse/touch/pen for plain pan (drag) and
+  // tap-to-select/confirm (a short pointerdown/up with little movement falls
+  // straight through the existing onPointerUp handler below, same as a mouse
+  // click) — nothing extra was needed for those two. Two things genuinely
+  // have no touch equivalent and need new handling: (1) hover-driven preview
+  // (movement/attack-odds), which normally only ever gets a mouse's
+  // pointermove-without-a-button-down; a touch pointermove only fires while a
+  // finger is actually down, so we synthesize "hover" from a tap-and-HOLD —
+  // hold past a short delay without moving sets hoverRef the same way a mouse
+  // hover would, driving the exact same preview computation in App.tsx via
+  // onHoverTile; and (2) pinch-to-zoom, which the wheel event never receives
+  // from a touchscreen at all, so it is implemented from scratch by tracking
+  // two simultaneous pointers and reading the change in distance between them
+  // frame to frame, mirroring onWheel's "zoom about a fixed point" math (here
+  // the pinch midpoint stands in for the cursor).
+  const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{ startDist: number; startScale: number } | null>(null);
+  const holdTimerRef = useRef<number | null>(null);
+  const holdFiredRef = useRef(false);
+  const HOLD_MS = 380;
+  const clearHoldTimer = () => {
+    if (holdTimerRef.current !== null) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  };
   // ---- Animated movement (phase 12 §4) -------------------------------------
   // Client-side rendering ONLY: the server has already resolved every action
   // instantly and authoritatively by the time `state` reaches here. This ref
@@ -376,24 +403,109 @@ export const MapCanvas: React.FC<Props> = ({
     return () => el.removeEventListener('wheel', handler);
   }, []);
 
+  const pinchDist = () => {
+    const pts = Array.from(activeTouchesRef.current.values());
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
+    try {
+      (e.target as Element).setPointerCapture(e.pointerId);
+    } catch {
+      // A second/third simultaneous touch pointer can lose the race with the
+      // browser's own implicit capture bookkeeping — cosmetic only (it just
+      // means this particular pointer isn't captured to the canvas), never
+      // worth losing the gesture over.
+    }
+    if (e.pointerType === 'touch') {
+      activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activeTouchesRef.current.size === 2) {
+        // A second finger landed — this is a pinch, not a pan or a hold.
+        clearHoldTimer();
+        dragRef.current.dragging = false;
+        pinchRef.current = { startDist: pinchDist(), startScale: viewRef.current.scale };
+        return;
+      }
+    }
     dragRef.current = { dragging: true, lastX: e.clientX, lastY: e.clientY, moved: false };
-    (e.target as Element).setPointerCapture(e.pointerId);
+    if (e.pointerType === 'touch') {
+      // Tap-and-hold synthesizes the hover-driven preview a mouse gets for
+      // free. If the hold survives without the finger moving or a second
+      // finger joining, plant the hover tile — driving the same
+      // movement/attack-odds preview computation as desktop hover.
+      holdFiredRef.current = false;
+      const rect = containerRef.current?.getBoundingClientRect();
+      const downX = e.clientX;
+      const downY = e.clientY;
+      clearHoldTimer();
+      holdTimerRef.current = window.setTimeout(() => {
+        holdTimerRef.current = null;
+        if (!rect || activeTouchesRef.current.size !== 1) return;
+        const t = screenToTile(viewRef.current, rect.width, rect.height, downX - rect.left, downY - rect.top);
+        const inside = t.x >= 0 && t.y >= 0 && t.x < GRID_SIZE && t.y < GRID_SIZE;
+        holdFiredRef.current = true;
+        dragRef.current.moved = true; // holding counts as "handled" — don't also fire a tap on release
+        hoverRef.current = inside ? t : null;
+        onHoverTile?.(inside ? t : null);
+      }, HOLD_MS);
+    }
   };
   const onPointerMove = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch' && activeTouchesRef.current.has(e.pointerId)) {
+      activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (pinchRef.current && activeTouchesRef.current.size === 2) {
+      const dist = pinchDist();
+      if (dist > 0 && pinchRef.current.startDist > 0) {
+        // Capture the pinch anchor NOW — a pointerup racing this frame's React
+        // update could otherwise null pinchRef.current before the setCamera
+        // updater callback below actually runs.
+        const { startDist, startScale } = pinchRef.current;
+        const rect = containerRef.current?.getBoundingClientRect();
+        const pts = Array.from(activeTouchesRef.current.values());
+        const midX = (pts[0].x + pts[1].x) / 2;
+        const midY = (pts[0].y + pts[1].y) / 2;
+        const view = viewRef.current;
+        setCamera((c) => {
+          const scale = Math.max(minScaleRef.current, Math.min(38, startScale * (dist / startDist)));
+          if (!rect) return { ...c, scale };
+          // Zoom about the pinch midpoint, mirroring onWheel's cursor-anchored zoom.
+          const px = midX - rect.left - rect.width / 2;
+          const py = midY - rect.top - rect.height / 2;
+          const wx = view.x + px / view.scale;
+          const wy = view.y + py / view.scale;
+          return { x: wx - px / scale, y: wy - py / scale, scale };
+        });
+      }
+      return; // pinch consumes this move — no pan, no hover, no hold
+    }
     const rect = containerRef.current?.getBoundingClientRect();
     if (rect) {
       const t = screenToTile(viewRef.current, rect.width, rect.height, e.clientX - rect.left, e.clientY - rect.top);
       const inside = t.x >= 0 && t.y >= 0 && t.x < GRID_SIZE && t.y < GRID_SIZE;
-      hoverRef.current = inside ? t : null;
-      onHoverTile?.(inside ? t : null);
+      // Touch: don't update hover on plain move (no finger-down "hover" exists
+      // on touch) — only the hold-timer above plants it. Once held, keep
+      // tracking so a slow drag after the hold still updates the preview.
+      if (e.pointerType !== 'touch' || holdFiredRef.current) {
+        hoverRef.current = inside ? t : null;
+        onHoverTile?.(inside ? t : null);
+      }
     }
     if (dragRef.current.dragging) {
       const dx = e.clientX - dragRef.current.lastX;
       const dy = e.clientY - dragRef.current.lastY;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragRef.current.moved = true;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        dragRef.current.moved = true;
+        if (e.pointerType === 'touch') clearHoldTimer(); // moved before the hold fired — this is a pan, not a hold
+      }
       dragRef.current.lastX = e.clientX;
       dragRef.current.lastY = e.clientY;
+      // Once a touch hold has planted a preview, further finger movement
+      // adjusts the previewed tile rather than panning the camera — panning
+      // mid-preview would be surprising and the pinch gesture already covers
+      // deliberate camera movement on touch.
+      if (e.pointerType === 'touch' && holdFiredRef.current) return;
       const view = viewRef.current;
       // Pan the eased view directly as well, so dragging tracks the cursor 1:1.
       view.x -= dx / view.scale;
@@ -401,7 +513,32 @@ export const MapCanvas: React.FC<Props> = ({
       setCamera((c) => ({ ...c, x: c.x - dx / c.scale, y: c.y - dy / c.scale }));
     }
   };
+  const endTouch = (e: React.PointerEvent) => {
+    activeTouchesRef.current.delete(e.pointerId);
+    if (activeTouchesRef.current.size < 2) pinchRef.current = null;
+  };
   const onPointerUp = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') {
+      clearHoldTimer();
+      const wasHold = holdFiredRef.current;
+      endTouch(e);
+      dragRef.current.dragging = false;
+      if (wasHold) {
+        // The hold already planted the preview (movement path / attack odds).
+        // Releasing confirms it — the same tap-to-confirm contract a mouse
+        // click has, just arrived at via hold-then-release instead of
+        // hover-then-click.
+        holdFiredRef.current = false;
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const t = screenToTile(viewRef.current, rect.width, rect.height, e.clientX - rect.left, e.clientY - rect.top);
+        if (t.x < 0 || t.y < 0 || t.x >= GRID_SIZE || t.y >= GRID_SIZE) return;
+        const f = formationAt(state, t.x, t.y);
+        if (f && !targetMode) onFormationClick(f, { shift: false });
+        else onTileClick(t.x, t.y);
+        return;
+      }
+    }
     const wasDrag = dragRef.current.moved;
     dragRef.current.dragging = false;
     if (wasDrag) return;
@@ -424,10 +561,17 @@ export const MapCanvas: React.FC<Props> = ({
     >
       <canvas
         ref={canvasRef}
+        style={{ touchAction: 'none' }}
         onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={(e) => {
+          clearHoldTimer();
+          holdFiredRef.current = false;
+          endTouch(e);
+          dragRef.current.dragging = false;
+        }}
         onPointerLeave={() => {
           hoverRef.current = null;
           onHoverTile?.(null);

@@ -113,7 +113,9 @@ export const Briefing: React.FC<{
           </li>
           <li>{opponentLine}</li>
           <li>
-            Victory: first to <b>{state.rules.vpToWin} VP</b>, or the higher score at the end of round {state.rules.roundLimit}.
+            Victory: the match ends the instant either side reaches <b>{state.rules.vpToWin} VP</b> — usually well before the{' '}
+            {state.rules.roundLimit}-round limit. Only a match that never reaches that threshold runs the full{' '}
+            {state.rules.roundLimit} rounds, at which point the higher score wins.
           </li>
           <li>
             AP per turn: <b>{state.rules.apPerTurn}</b> (carries over up to {state.rules.apCap}).

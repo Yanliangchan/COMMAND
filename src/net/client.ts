@@ -24,12 +24,12 @@ export type MatchKind = 'bot' | 'multiplayer';
 function resolveWsUrl(): string {
   const env = (import.meta as any).env;
   if (env?.VITE_WS_URL) return env.VITE_WS_URL;
-  if (env?.DEV) return 'ws://localhost:8787';
+  if (env?.DEV) return 'ws://localhost:8787/ws';
   if (typeof window !== 'undefined') {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${window.location.host}/ws`;
   }
-  return 'ws://localhost:8787';
+  return 'ws://localhost:8787/ws';
 }
 
 export const WS_URL = resolveWsUrl();

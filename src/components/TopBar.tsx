@@ -17,8 +17,8 @@ export const TopBar: React.FC<{
       <div className="hud-group">
         <span className="wordmark">COMMAND</span>
         <span className="hud-sep" />
-        <span className="hud-stat">
-          <i>ROUND</i>
+        <span className="hud-stat" title={`Round ${state.round} of a ${state.rules.roundLimit}-round CEILING — the match ends sooner if either side reaches ${state.rules.vpToWin} VP first.`}>
+          <i>ROUND · MAX {state.rules.roundLimit}</i>
           <b>
             {state.round}
             <small>/{state.rules.roundLimit}</small>
@@ -50,13 +50,27 @@ export const TopBar: React.FC<{
             <small>/{objectivesTotal}</small>
           </b>
         </span>
-        <span className="hud-stat vp">
-          <i>VP · to {state.rules.vpToWin}</i>
+        <span className="hud-stat vp" data-testid="vp-meter">
+          <i>VP — MATCH ENDS AT {state.rules.vpToWin}</i>
           <b title={`${FACTION_SHORT[you]} : ${FACTION_SHORT[otherPlayer(you)]}`}>
             <span className={you === 'SABRE' ? 'vp-blue' : 'vp-red'}>{state.players[you].vp}</span>
             <small> : </small>
             <span className={you === 'SABRE' ? 'vp-red' : 'vp-blue'}>{state.players[otherPlayer(you)].vp}</span>
           </b>
+          <span className="vp-bars" aria-hidden="true">
+            <span className="vp-bar-track">
+              <span
+                className={`vp-bar-fill ${you === 'SABRE' ? 'vp-blue-bg' : 'vp-red-bg'}`}
+                style={{ width: `${Math.min(100, (state.players[you].vp / state.rules.vpToWin) * 100)}%` }}
+              />
+            </span>
+            <span className="vp-bar-track">
+              <span
+                className={`vp-bar-fill ${you === 'SABRE' ? 'vp-red-bg' : 'vp-blue-bg'}`}
+                style={{ width: `${Math.min(100, (state.players[otherPlayer(you)].vp / state.rules.vpToWin) * 100)}%` }}
+              />
+            </span>
+          </span>
         </span>
         {onUav && (
           <button

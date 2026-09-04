@@ -1084,6 +1084,14 @@ export interface GameState {
   log: LogEntry[];
   phase: 'PLAYING' | 'TURN_HANDOFF' | 'GAME_OVER';
   winner: PlayerId | 'DRAW' | null;
+  /**
+   * WHY the game ended, set alongside `winner` by checkVictory() — the
+   * authoritative source, so the UI never has to re-derive it from VP/round
+   * numbers (which could drift out of sync with the engine's own logic).
+   * null until GAME_OVER. Public information (not fog-redacted) — both
+   * players already see the final VP and round in the same payload.
+   */
+  winReason: 'VP_THRESHOLD' | 'ROUND_LIMIT' | null;
   lastBattleReport: BattleReport | null;
   /** Recent destructions, newest first, capped short — see KillEvent. */
   killFeed: KillEvent[];

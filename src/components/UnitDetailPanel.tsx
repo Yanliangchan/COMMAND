@@ -48,7 +48,8 @@ export const UnitDetailPanel: React.FC<{
   formation: Formation;
   onCentre: () => void;
   onClose: () => void;
-}> = ({ state, formation: f, onCentre, onClose }) => {
+  className?: string;
+}> = ({ state, formation: f, onCentre, onClose, className }) => {
   const def = FORMATION_DEFS[f.type];
   const movesLeft = movesRemaining(f);
   const mv = movementProfile(f);
@@ -62,7 +63,7 @@ export const UnitDetailPanel: React.FC<{
   const separated = !!partner && partnerDistance > COHESION_RADIUS;
 
   return (
-    <div className="unit-card">
+    <div className={`unit-card${className ? ` ${className}` : ''}`}>
       <div className="unit-card-head">
         <div>
           <div className="unit-card-short">{f.shortName}</div>

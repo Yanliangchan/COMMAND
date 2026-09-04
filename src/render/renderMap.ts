@@ -556,6 +556,42 @@ function drawRelief(rc: RenderContext, x0: number, x1: number, y0: number, y1: n
 }
 
 // ---------------------------------------------------------------------------
+// Quiet ambient layer (Part 2 §4) — a slow, barely-perceptible drifting
+// cloud-shadow haze across the terrain. Two large, soft, low-alpha ellipses
+// drift diagonally across the sheet on independent multi-minute cycles
+// (never repeating in lockstep), clipped to the current viewport. Cheap: two
+// radial-gradient fills per frame, no offscreen raster, no per-tile work —
+// deliberately far below the cost of the relief/contour passes it sits
+// beside, and easily removed from the frame-time budget if it ever weren't.
+// ---------------------------------------------------------------------------
+function drawCloudShadows(rc: RenderContext) {
+  const { ctx, width, height, camera } = rc;
+  const t = performance.now();
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+  const drawOne = (periodMs: number, phase: number, sizeTiles: number, alpha: number) => {
+    const cyc = ((t / periodMs) % 1) + phase;
+    // A slow Lissajous-ish drift across the full sheet and a bit beyond, so
+    // the shadow's edge is never seen snapping back into view.
+    const wx = GRID_SIZE * (0.5 + 0.75 * Math.sin(cyc * Math.PI * 2));
+    const wy = GRID_SIZE * (0.5 + 0.75 * Math.cos(cyc * Math.PI * 2 * 0.63));
+    const { sx, sy } = worldToScreen(camera, width, height, wx, wy);
+    const r = sizeTiles * camera.scale;
+    if (sx < -r || sx > width + r || sy < -r || sy > height + r) return;
+    const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+    g.addColorStop(0, `rgba(10,14,12,${alpha})`);
+    g.addColorStop(1, 'rgba(10,14,12,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+  };
+  drawOne(95000, 0, 15, 0.05);
+  drawOne(140000, 0.4, 11, 0.04);
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
 // Marching-squares contours and coastline
 // ---------------------------------------------------------------------------
 
@@ -873,6 +909,7 @@ export function render(rc: RenderContext) {
 
   drawRelief(rc, x0, x1, y0, y1);
   drawContours(rc, x0, x1, y0, y1);
+  drawCloudShadows(rc);
   drawGraticule(rc, x0, x1, y0, y1);
   drawSheetEdge(rc);
 
@@ -1846,6 +1883,101 @@ function drawKillMarkers(rc: RenderContext) {
   }
 }
 
+// ---- Movement wake/dust trail (Part 2 §2) ----------------------------------
+// Rides on the SAME per-frame animated-movement interpolation phase 12 built
+// (rc.animPositions) rather than a second animation system: whenever a
+// formation of a trail-bearing arm is mid-glide, this spawns small fading
+// puffs behind its interpolated position, throttled to one every couple of
+// frames and capped in total count for cost. Tracked/mechanised armour
+// (ARMOUR, ENGINEER — the combat-engineer battalion's vehicles are tracked
+// too) kicks up dust; naval hulls (FRIGATE, CORVETTE) leave a wake. Every
+// other arm (infantry, commandos, guards, artillery, C4I/recon) is foot or
+// light and gets nothing — a real distinction, not decoration for its own
+// sake, so the player can read "that's mechanised" or "that's a ship
+// moving" off the trail alone.
+const DUST_TYPES = new Set<Formation['type']>(['ARMOUR', 'ENGINEER']);
+const WAKE_TYPES = new Set<Formation['type']>(['FRIGATE', 'CORVETTE']);
+interface TrailPuff {
+  x: number;
+  y: number;
+  born: number;
+  life: number;
+  size: number;
+  dx: number;
+  dy: number;
+}
+const trailPuffs = new Map<string, TrailPuff[]>();
+const lastTrailPos = new Map<string, { x: number; y: number; t: number }>();
+const MAX_PUFFS_PER_UNIT = 10;
+
+function updateAndDrawTrail(ctx: CanvasRenderingContext2D, f: Formation, sx: number, sy: number, s: number, now: number, moving: boolean) {
+  const isDust = DUST_TYPES.has(f.type);
+  const isWake = WAKE_TYPES.has(f.type);
+  if (!isDust && !isWake) return;
+  const prev = lastTrailPos.get(f.id);
+  lastTrailPos.set(f.id, { x: sx, y: sy, t: now });
+  let puffs = trailPuffs.get(f.id);
+  if (moving && prev && now - prev.t > 16) {
+    const ddx = sx - prev.x;
+    const ddy = sy - prev.y;
+    const dist = Math.hypot(ddx, ddy);
+    if (dist > 0.3) {
+      if (!puffs) {
+        puffs = [];
+        trailPuffs.set(f.id, puffs);
+      }
+      if (puffs.length < MAX_PUFFS_PER_UNIT) {
+        // Spawn just behind the counter, opposite the direction of travel.
+        const nx = -ddx / dist;
+        const ny = -ddy / dist;
+        const jitter = (Math.random() - 0.5) * s * 0.12;
+        puffs.push({
+          x: sx + nx * s * 0.22 - ny * jitter,
+          y: sy + ny * s * 0.22 + nx * jitter,
+          born: now,
+          life: isWake ? 480 : 340,
+          size: (isWake ? 0.16 : 0.13) * s * (0.7 + Math.random() * 0.5),
+          dx: nx * 0.15,
+          dy: ny * 0.15,
+        });
+      }
+    }
+  }
+  if (!puffs || !puffs.length) return;
+  for (let i = puffs.length - 1; i >= 0; i--) {
+    const p = puffs[i];
+    const age = now - p.born;
+    if (age >= p.life) {
+      puffs.splice(i, 1);
+      continue;
+    }
+    const frac = age / p.life;
+    const alpha = (1 - frac) * (isWake ? 0.22 : 0.18);
+    const grow = 1 + frac * 0.6;
+    ctx.beginPath();
+    ctx.ellipse(p.x + p.dx * age * 0.02, p.y + p.dy * age * 0.02, p.size * grow, p.size * grow * (isWake ? 0.45 : 0.8), 0, 0, Math.PI * 2);
+    ctx.fillStyle = isWake ? `rgba(214,226,232,${alpha})` : `rgba(168,150,116,${alpha})`;
+    ctx.fill();
+  }
+}
+
+// ---- Idle micro-animation (Part 2 §6) --------------------------------------
+// A faint, slow bob (all arms) plus, for a couple of arms, an even fainter
+// sway/twitch on top of it — so a paused board between actions doesn't read
+// as a static image. Deliberately tiny: this must never be mistaken for a
+// gameplay signal (unlike the on-alert ring, suppression bar, etc.), and
+// deliberately cheap — one sin() per visible formation per frame, gated off
+// entirely the instant a unit is mid-glide (animPos) so it never fights the
+// real movement animation. Phase is hashed from the formation id so all 24
+// don't bob in lockstep, which read as busy/distracting in testing.
+function idlePhase(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return (h % 1000) / 1000;
+}
+const IDLE_BOB_PERIOD_MS = 3400;
+const IDLE_SWAY_TYPES = new Set<Formation['type']>(['RECON', 'ARMOUR']);
+
 function drawFormation(rc: RenderContext, f: Formation) {
   const { ctx, width, height, camera } = rc;
   const s = camera.scale;
@@ -1879,8 +2011,30 @@ function drawFormation(rc: RenderContext, f: Formation) {
     ctx.fillStyle = `rgba(6,8,10,${Math.min(0.5, 0.22 + lift * 0.03)})`;
     ctx.fill();
   }
+  // Idle micro-animation (Part 2 §6) — only while genuinely stationary
+  // (never fights the phase-12 movement glide) and only ever a fraction of a
+  // pixel: a "the board is alive" cue, not a visual effect anyone should
+  // consciously register.
+  let idleDy = 0;
+  let idleRot = 0;
+  if (!animPos) {
+    const ph = idlePhase(f.id);
+    const now = performance.now();
+    const cyc = (now / IDLE_BOB_PERIOD_MS + ph) % 1;
+    idleDy = Math.sin(cyc * Math.PI * 2) * Math.min(0.9, r * 0.05);
+    if (IDLE_SWAY_TYPES.has(f.type)) {
+      const swayCyc = (now / (IDLE_BOB_PERIOD_MS * 1.7) + ph * 1.3) % 1;
+      idleRot = Math.sin(swayCyc * Math.PI * 2) * 0.035; // ~2 degrees, barely visible
+    }
+  }
   const sx = gsx;
-  const sy = gsy - lift;
+  const sy = gsy - lift + idleDy;
+
+  // Movement wake/dust trail (Part 2 §2) — drawn UNDER the counter, before
+  // the halo, so it reads as ground-level dust/spray behind the unit rather
+  // than an effect on top of it. `animPos` truthy is exactly "this formation
+  // is mid-glide right now" — the same signal phase 12's interpolation uses.
+  updateAndDrawTrail(ctx, f, gsx, gsy, s, performance.now(), !!animPos);
 
   // A dark halo under every counter. This is what guarantees a formation reads
   // over forest, urban fabric, a hillshade shadow or the movement wash — the
@@ -1918,7 +2072,18 @@ function drawFormation(rc: RenderContext, f: Formation) {
     // `identifiedOnly` alone is the correct — and only needed — gate here.
     const damaged = !identifiedOnly && f.strength >= 0 && f.strength < DAMAGE_STRENGTH_THRESHOLD;
     const bmp = getIconBitmap(f.type, iconSize, pc.light, damaged);
-    ctx.drawImage(bmp, sx - iconSize / 2, sy - iconSize / 2, iconSize, iconSize);
+    // Idle sway/twitch (Part 2 §6): a near-invisible rotation for recon
+    // (antenna sway) and armour (turret twitch) only, restored immediately
+    // after — every other draw call in this function is unaffected.
+    if (idleRot !== 0) {
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(idleRot);
+      ctx.drawImage(bmp, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+      ctx.restore();
+    } else {
+      ctx.drawImage(bmp, sx - iconSize / 2, sy - iconSize / 2, iconSize, iconSize);
+    }
 
     // Strength-cluster pip row (phase 12 §8) — classic wargame-counter
     // strength-step language: a row of up to 4 small pips along the bottom

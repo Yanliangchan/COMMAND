@@ -38,9 +38,20 @@ export const EndGameScreen: React.FC<{
   };
   const draw = state.winner === 'DRAW';
   const held = state.objectives.filter((o) => o.controlledBy === you).length;
+  // Why the match ended — read straight off state.winReason, which
+  // checkVictory() (engine.ts) sets the instant it decides the game is
+  // over. The client never re-derives this from VP/round numbers itself,
+  // so it can't drift out of sync with the engine's own logic.
+  const reasonText =
+    state.winReason === 'VP_THRESHOLD'
+      ? `Victory point threshold reached (${state.rules.vpToWin} VP) — the match ended at round ${state.round}, before the ${state.rules.roundLimit}-round limit.`
+      : `Round limit reached (round ${state.rules.roundLimit}) — higher score wins.`;
   return (
     <div className="modal-backdrop">
       <div className="modal handoff">
+        <div className="handoff-stamp" aria-hidden="true">
+          OPERATION CONCLUDED
+        </div>
         <div className="handoff-title">COMMAND — OPERATION CONCLUDED</div>
         <div className={`handoff-player ${draw ? '' : won ? 'result-win' : 'result-loss'}`}>
           {draw ? 'DRAW' : won ? 'VICTORY' : 'DEFEAT'}
@@ -53,6 +64,9 @@ export const EndGameScreen: React.FC<{
         <div className="handoff-sub" data-testid="endgame-vp">
           Final VP — {FACTION_SHORT[you]} {state.players[you].vp} : {FACTION_SHORT[otherPlayer(you)]}{' '}
           {state.players[otherPlayer(you)].vp}
+        </div>
+        <div className="handoff-reason" data-testid="endgame-reason">
+          {reasonText}
         </div>
         <div className="handoff-note">
           You finished holding {held} of {state.objectives.length} objectives after {state.round} rounds.

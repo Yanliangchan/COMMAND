@@ -44,10 +44,11 @@ function explain(report: BattleReport): string {
  * Battle result card. Deliberately NOT a full-screen modal: it sits in a corner
  * so the two tiles it describes (flashed on the map) stay in view.
  */
-export const BattleReportModal: React.FC<{ report: BattleReport; onClose: () => void; onFocus: () => void }> = ({
+export const BattleReportModal: React.FC<{ report: BattleReport; onClose: () => void; onFocus: () => void; className?: string }> = ({
   report,
   onClose,
   onFocus,
+  className,
 }) => {
   const [showAll, setShowAll] = useState(false);
   const attackerWon = report.outcome === 'Position Captured' || report.outcome === 'Defender Repelled';
@@ -57,7 +58,7 @@ export const BattleReportModal: React.FC<{ report: BattleReport; onClose: () => 
   const shown = showAll ? report.factors : top.slice(0, 6);
 
   return (
-    <div className="battle-card" data-testid="battle-report">
+    <div className={`battle-card${className ? ` ${className}` : ''}`} data-testid="battle-report">
       <div className="battle-card-head" style={{ borderColor: OUTCOME_COLOR[report.outcome] }}>
         <span className="battle-outcome" style={{ color: OUTCOME_COLOR[report.outcome] }}>
           {report.outcome}

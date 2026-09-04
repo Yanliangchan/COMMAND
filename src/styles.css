@@ -92,6 +92,16 @@ canvas { display: block; touch-action: none; }
 .ap-value { color: var(--olive-bright) !important; }
 .vp-blue { color: var(--blue); }
 .vp-red { color: var(--red); }
+.vp-blue-bg { background: var(--blue); }
+.vp-red-bg { background: var(--red); }
+.hud-stat.vp { min-width: 92px; }
+/* Compact bidirectional VP-to-threshold meter (Part 1 §2) — two thin bars,
+   one per side, each racing toward the SAME finish line (state.rules.vpToWin)
+   so the threshold's proximity is legible turn to turn without adding a new
+   HUD panel. */
+.vp-bars { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; width: 100%; }
+.vp-bar-track { position: relative; height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; width: 100%; min-width: 68px; }
+.vp-bar-fill { display: block; height: 100%; border-radius: 2px; transition: width 0.35s ease; }
 .player-chip { padding: 2px 10px; border-radius: 3px; font-weight: 700; letter-spacing: 0.08em; font-size: 11px; }
 .player-chip.sabre { background: rgba(111, 168, 201, 0.16); color: var(--blue); border: 1px solid var(--blue); }
 .player-chip.vanguard { background: rgba(193, 122, 95, 0.16); color: var(--red); border: 1px solid var(--red); }
@@ -205,6 +215,11 @@ canvas { display: block; touch-action: none; }
   cursor: pointer;
 }
 .roster.collapsed .roster-head { border-bottom: none; }
+/* Roster expand/collapse gets a quick CSS-only slide/fade (Part 2 §3) —
+   FormationList never unmounts .roster-body on collapse, it just adds this
+   class, so a plain transition is enough with no JS enter/exit bookkeeping. */
+.roster-body { animation: roster-body-in 130ms ease-out; }
+@keyframes roster-body-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .roster-title { flex: 1; text-align: left; }
 .roster-count { font-size: 10px; color: var(--text-faint); letter-spacing: 0.06em; }
 .roster-count.has-ready { color: var(--amber-bright); }
@@ -613,6 +628,20 @@ canvas { display: block; touch-action: none; }
 .factor-neg { color: #d98f88; }
 .battle-card-foot { display: flex; gap: 6px; justify-content: flex-end; }
 
+/* Smooth panel transitions (Part 2 §3) — unit-detail panel and battle report
+   card, driven by useMountTransition (src/hooks/useMountTransition.ts).
+   Deliberately quick (~150ms) and cheap (opacity + transform only, GPU
+   compositable) — this is about the panel's own appearance, not adding any
+   latency to gameplay-relevant feedback like arming an order or seeing a
+   move/attack preview, which never goes through this hook. */
+.panel-anim { transition: opacity 150ms ease, transform 150ms ease; will-change: opacity, transform; }
+.panel-anim-enter, .panel-anim-exit { opacity: 0; transform: translateY(8px) scale(0.98); }
+.panel-anim-entered { opacity: 1; transform: translateY(0) scale(1); }
+@media (prefers-reduced-motion: reduce) {
+  .panel-anim, .roster-body { transition: none; animation: none; }
+  .panel-anim-enter, .panel-anim-exit, .panel-anim-entered { opacity: 1; transform: none; }
+}
+
 /* ---------- Modals ---------- */
 .modal-backdrop {
   position: fixed;
@@ -632,13 +661,44 @@ canvas { display: block; touch-action: none; }
   width: 90%;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
 }
-.handoff { text-align: center; }
+.handoff { text-align: center; position: relative; overflow: hidden; }
+.handoff-title, .handoff-player, .handoff-sub, .handoff-reason, .handoff-note, .handoff > button, .handoff > .replay-share-row { position: relative; z-index: 1; }
 .handoff-title { font-family: var(--font-display); font-size: 12px; letter-spacing: 0.2em; color: var(--text-dim); margin-bottom: 10px; }
 .handoff-player { font-family: var(--font-display); font-size: 30px; font-weight: 700; letter-spacing: 0.08em; margin-bottom: 6px; }
 .handoff-player.result-win { color: var(--olive-bright); }
 .handoff-player.result-loss { color: var(--danger); }
 .handoff-sub { font-size: 13px; color: var(--text); margin-bottom: 6px; }
+.handoff-reason { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; margin: 4px auto 8px; max-width: 360px; border-top: 1px solid var(--border); padding-top: 8px; }
 .handoff-note { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin: 10px 0 18px; }
+
+/* Victory/defeat "stamp" moment (Part 2 §5) — a brief, self-contained CSS
+   animation, not a blocking cinematic: it lands over ~0.5s and settles to a
+   faint watermark, never delaying the buttons/content below it, and a
+   reduced-motion viewer gets it fully settled with no animation at all. */
+.handoff-stamp {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  font-family: var(--font-display);
+  font-size: 46px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--amber);
+  opacity: 0.08;
+  transform: translate(-50%, -50%) rotate(-8deg) scale(1.4);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 0;
+  animation: stamp-land 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+@keyframes stamp-land {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(-8deg) scale(2.6); }
+  60% { opacity: 0.16; }
+  100% { opacity: 0.08; transform: translate(-50%, -50%) rotate(-8deg) scale(1.4); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .handoff-stamp { animation: none; opacity: 0.08; }
+}
 .close-btn {
   background: var(--amber);
   color: #1a140a;
