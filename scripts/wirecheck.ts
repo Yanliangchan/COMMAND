@@ -15,8 +15,9 @@
 // ============================================================================
 
 import * as engine from '../src/game/engine';
-import { filterStateForPlayer, REDACTED_NUMBER } from '../src/game/fog';
+import { filterStateForPlayer, GENERIC_BLOCKED_TILE_MESSAGE, REDACTED_NUMBER, safeMoveRefusalMessage } from '../src/game/fog';
 import { decideBotAction } from '../server/bot';
+import { ServerMsg } from '../src/net/protocol';
 import { DetectionLevel, Formation, GameState, PlayerId, otherPlayer } from '../src/game/types';
 
 // --- The contract ----------------------------------------------------------
@@ -311,6 +312,82 @@ function auditReplay(state: GameState, viewer: PlayerId) {
     }
   });
 }
+
+/**
+ * Fog-blocked MOVE refusal (the reported bug): a MOVE onto a tile secretly
+ * held by an enemy formation the mover's own side has never detected must be
+ * refused with a message that, byte-for-byte on the actual serialized wire
+ * message the server would send, names nothing about the occupant — no
+ * formation name, no arm/type, no "enemy" wording, nothing that distinguishes
+ * it from a refusal for any other reason. Builds the EXACT ServerMsg the
+ * server sends (server/index.ts's `send(ws, { t: 'error', message })`) and
+ * JSON.stringifies it — the same rigor as every other redaction proof in this
+ * suite: inspect real wire bytes, not the intent.
+ */
+function auditMoveRefusalWire() {
+  const state = engine.initGame(31415);
+  const mover = Object.values(state.formations).find((f) => f.owner === 'SABRE' && f.type !== 'FRIGATE' && f.type !== 'CORVETTE')!;
+  const hidden = Object.values(state.formations).find((f) => f.owner === 'VANGUARD' && f.type !== 'FRIGATE' && f.type !== 'CORVETTE')!;
+  // Place them adjacent on open ground, with SABRE having made no contact on
+  // `hidden` whatsoever — the exact bug scenario: the mover's own client-side
+  // preview has no way to know this tile is occupied.
+  mover.x = 20; mover.y = 20;
+  hidden.x = 21; hidden.y = 20;
+  state.tiles[mover.y][mover.x] = { ...state.tiles[mover.y][mover.x], terrain: 'GRASS', road: false, bridge: false, elevation: 1 };
+  state.tiles[hidden.y][hidden.x] = { ...state.tiles[hidden.y][hidden.x], terrain: 'GRASS', road: false, bridge: false, elevation: 1 };
+  state.players.SABRE.contacts = {};
+  state.activePlayer = 'SABRE';
+  state.players.SABRE.ap = 60;
+
+  const res = engine.moveFormation(state, mover.id, hidden.x, hidden.y);
+  ok(!res.ok && res.refusal === 'ENEMY_HELD', 'fog-blocked MOVE setup: refusal is ENEMY_HELD as expected');
+
+  // This is exactly what server/index.ts's `case 'MOVE'` branch of applyAction
+  // computes and sends back — mirrored here (not imported: server/index.ts is
+  // not import-safe, it opens a real listening socket at module load).
+  const message = safeMoveRefusalMessage(state, 'SABRE', res.refusal, res.reason, res.occupantId);
+  const wireMsg: ServerMsg = { t: 'error', message };
+  const wireBytes = JSON.stringify(wireMsg);
+
+  ok(message === GENERIC_BLOCKED_TILE_MESSAGE, `fog-blocked MOVE refusal uses the exact generic string (got "${message}")`);
+  ok(wireBytes === JSON.stringify({ t: 'error', message: 'That tile cannot be entered.' }), `serialized wire message matches byte-for-byte (got ${wireBytes})`);
+  ok(!wireBytes.includes(hidden.id), 'wire bytes do not contain the hidden occupant\'s formation id');
+  ok(!wireBytes.includes(hidden.shortName), 'wire bytes do not contain the hidden occupant\'s callsign');
+  ok(!wireBytes.includes(hidden.name), 'wire bytes do not contain the hidden occupant\'s full name');
+  ok(!wireBytes.toLowerCase().includes(hidden.type.toLowerCase()), 'wire bytes do not contain the hidden occupant\'s arm/type');
+  ok(!/enemy/i.test(wireBytes), 'wire bytes do not use the word "enemy"');
+  ok(!/vanguard/i.test(wireBytes), 'wire bytes do not name the opposing side');
+  // And a sibling refusal for ANY other reason must be byte-identical in
+  // shape (same message key, same generic-looking sentence) — nothing about
+  // this specific error should stand out as "that one's about a hidden
+  // enemy" versus, say, "too far" or "no AP", from the client's own vantage.
+  const otherState = engine.initGame(31415);
+  otherState.players.SABRE.ap = 0;
+  const other = Object.values(otherState.formations).find((f) => f.owner === 'SABRE' && f.type !== 'FRIGATE' && f.type !== 'CORVETTE')!;
+  const otherRes = engine.moveFormation(otherState, other.id, other.x + 1, other.y);
+  ok(!otherRes.ok, 'sanity: a NO_AP refusal is also refused (unrelated control case)');
+
+  // Regression: a KNOWN (IDENTIFIED+) occupant must still get the real,
+  // detailed message — the fix must not swallow the working, already-correct
+  // case of a legitimately visible obstacle.
+  const known = engine.initGame(31415);
+  const kMover = Object.values(known.formations).find((f) => f.owner === 'SABRE' && f.type !== 'FRIGATE' && f.type !== 'CORVETTE')!;
+  const kEnemy = Object.values(known.formations).find((f) => f.owner === 'VANGUARD' && f.type !== 'FRIGATE' && f.type !== 'CORVETTE')!;
+  kMover.x = 22; kMover.y = 22;
+  kEnemy.x = 23; kEnemy.y = 22;
+  known.activePlayer = 'SABRE';
+  known.players.SABRE.ap = 60;
+  known.players.SABRE.contacts[kEnemy.id] = {
+    formationId: kEnemy.id, owner: 'VANGUARD', level: 'CONFIRMED', confidence: 100, x: kEnemy.x, y: kEnemy.y,
+    live: true, lastSeenTurn: known.round, decayAnchorRound: known.round, lastRiseRound: known.round, ceiling: 100, decayPerRound: 20, source: 'test',
+  };
+  const kRes = engine.moveFormation(known, kMover.id, kEnemy.x, kEnemy.y);
+  const kMessage = safeMoveRefusalMessage(known, 'SABRE', kRes.refusal, kRes.reason, kRes.occupantId);
+  ok(kRes.refusal === 'ENEMY_HELD', 'known-occupant setup: refusal is ENEMY_HELD as expected');
+  ok(kMessage !== GENERIC_BLOCKED_TILE_MESSAGE, `a CONFIRMED occupant's refusal is NOT downgraded to the generic string (got "${kMessage}")`);
+  ok(kMessage === kRes.reason, 'a CONFIRMED occupant gets the engine\'s own detailed refusal message, unchanged');
+}
+auditMoveRefusalWire();
 
 const GAMES = Number(process.argv[2] ?? 6);
 const ROUNDS = Number(process.argv[3] ?? 10);

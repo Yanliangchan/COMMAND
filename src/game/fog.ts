@@ -27,6 +27,7 @@
 // ============================================================================
 
 import { FORMATION_DEFS } from './data';
+import { MoveRefusal } from './movement';
 import { CombatEvent, Contact, DetectionLevel, Formation, GameState, KillEvent, PlayerId, ReplayRound, otherPlayer } from './types';
 
 /** Two-letter designation shown on a redacted counter, by arm. */
@@ -135,6 +136,41 @@ function redactContact(c: Contact): Contact {
 
 export function contactLevel(state: GameState, viewer: PlayerId, formationId: string): DetectionLevel {
   return state.players[viewer].contacts[formationId]?.level ?? 'UNKNOWN';
+}
+
+/** Generic, uninformative refusal text for a MOVE blocked by a tile the mover has no legitimate knowledge of. */
+export const GENERIC_BLOCKED_TILE_MESSAGE = 'That tile cannot be entered.';
+
+/**
+ * Decide what is SAFE to tell a player whose MOVE was refused because the
+ * destination is ENEMY_HELD (occupied by a formation belonging to the other
+ * side — see MovePlan.occupantId in movement.ts and MoveActionResult in
+ * engine.ts). A refused move necessarily tells the mover *something* is
+ * different about that tile — an accepted, unavoidable one-bit signal in any
+ * fog-of-war game — but it must never say more than that unless the mover's
+ * own side has actually detected the occupant at IDENTIFIED-or-better,
+ * exactly the same rung every other piece of intelligence on the wire is
+ * gated at. Lives in fog.ts (rather than server/index.ts, which is not
+ * import-safe for a test harness — it listens on a real socket at module
+ * load) specifically so wirecheck.ts can exercise the exact function the
+ * server calls, not a re-implementation of it.
+ *
+ * Every other refusal code (terrain, ZOC, too far, no AP, no movement
+ * actions, OCCUPIED by a friendly formation, …) reveals nothing about enemy
+ * positions and is safe to relay verbatim — this function is a no-op for all
+ * of them.
+ */
+export function safeMoveRefusalMessage(
+  state: GameState,
+  mover: PlayerId,
+  refusal: MoveRefusal | null,
+  reason: string,
+  occupantId: string | null
+): string {
+  if (refusal !== 'ENEMY_HELD') return reason;
+  const level = occupantId ? contactLevel(state, mover, occupantId) : 'UNKNOWN';
+  if (level === 'IDENTIFIED' || level === 'CONFIRMED') return reason;
+  return GENERIC_BLOCKED_TILE_MESSAGE;
 }
 
 /**

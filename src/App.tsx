@@ -229,6 +229,30 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 2600);
   }, []);
 
+  // In-game action rejections (net.error on a ws 'error' message — a MOVE
+  // refused because the destination turned out to be occupied, a stale
+  // client-side plan the server no longer honours, etc.) previously had no
+  // visible effect: the client-side preview already screens out everything
+  // it knows about, so a server-side refusal reaching this point was a
+  // genuinely silent no-op. Surface it the same way every other transient
+  // in-game notice is surfaced — the existing toast — keyed off errorSeq so
+  // even a repeat of the exact same message (e.g. clicking the same blocked
+  // tile twice) reliably re-flashes. Only once a match is actually up:
+  // net.error also carries pre-game lobby failures (bad room code, room
+  // full, …), which the Lobby screen renders on its own and must not be
+  // duplicated here.
+  const prevErrorSeqRef = useRef(net.errorSeq);
+  useEffect(() => {
+    if (!state || !you) {
+      prevErrorSeqRef.current = net.errorSeq;
+      return;
+    }
+    if (net.errorSeq !== prevErrorSeqRef.current) {
+      prevErrorSeqRef.current = net.errorSeq;
+      if (net.error) flash(net.error);
+    }
+  }, [net.errorSeq, net.error, state, you, flash]);
+
   const frameTimeRef = useRef(0);
   const onFrameTime = useCallback((ms: number) => {
     frameTimeRef.current = ms;

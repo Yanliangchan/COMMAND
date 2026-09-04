@@ -23,7 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import * as engine from '../src/game/engine';
-import { filterStateForPlayer, filterStateForSpectator } from '../src/game/fog';
+import { filterStateForPlayer, filterStateForSpectator, safeMoveRefusalMessage } from '../src/game/fog';
 import { randomScenario, scenarioById, Scenario } from '../src/game/scenarios';
 import { GameState, MatchRules, PlayerId, otherPlayer, validateMatchRules } from '../src/game/types';
 import { ClientMsg, CreateRulesInput, GameAction, ReplayViewState, RoomRulesInfo, ServerMsg, WireGameState } from '../src/net/protocol';
@@ -389,12 +389,26 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
   if (state.activePlayer !== playerId) return { error: 'Not your turn.', mapChanged: false };
 
   switch (action.type) {
-    case 'MOVE':
-      engine.moveFormation(state, action.formationId, action.x, action.y);
+    case 'MOVE': {
+      const res = engine.moveFormation(state, action.formationId, action.x, action.y);
+      if (!res.ok) {
+        return {
+          error: safeMoveRefusalMessage(state, playerId, res.refusal, res.reason, res.occupantId),
+          mapChanged: false,
+        };
+      }
       break;
-    case 'MOVE_GROUP':
-      engine.moveGroup(state, action.formationIds, action.x, action.y);
+    }
+    case 'MOVE_GROUP': {
+      const res = engine.moveGroup(state, action.formationIds, action.x, action.y);
+      // planGroupMove's own refusal reasons never name an enemy formation or
+      // its position (see MoveGroupActionResult's doc comment in engine.ts —
+      // the underlying search already treats any enemy-occupied tile,
+      // detected or not, as simply unreachable rather than refusing with a
+      // named reason), so this is always safe to relay verbatim.
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
+    }
     case 'ATTACK':
       engine.attackAction(state, action.attackerId, action.targetId);
       break;

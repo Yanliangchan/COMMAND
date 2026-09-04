@@ -18,7 +18,7 @@ import { attackPower, defencePower, lossesFromShare, predictEngagement } from '.
 import { FORMATION_DEFS, ORDERS_OF_BATTLE } from '../src/game/data';
 import { movementProfile, planMove } from '../src/game/movement';
 import { detectionRange } from '../src/game/detection';
-import { filterStateForPlayer } from '../src/game/fog';
+import { filterStateForPlayer, GENERIC_BLOCKED_TILE_MESSAGE, safeMoveRefusalMessage } from '../src/game/fog';
 import { computePriorityTargets } from '../src/game/threat';
 import { decideBotAction } from '../server/bot';
 import { AP_CAP, AP_COSTS, AP_PER_TURN, Formation, FormationType, GameState, GRID_SIZE, PlayerId, Tile, moraleBandFor, stationaryConcealmentMultiplier, validateMatchRules } from '../src/game/types';
@@ -910,6 +910,96 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Fog-blocked MOVE: a player's own client-side movement preview only knows
+// about tiles it has been sent — it cannot warn a player off a tile secretly
+// occupied by an enemy formation their side has never detected. The server
+// must refuse the move (never silently accept it — that would teleport the
+// mover onto the enemy, or worse, silently do nothing while claiming success),
+// must spend NOTHING for the refused attempt, and must never leak the
+// occupant's identity to the mover through the refusal message unless the
+// mover's own side has actually detected it at IDENTIFIED-or-better.
+// ---------------------------------------------------------------------------
+{
+  // --- Undetected occupant: refusal must be generic. ------------------------
+  const mover = mk('INFANTRY', 10, 10, 'SABRE');
+  const hidden = mk('ARMOUR', 11, 10, 'VANGUARD'); // adjacent, but SABRE has no contact on it at all
+  const s = scenario([mover, hidden]);
+  s.players.SABRE.contacts = {}; // explicit: no detection whatsoever of `hidden`
+
+  const beforeAp = s.players.SABRE.ap;
+  const beforeMovesUsed = mover.movesUsed;
+  const beforeX = mover.x, beforeY = mover.y;
+
+  const res = engine.moveFormation(s, mover.id, hidden.x, hidden.y);
+
+  check(!res.ok, 'a MOVE onto a tile with an undetected enemy occupant is refused');
+  check(res.refusal === 'ENEMY_HELD', `the refusal is correctly ENEMY_HELD (got ${res.refusal})`);
+  check(res.occupantId === hidden.id, 'the refusal carries the true occupant id (ground truth, for the server to check fog against — never sent to the client as-is)');
+  check(mover.x === beforeX && mover.y === beforeY, 'a refused move does not relocate the formation');
+  check(mover.movesUsed === beforeMovesUsed, 'a refused move does not spend a movement action');
+  check(s.players.SABRE.ap === beforeAp, 'a refused move does not spend AP');
+
+  const safe = safeMoveRefusalMessage(s, 'SABRE', res.refusal, res.reason, res.occupantId);
+  check(safe === GENERIC_BLOCKED_TILE_MESSAGE, `an undetected occupant gets the generic refusal, not the detailed one (got "${safe}")`);
+  check(!safe.includes(hidden.shortName), 'the generic refusal does not name the occupant');
+  check(!safe.includes(hidden.type), 'the generic refusal does not name the occupant\'s arm/type');
+  check(!/enemy/i.test(safe), 'the generic refusal does not use the word "enemy"');
+  check(safe === 'That tile cannot be entered.', 'the generic refusal is the exact agreed-safe string');
+  // The raw (ground-truth) planMove reason for ENEMY_HELD never names the
+  // occupant by callsign either — but it DOES say "Enemy-controlled", which
+  // is itself more than the mover is entitled to know about an undetected
+  // tile (it confirms "this is specifically an enemy", not just "something is
+  // here"). That is exactly why safeMoveRefusalMessage must substitute the
+  // fully generic string rather than relaying this reason as-is — assert the
+  // raw reason really does carry that word, so the substitution above is
+  // proven to be doing real work and not passing through text that already
+  // happened to be safe.
+  check(/enemy/i.test(res.reason), 'sanity: the ground-truth ENEMY_HELD reason does say "enemy" (this must never reach an undetected mover unredacted)');
+}
+{
+  // --- Detected occupant (IDENTIFIED+): the existing detailed message must
+  // still be used, unchanged — no regression to the already-correct case of a
+  // known obstacle (e.g. a friendly-occupied tile, or an enemy the mover's
+  // side has actually identified).
+  const mover = mk('INFANTRY', 10, 10, 'SABRE');
+  const known = mk('ARMOUR', 11, 10, 'VANGUARD');
+  const s = scenario([mover, known]);
+  s.players.SABRE.contacts[known.id] = {
+    formationId: known.id, owner: 'VANGUARD', level: 'IDENTIFIED', confidence: 80, x: known.x, y: known.y,
+    live: true, lastSeenTurn: s.round, decayAnchorRound: s.round, lastRiseRound: s.round, ceiling: 100, decayPerRound: 20, source: 'test',
+  };
+
+  const res = engine.moveFormation(s, mover.id, known.x, known.y);
+  check(!res.ok && res.refusal === 'ENEMY_HELD', 'a MOVE onto a known (IDENTIFIED) enemy occupant is still refused');
+
+  const safe = safeMoveRefusalMessage(s, 'SABRE', res.refusal, res.reason, res.occupantId);
+  check(safe === res.reason, 'a detected occupant gets the same detailed message the engine computed — no extra redaction once legitimately known');
+  check(safe !== GENERIC_BLOCKED_TILE_MESSAGE, `a detected occupant does NOT get downgraded to the generic message (got "${safe}")`);
+
+  // CONFIRMED is IDENTIFIED-or-better too — same outcome.
+  s.players.SABRE.contacts[known.id].level = 'CONFIRMED';
+  const res2 = engine.moveFormation(s, mover.id, known.x, known.y);
+  const safe2 = safeMoveRefusalMessage(s, 'SABRE', res2.refusal, res2.reason, res2.occupantId);
+  check(safe2 === res2.reason && safe2 !== GENERIC_BLOCKED_TILE_MESSAGE, 'a CONFIRMED occupant also gets the detailed message, not the generic one');
+}
+{
+  // --- moveGroup: a target tile secretly held by an undetected enemy is
+  // simply excluded from the group's own pathing (search never treats an
+  // enemy tile as a step, detected or not), so no member is ever routed onto
+  // it and no per-tile refusal message exists to redact in the first place —
+  // this proves that invariant holds rather than assuming it.
+  const a = mk('INFANTRY', 10, 10, 'SABRE');
+  const b = mk('INFANTRY', 10, 12, 'SABRE');
+  const hidden = mk('ARMOUR', 10, 11, 'VANGUARD'); // sits exactly between them, on the objective tile
+  const s = scenario([a, b, hidden]);
+  s.players.SABRE.contacts = {};
+  const res = engine.moveGroup(s, [a.id, b.id], hidden.x, hidden.y);
+  check(a.x !== hidden.x || a.y !== hidden.y, 'moveGroup never routes a member onto an undetected enemy-occupied tile');
+  check(b.x !== hidden.x || b.y !== hidden.y, 'moveGroup never routes the other member onto it either');
+  check(typeof res.reason === 'string', 'moveGroup always reports a reason, even implicitly via a safe partial success');
 }
 
 console.log(failures ? `\nFAIL: ${failures} combat-model assertion(s)` : '\nPASS: combat model holds.');

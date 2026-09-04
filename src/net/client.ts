@@ -88,6 +88,11 @@ export function useMultiplayer() {
   const tilesRef = useRef<GameState['tiles'] | null>(null);
   const [opponentConnected, setOpponentConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped on every 'error' message, including a repeat of the same text back
+  // to back (e.g. clicking the same refused tile twice) — App.tsx keys its
+  // in-game toast effect off this rather than the message text so a repeat
+  // refusal is not silently swallowed by React's "state didn't change" bail.
+  const [errorSeq, setErrorSeq] = useState(0);
   // Which kind of opponent this match is against, and — for a bot match — at
   // what difficulty. Purely presentational (the pre-battle briefing, phase
   // 10 §1) — the server is still the sole source of truth for game state.
@@ -191,6 +196,7 @@ export function useMultiplayer() {
           break;
         case 'error':
           setError(msg.message);
+          setErrorSeq((n) => n + 1);
           setReplayError(msg.message);
           // A LOBBY-phase failure (no such room code, room full, server refused
           // the queue) has to hand the player back to the menu with the reason
@@ -314,6 +320,7 @@ export function useMultiplayer() {
     state,
     opponentConnected,
     error,
+    errorSeq,
     matchKind,
     botDifficulty,
     spectating,

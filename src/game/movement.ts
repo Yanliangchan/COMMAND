@@ -349,6 +349,15 @@ export interface MovePlan {
   /** Set when the formation starts this move inside an enemy Zone of Control —
    *  disengaging costs a full movement action's worth of points (phase 7). */
   zocNote: string | null;
+  /**
+   * Set only for an ENEMY_HELD refusal: the id of the formation actually
+   * blocking the tile. This is ground truth — the caller (server/index.ts)
+   * decides whether the mover's own side has legitimately detected this
+   * formation (fog.ts contactLevel) before it is safe to name it in any
+   * message sent back to the player. Never send `reason` for this refusal
+   * code to the mover without that check.
+   */
+  occupantId: string | null;
 }
 
 function terrainLabel(cost: number, tiles: number): string {
@@ -360,7 +369,7 @@ function terrainLabel(cost: number, tiles: number): string {
   return 'Severe';
 }
 
-function refusal(code: MoveRefusal, reason: string, x: number, y: number): MovePlan {
+function refusal(code: MoveRefusal, reason: string, x: number, y: number, occupantId: string | null = null): MovePlan {
   return {
     ok: false,
     refusal: code,
@@ -376,6 +385,7 @@ function refusal(code: MoveRefusal, reason: string, x: number, y: number): MoveP
     actionsRequired: 0,
     apCost: 0,
     zocNote: null,
+    occupantId,
   };
 }
 
@@ -414,7 +424,7 @@ export function planMove(state: GameState, f: Formation, x: number, y: number, b
 
   const occ = occupantAt(state, x, y);
   if (occ && occ.owner !== f.owner)
-    return refusal('ENEMY_HELD', `Enemy-controlled position — attack it instead of moving onto it.`, x, y);
+    return refusal('ENEMY_HELD', `Enemy-controlled position — attack it instead of moving onto it.`, x, y, occ.id);
   if (occ) return refusal('OCCUPIED', `Tile already occupied by ${occ.shortName}.`, x, y);
 
   const rb = roundBudget(state, f);
@@ -504,6 +514,7 @@ export function planMove(state: GameState, f: Formation, x: number, y: number, b
     actionsRequired,
     apCost: actionsRequired * AP_COSTS.MOVE,
     zocNote,
+    occupantId: null,
   };
 }
 

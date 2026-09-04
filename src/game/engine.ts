@@ -22,6 +22,7 @@ import {
   cohesionAdvisory,
   crossable,
   isThreatened,
+  MoveRefusal,
   planGroupMove,
   planMove,
   planWithdraw,
@@ -372,16 +373,40 @@ function triggerOverwatch(state: GameState, mover: Formation): boolean {
 // Movement
 // ---------------------------------------------------------------------------
 
-export function moveFormation(state: GameState, formationId: string, x: number, y: number): GameState {
+/**
+ * Result of an attempted single-formation move. `ok` is false whenever
+ * nothing happened — the caller (server/index.ts) MUST check this rather
+ * than assume any state mutation occurred. `refusal`/`reason`/`occupantId`
+ * mirror planMove's MovePlan so the server can decide what is SAFE to relay
+ * to the mover: see the occupantId doc comment on MovePlan in movement.ts —
+ * an ENEMY_HELD refusal must never be shown verbatim unless the mover's own
+ * side has actually detected that occupant (fog.ts contactLevel).
+ */
+export interface MoveActionResult {
+  state: GameState;
+  ok: boolean;
+  refusal: MoveRefusal | null;
+  reason: string;
+  occupantId: string | null;
+}
+
+export function moveFormation(state: GameState, formationId: string, x: number, y: number): MoveActionResult {
+  const fail = (refusal: MoveRefusal | null, reason: string, occupantId: string | null = null): MoveActionResult => ({
+    state,
+    ok: false,
+    refusal,
+    reason,
+    occupantId,
+  });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer) return state;
+  if (!f || f.owner !== state.activePlayer) return fail(null, 'No such formation, or not yours to order.');
   const plan = planMove(state, f, x, y);
-  if (!plan.ok) return state;
+  if (!plan.ok) return fail(plan.refusal, plan.reason, plan.occupantId);
   // A long bound may consume more than one of the formation's movement actions
   // (and one AP each) — the client preview states exactly how many before the
   // player commits, so the accounting is never a surprise.
-  if (plan.actionsRequired > movesRemaining(f)) return state;
-  if (state.players[f.owner].ap < plan.apCost) return state;
+  if (plan.actionsRequired > movesRemaining(f)) return fail('NO_MOVES', 'Not enough movement actions left for this bound.');
+  if (state.players[f.owner].ap < plan.apCost) return fail('NO_AP', 'Not enough AP for this bound.');
 
   const advisory = cohesionAdvisory(state, f, x, y);
   state.players[state.activePlayer].ap -= plan.apCost;
@@ -403,7 +428,7 @@ export function moveFormation(state: GameState, formationId: string, x: number, 
   }
   if (destroyed) {
     refreshAllSpotting(state);
-    return state;
+    return { state, ok: true, refusal: null, reason: '', occupantId: null };
   }
 
   const ref = gridRef(f.x, f.y);
@@ -411,7 +436,7 @@ export function moveFormation(state: GameState, formationId: string, x: number, 
   log(state, `${f.shortName} moved to grid ${ref} [${f.movesUsed}/${f.movesMax} bounds].`);
   if (advisory) log(state, advisory.message);
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, refusal: null, reason: '', occupantId: null };
 }
 
 /**
@@ -421,11 +446,25 @@ export function moveFormation(state: GameState, formationId: string, x: number, 
  * resolved around the objective so nothing stacks illegally.
  * Single-unit movement is untouched by this.
  */
-export function moveGroup(state: GameState, formationIds: string[], x: number, y: number): GameState {
+/**
+ * Result of an attempted grouped move. `ok` is false only when NO member of
+ * the group moved at all (planGroupMove's own top-level refusal — never
+ * enough left to say more than "not enough AP" / "no movement actions left"
+ * / "no closer position", none of which can reveal an enemy's position, so
+ * `reason` is always safe to relay to the mover as-is).
+ */
+export interface MoveGroupActionResult {
+  state: GameState;
+  ok: boolean;
+  reason: string;
+}
+
+export function moveGroup(state: GameState, formationIds: string[], x: number, y: number): MoveGroupActionResult {
   const plan = planGroupMove(state, formationIds, x, y);
-  if (!plan.ok) return state;
+  if (!plan.ok) return { state, ok: false, reason: plan.reason };
   const movers = plan.members.filter((m) => m.ok);
-  if (state.players[state.activePlayer].ap < plan.apCost) return state;
+  if (state.players[state.activePlayer].ap < plan.apCost)
+    return { state, ok: false, reason: 'Not enough AP for this formation move.' };
   state.players[state.activePlayer].ap -= plan.apCost;
   const names: string[] = [];
   for (const m of movers) {
@@ -455,7 +494,7 @@ export function moveGroup(state: GameState, formationIds: string[], x: number, y
   plan.advisories.forEach((a) => log(state, a));
   plan.excluded.forEach((e) => log(state, `${e.shortName} could not join the formation move — ${e.reason}.`));
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
 // ---------------------------------------------------------------------------
