@@ -62,16 +62,27 @@ export const Sandbox: React.FC<{ onExit: () => void }> = ({ onExit }) => {
 
   const flash = useCallback((msg: string) => setNote(msg), []);
 
-  const commit = useCallback((mutator: (s: GameState) => void) => {
-    setState((prev) => {
-      // Engine functions mutate in place by convention — operate on the same
-      // object, then hand React a fresh top-level reference to re-render.
-      mutator(prev);
-      replenish(prev);
-      engine.refreshAllFog(prev);
-      return { ...prev };
-    });
-  }, []);
+  const commit = useCallback(
+    (mutator: (s: GameState) => { ok: boolean; reason: string } | unknown) => {
+      let refused: string | null = null;
+      setState((prev) => {
+        // Engine functions mutate in place by convention — operate on the same
+        // object, then hand React a fresh top-level reference to re-render.
+        const res = mutator(prev) as { ok?: boolean; reason?: string } | undefined;
+        // Same silent-no-op bug the live server fix closed: an order the
+        // engine refused (bad range, no target, already acted, …) used to
+        // leave sandbox play with no feedback either — surface it exactly
+        // like the in-game toast does. No fog to worry about here: sandbox
+        // is single-client, both sides fully visible, nothing to redact.
+        if (res && res.ok === false && res.reason) refused = res.reason;
+        replenish(prev);
+        engine.refreshAllFog(prev);
+        return { ...prev };
+      });
+      if (refused) flash(refused);
+    },
+    [flash]
+  );
 
   const reset = useCallback(() => {
     setState(freshState());

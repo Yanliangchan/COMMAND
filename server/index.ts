@@ -23,7 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import * as engine from '../src/game/engine';
-import { filterStateForPlayer, filterStateForSpectator, safeMoveRefusalMessage } from '../src/game/fog';
+import { filterStateForPlayer, filterStateForSpectator, safeMoveRefusalMessage, safeOccupantRefusalMessage } from '../src/game/fog';
 import { randomScenario, scenarioById, Scenario } from '../src/game/scenarios';
 import { GameState, MatchRules, PlayerId, otherPlayer, validateMatchRules } from '../src/game/types';
 import { ClientMsg, CreateRulesInput, GameAction, ReplayViewState, RoomRulesInfo, ServerMsg, WireGameState } from '../src/net/protocol';
@@ -409,42 +409,71 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
       if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
     }
-    case 'ATTACK':
-      engine.attackAction(state, action.attackerId, action.targetId);
+    case 'ATTACK': {
+      const res = engine.attackAction(state, action.attackerId, action.targetId);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'RECON':
-      engine.reconAction(state, action.formationId);
+    }
+    case 'RECON': {
+      const res = engine.reconAction(state, action.formationId);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'FORTIFY':
-      engine.fortifyAction(state, action.formationId);
+    }
+    case 'FORTIFY': {
+      const res = engine.fortifyAction(state, action.formationId);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'ENGINEER_BRIDGE':
-      engine.engineerBridgeAction(state, action.formationId, action.x, action.y);
+    }
+    case 'ENGINEER_BRIDGE': {
+      const res = engine.engineerBridgeAction(state, action.formationId, action.x, action.y);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'ENGINEER_CLEAR':
-      engine.engineerClearAction(state, action.formationId, action.x, action.y);
+    }
+    case 'ENGINEER_CLEAR': {
+      const res = engine.engineerClearAction(state, action.formationId, action.x, action.y);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'ARTILLERY':
-      engine.artilleryAction(state, action.formationId, action.x, action.y);
+    }
+    case 'ARTILLERY': {
+      const res = engine.artilleryAction(state, action.formationId, action.x, action.y);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'AIR':
-      engine.airStrikeAction(state, action.x, action.y);
+    }
+    case 'AIR': {
+      const res = engine.airStrikeAction(state, action.x, action.y);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'SPECIAL_OP':
-      engine.specialOpAction(state, action.formationId, action.x, action.y);
+    }
+    case 'SPECIAL_OP': {
+      const res = engine.specialOpAction(state, action.formationId, action.x, action.y);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'REORGANIZE':
-      engine.reorganizeAction(state, action.formationId);
+    }
+    case 'REORGANIZE': {
+      const res = engine.reorganizeAction(state, action.formationId);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'VERTICAL_INSERT':
-      engine.verticalInsertAction(state, action.formationId, action.x, action.y);
+    }
+    case 'VERTICAL_INSERT': {
+      const res = engine.verticalInsertAction(state, action.formationId, action.x, action.y);
+      if (!res.ok) {
+        // Fog-sensitive exactly like MOVE's ENEMY_HELD: `reason` may point at
+        // a ground-truth occupant the mover's own side has never detected —
+        // see verticalInsertLandingLegal's doc comment in engine.ts.
+        return { error: safeOccupantRefusalMessage(state, playerId, res.occupantId, res.reason), mapChanged: false };
+      }
       break;
-    case 'UAV_RECON':
-      engine.uavReconAction(state, action.x, action.y);
+    }
+    case 'UAV_RECON': {
+      const res = engine.uavReconAction(state, action.x, action.y);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
-    case 'WITHDRAW':
-      engine.withdrawAction(state, action.formationId);
+    }
+    case 'WITHDRAW': {
+      const res = engine.withdrawAction(state, action.formationId);
+      if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
+    }
     case 'END_TURN':
       engine.endTurn(state);
       // Skip the (now meaningless, single-tab-only) TURN_HANDOFF phase —

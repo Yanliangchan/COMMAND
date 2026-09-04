@@ -82,6 +82,17 @@ canvas { display: block; touch-action: none; }
   pointer-events: none;
   z-index: 20;
 }
+/* .hud-top is deliberately click-through (pointer-events: none) so the map
+   underneath it stays draggable/clickable behind the bar's transparent
+   padding — but `pointer-events` is an INHERITED property, so every actual
+   control inside it (the UAV button, and the Leave button added alongside
+   it) needs to explicitly opt back in, or it silently swallows no clicks at
+   all yet also NEVER receives any: a real mouse click just falls through to
+   the map canvas underneath. Found while wiring up the Leave button (a real
+   browser, not just a unit test, actually tried to click it) — this was
+   already true of the pre-existing UAV button before this pass touched it.
+   `select` is future-proofed the same way for any dropdown added here later. */
+.hud-top button, .hud-top select { pointer-events: auto; }
 .hud-group { display: flex; align-items: center; gap: 14px; }
 .wordmark { font-weight: 700; letter-spacing: 0.26em; color: var(--amber-bright); font-size: 15px; }
 .hud-sep { width: 1px; height: 18px; background: var(--border); display: inline-block; }

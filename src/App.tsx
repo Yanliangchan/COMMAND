@@ -1068,6 +1068,7 @@ export default function App() {
         objectivesTotal={state.objectives.length}
         uavArmed={targetMode === 'UAV_RECON'}
         onUav={() => setTargetMode((m) => (m === 'UAV_RECON' ? null : 'UAV_RECON'))}
+        onLeave={net.spectating || state.phase === 'GAME_OVER' ? undefined : net.leaveToLobby}
       />
       <OverlayToggles
         overlays={overlays}
@@ -1081,6 +1082,21 @@ export default function App() {
       {net.status === 'opponent_disconnected' && (
         <div className="reconnect-banner">
           <span className="pulse-dot" /> Opponent disconnected &mdash; waiting for them to reconnect&hellip;
+        </div>
+      )}
+
+      {/* The room is already gone server-side the instant this arrives (the
+          opponent explicitly left, or the reconnect grace period lapsed) —
+          `state`/`you` are deliberately NOT cleared by net/client.ts on this
+          message alone (only leaveToLobby clears them), so without this the
+          remaining player would be stranded staring at a frozen board with
+          no explanation and no way back except a hard refresh. */}
+      {net.status === 'opponent_left' && (
+        <div className="reconnect-banner" data-testid="opponent-left-banner">
+          <span className="pulse-dot" /> The other commander left the operation &mdash; this match is over.
+          <button className="btn-ghost small" onClick={net.leaveToLobby} data-testid="opponent-left-return">
+            Return to Lobby
+          </button>
         </div>
       )}
 

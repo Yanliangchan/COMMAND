@@ -459,6 +459,23 @@ export interface MoveGroupActionResult {
   reason: string;
 }
 
+/**
+ * Shared result shape for every other action handler below (Withdraw, Recon,
+ * Fortify, Reorganize, the two Engineer orders, a fire mission, an air
+ * strike, a special op, Vertical Insert, UAV Recon, and Attack) — the same
+ * "the caller MUST check `ok` rather than assume any mutation happened"
+ * contract moveFormation/moveGroup established. `reason` is always set when
+ * `ok` is false and is safe to relay to the acting player VERBATIM UNLESS the
+ * function's own doc comment says otherwise (only Vertical Insert's landing
+ * check can name an undetected enemy occupant — see occupantId there and its
+ * handling in server/index.ts, mirroring safeMoveRefusalMessage).
+ */
+export interface SimpleActionResult {
+  state: GameState;
+  ok: boolean;
+  reason: string;
+}
+
 export function moveGroup(state: GameState, formationIds: string[], x: number, y: number): MoveGroupActionResult {
   const plan = planGroupMove(state, formationIds, x, y);
   if (!plan.ok) return { state, ok: false, reason: plan.reason };
@@ -512,12 +529,15 @@ export function canWithdraw(state: GameState, f: Formation): boolean {
   return isThreatened(state, f);
 }
 
-export function withdrawAction(state: GameState, formationId: string): GameState {
+export function withdrawAction(state: GameState, formationId: string): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer) return state;
-  if (!canWithdraw(state, f)) return state;
+  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
+  if (movesRemaining(f) <= 0) return fail('No movement actions left this round.');
+  if ((state.players[f.owner]?.ap ?? 0) < AP_COSTS.WITHDRAW) return fail('Not enough AP to withdraw.');
+  if (!isThreatened(state, f)) return fail('Not in a threatening situation — nothing to withdraw from.');
   const plan = planWithdraw(state, f);
-  if (!plan.ok) return state;
+  if (!plan.ok) return fail(plan.reason);
 
   state.players[state.activePlayer].ap -= AP_COSTS.WITHDRAW;
   f.fortified = false;
@@ -536,14 +556,14 @@ export function withdrawAction(state: GameState, formationId: string): GameState
   }
   if (destroyed) {
     refreshAllSpotting(state);
-    return state;
+    return { state, ok: true, reason: '' };
   }
 
   const ref = gridRef(f.x, f.y);
   f.lastOrder = `Withdrew from contact to grid ${ref} (${AP_COSTS.WITHDRAW} AP)`;
   log(state, `${f.shortName} withdrew from contact to grid ${ref}, breaking off before the enemy could close.`);
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
 // ---------------------------------------------------------------------------
@@ -757,10 +777,12 @@ export function refreshAllFog(state: GameState) {
  * The Recon order. It is no longer how you see the enemy — passive spotting
  * already does that — it is how you see FURTHER, SOONER and with CERTAINTY.
  */
-export function reconAction(state: GameState, formationId: string): GameState {
+export function reconAction(state: GameState, formationId: string): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn) return state;
-  if (!canAfford(state, 'RECON')) return state;
+  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
+  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
+  if (!canAfford(state, 'RECON')) return fail('Not enough AP for a recon sweep.');
   spendAP(state, 'RECON');
   const res = reconSweep(state, f);
   f.hasActedThisTurn = true;
@@ -775,17 +797,19 @@ export function reconAction(state: GameState, formationId: string): GameState {
     );
   }
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
 // ---------------------------------------------------------------------------
 // Fortify / Ammunition / Engineer ops
 // ---------------------------------------------------------------------------
 
-export function fortifyAction(state: GameState, formationId: string): GameState {
+export function fortifyAction(state: GameState, formationId: string): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn) return state;
-  if (!canAfford(state, 'FORTIFY')) return state;
+  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
+  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
+  if (!canAfford(state, 'FORTIFY')) return fail('Not enough AP to fortify.');
   spendAP(state, 'FORTIFY');
   f.fortified = true;
   f.hasActedThisTurn = true;
@@ -798,7 +822,7 @@ export function fortifyAction(state: GameState, formationId: string): GameState 
   f.fortifiedThisRound = true;
   f.lastOrder = 'Dug in (fortified — Hasty)';
   log(state, `${f.name} dug in and fortified its position.`);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
 /**
@@ -848,11 +872,16 @@ export function canReorganize(state: GameState, f: Formation): boolean {
   return true;
 }
 
-export function reorganizeAction(state: GameState, formationId: string): GameState {
+export function reorganizeAction(state: GameState, formationId: string): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer) return state;
-  if (!canReorganize(state, f)) return state;
-  if (!canAfford(state, 'REORGANIZE')) return state;
+  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
+  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
+  if (f.movesUsed > 0) return fail(`${f.shortName} moved this round — it cannot reorganize without standing down.`);
+  if (f.lastReorganizedRound && state.round - f.lastReorganizedRound < REORGANIZE_COOLDOWN_ROUNDS) {
+    return fail(`${f.shortName} reorganized too recently — ${REORGANIZE_COOLDOWN_ROUNDS - (state.round - f.lastReorganizedRound)} round(s) left on cooldown.`);
+  }
+  if (!canAfford(state, 'REORGANIZE')) return fail('Not enough AP to reorganize.');
   spendAP(state, 'REORGANIZE');
   f.hasActedThisTurn = true;
   f.lastReorganizedRound = state.round;
@@ -887,7 +916,7 @@ export function reorganizeAction(state: GameState, formationId: string): GameSta
       `${f.shortName} and ${partners.map((p) => p.shortName).join(', ')} reorganize together — readiness restored more fully.`
     );
   }
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
 /**
@@ -915,28 +944,43 @@ function spendRound(state: GameState, f: Formation) {
   f.lastFiredRound = state.round;
 }
 
-export function engineerBridgeAction(state: GameState, formationId: string, x: number, y: number): GameState {
+export function engineerBridgeAction(state: GameState, formationId: string, x: number, y: number): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn || f.type !== 'ENGINEER') return state;
-  if (!canAfford(state, 'ENGINEER_BRIDGE')) return state;
+  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
+  if (f.type !== 'ENGINEER') return fail('Only an engineer formation can build a bridge.');
+  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
+  if (!canAfford(state, 'ENGINEER_BRIDGE')) return fail('Not enough AP to build a bridge.');
   const tile = tileAt(state, x, y);
-  if (!tile || tile.terrain !== 'WATER' || !tile.river) return state;
-  if (distance(f.x, f.y, x, y) > 1) return state;
+  if (!tile) return fail('Off the map sheet.');
+  if (distance(f.x, f.y, x, y) > 1) return fail('Too far — a bridge can only be built on an adjacent tile.');
+  // Terrain-only check (water + river), never a formation-occupancy one —
+  // safe to relay verbatim under any detection state.
+  if (tile.terrain !== 'WATER' || !tile.river) return fail('A bridge can only be built across a river tile.');
   spendAP(state, 'ENGINEER_BRIDGE');
   tile.bridge = true;
   tile.road = true;
   f.hasActedThisTurn = true;
   f.lastOrder = `Built a bridge at grid ${gridRef(x, y)}`;
   log(state, `${f.name} threw a temporary bridge across the river at grid ${gridRef(x, y)}.`);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
-export function engineerClearAction(state: GameState, formationId: string, x: number, y: number): GameState {
+export function engineerClearAction(state: GameState, formationId: string, x: number, y: number): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn || f.type !== 'ENGINEER') return state;
-  if (!canAfford(state, 'ENGINEER_CLEAR')) return state;
+  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
+  if (f.type !== 'ENGINEER') return fail('Only an engineer formation can clear obstacles.');
+  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
+  if (!canAfford(state, 'ENGINEER_CLEAR')) return fail('Not enough AP to clear.');
   const tile = tileAt(state, x, y);
-  if (!tile || distance(f.x, f.y, x, y) > 1) return state;
+  if (!tile) return fail('Off the map sheet.');
+  if (distance(f.x, f.y, x, y) > 1) return fail('Too far — clearing only reaches an adjacent tile.');
+  // Unlike a MOVE, this order never fails BECAUSE of what (if anything)
+  // occupies the tile — it always resolves once range/AP/ownership check out,
+  // whether the tile is empty, friendly-held, or enemy-held (detected or not)
+  // — so there is no occupancy-shaped refusal here to redact in the first
+  // place; nothing about enemy presence is ever revealed by success/failure.
   spendAP(state, 'ENGINEER_CLEAR');
   const target = formationAt(state, x, y);
   if (target && target.owner !== f.owner) {
@@ -945,7 +989,7 @@ export function engineerClearAction(state: GameState, formationId: string, x: nu
   f.hasActedThisTurn = true;
   f.lastOrder = `Cleared obstacles at grid ${gridRef(x, y)}`;
   log(state, `${f.name} cleared obstacles/fortifications at grid ${gridRef(x, y)}.`);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
 // ---------------------------------------------------------------------------
@@ -999,18 +1043,24 @@ export function previewAttack(state: GameState, attackerId: string, targetId: st
   return predictEngagement(state, attacker, target, closeAssault, intel);
 }
 
-export function attackAction(state: GameState, attackerId: string, targetId: string): GameState {
+export function attackAction(state: GameState, attackerId: string, targetId: string): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const attacker = state.formations[attackerId];
   const target = state.formations[targetId];
-  if (!attacker || !target) return state;
-  if (attacker.owner !== state.activePlayer || attacker.hasActedThisTurn) return state;
-  if (target.owner === attacker.owner) return state;
-  if (!canAfford(state, 'ATTACK')) return state;
+  if (!attacker || !target) return fail('No such formation.');
+  if (attacker.owner !== state.activePlayer) return fail('Not yours to order.');
+  if (attacker.hasActedThisTurn) return fail(`${attacker.shortName} has already used its major action this round.`);
+  if (target.owner === attacker.owner) return fail('That formation is friendly — it cannot be attacked.');
+  if (!canAfford(state, 'ATTACK')) return fail('Not enough AP to attack.');
 
   const attackerDef = FORMATION_DEFS[attacker.type];
   const range = attackerDef.attackRange;
   const d = distance(attacker.x, attacker.y, target.x, target.y);
-  if (d < 1 || d > range) return state;
+  // Range is derived from both formations' own (already-known-to-the-client)
+  // positions — a target the mover can validly select is, by construction of
+  // the UI, already at least detected, so naming range here reveals nothing
+  // about an undetected enemy.
+  if (d < 1 || d > range) return fail('Out of range.');
   // Naval standoff fire (phase 7): same range it always had, but now gated by
   // line of sight — a ship cannot shoot what intervening high ground masks
   // from its own position, even at a target it is otherwise entitled to see
@@ -1019,8 +1069,9 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   if (attackerDef.isNaval && d > 1) {
     const sight = lineOfSight(state.tiles, attacker.x, attacker.y, target.x, target.y);
     if (!sight.clear) {
-      log(state, `${attacker.name} has no line of sight to ${target.name} from grid ${gridRef(attacker.x, attacker.y)} — intervening terrain masks the target from naval gunfire.`);
-      return state;
+      const msg = `${attacker.name} has no line of sight to ${target.name} from grid ${gridRef(attacker.x, attacker.y)} — intervening terrain masks the target from naval gunfire.`;
+      log(state, msg);
+      return fail(msg);
     }
   }
   // Only a close assault (range-1 engagement) can take ground; standoff fire
@@ -1029,8 +1080,9 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   // Ships and guns shoot with ammunition; everyone else fights with what they
   // carry. No depot, no radius — just a round spent and a round regained.
   if (!hasAmmo(attacker)) {
-    log(state, `${attacker.name} has no ready rounds — hold fire for a round to replenish.`);
-    return state;
+    const msg = `${attacker.name} has no ready rounds — hold fire for a round to replenish.`;
+    log(state, msg);
+    return fail(msg);
   }
 
   spendAP(state, 'ATTACK');
@@ -1170,25 +1222,38 @@ export function attackAction(state: GameState, attackerId: string, targetId: str
   state.lastBattleReport = report;
   log(state, `${report.attackerName} attacked ${report.defenderName}: ${outcome}.`, 'ALL');
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
 // ---------------------------------------------------------------------------
 // Artillery / Air / Special ops / Amphibious
 // ---------------------------------------------------------------------------
 
-export function artilleryAction(state: GameState, formationId: string, x: number, y: number): GameState {
+export function artilleryAction(state: GameState, formationId: string, x: number, y: number): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn || f.type !== 'ARTILLERY') return state;
-  if (!canAfford(state, 'ARTILLERY')) return state;
+  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
+  if (f.type !== 'ARTILLERY') return fail('Only an artillery formation can call a fire mission.');
+  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
+  if (!canAfford(state, 'ARTILLERY')) return fail('Not enough AP for a fire mission.');
   if (!hasAmmo(f)) {
-    log(state, `${f.name} has no ready rounds — hold fire for a round to replenish.`);
-    return state;
+    const msg = `${f.name} has no ready rounds — hold fire for a round to replenish.`;
+    log(state, msg);
+    return fail(msg);
   }
   const d = distance(f.x, f.y, x, y);
-  if (d > FORMATION_DEFS.ARTILLERY.attackRange) return state;
+  if (d > FORMATION_DEFS.ARTILLERY.attackRange) return fail('Out of range.');
+  // A fire mission at an empty/friendly tile fails with the SAME message
+  // whether the tile is truly empty or holds an undetected enemy would be a
+  // leak — but it never does: an undetected enemy formation there does NOT
+  // cause this refusal, it gets hit exactly like any other legal target (see
+  // the success path below, and previewAttack's doc comment — detection
+  // never gates combat, only its predictability). So the only tiles that can
+  // ever reach this refusal are ones the engine can already prove hold
+  // nothing (or something friendly) — genuinely fog-safe.
   const target = formationAt(state, x, y);
-  if (!target || target.owner === f.owner) return state;
+  if (!target) return fail('No target at that grid — nothing to fire on.');
+  if (target.owner === f.owner) return fail('That formation is friendly — it cannot be fired on.');
   spendAP(state, 'ARTILLERY');
   spendRound(state, f);
   f.hasActedThisTurn = true;
@@ -1226,14 +1291,20 @@ export function artilleryAction(state: GameState, formationId: string, x: number
     destroyFormation(state, target);
   }
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
-export function airStrikeAction(state: GameState, x: number, y: number): GameState {
+export function airStrikeAction(state: GameState, x: number, y: number): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const ps = state.players[state.activePlayer];
-  if (!canAfford(state, 'AIR') || ps.airSorties < 1) return state;
+  if (!canAfford(state, 'AIR')) return fail('Not enough AP for an air strike.');
+  if (ps.airSorties < 1) return fail('No air sorties remaining this turn.');
+  // Same fog-safety as artillery above: an undetected enemy at (x, y) is hit,
+  // not refused — see the success path. Only a genuinely empty/friendly tile
+  // reaches this refusal.
   const target = formationAt(state, x, y);
-  if (!target || target.owner === state.activePlayer) return state;
+  if (!target) return fail('No target at that grid — nothing to strike.');
+  if (target.owner === state.activePlayer) return fail('That formation is friendly — it cannot be struck.');
   spendAP(state, 'AIR');
   ps.airSorties -= 1;
   const delta = -(15 + Math.random() * 20);
@@ -1249,17 +1320,23 @@ export function airStrikeAction(state: GameState, x: number, y: number): GameSta
     destroyFormation(state, target);
   }
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
-export function specialOpAction(state: GameState, formationId: string, x: number, y: number): GameState {
+export function specialOpAction(state: GameState, formationId: string, x: number, y: number): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn || !SPECIAL_OP_TYPES.includes(f.type)) return state;
-  if (!canAfford(state, 'SPECIAL_OP')) return state;
+  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
+  if (!SPECIAL_OP_TYPES.includes(f.type)) return fail('Only Commandos or Guards can conduct a special operation.');
+  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
+  if (!canAfford(state, 'SPECIAL_OP')) return fail('Not enough AP for a special operation.');
   const d = distance(f.x, f.y, x, y);
   // Commandos insert deepest; the Guards go in by helicopter as a formed
-  // sub-unit and so land closer to the friendly line.
-  if (d > (SPECIAL_OP_RANGE_BY_TYPE[f.type] ?? SPECIAL_OP_RANGE)) return state;
+  // sub-unit and so land closer to the friendly line. This is purely a
+  // range-from-self check — fog-safe regardless of what is at (x, y): a raid
+  // and a deep-recon probe are both legal outcomes past this point (see
+  // below), so nothing about enemy presence is gated here.
+  if (d > (SPECIAL_OP_RANGE_BY_TYPE[f.type] ?? SPECIAL_OP_RANGE)) return fail(`Beyond this formation's special-operation range.`);
   spendAP(state, 'SPECIAL_OP');
   f.hasActedThisTurn = true;
   const target = formationAt(state, x, y);
@@ -1284,7 +1361,7 @@ export function specialOpAction(state: GameState, formationId: string, x: number
     log(state, `${f.name} conducted a deep-recon special operation near grid ${gridRef(x, y)}.`);
   }
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
 // ---------------------------------------------------------------------------
@@ -1302,23 +1379,48 @@ function inMapBounds(x: number, y: number): boolean {
   return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE;
 }
 
-/** Is (x, y) a legal vertical-insertion landing tile for `f` right now? */
-export function verticalInsertLandingLegal(state: GameState, f: Formation, x: number, y: number): { ok: boolean; reason: string } {
-  if (!inMapBounds(x, y)) return { ok: false, reason: 'Off the map sheet.' };
+/**
+ * Is (x, y) a legal vertical-insertion landing tile for `f` right now?
+ *
+ * `occupantId` is set ONLY for the "already occupied" refusal, and ONLY to
+ * ground truth — it is the id of whatever formation (friendly OR enemy,
+ * detected or not) actually sits on that tile in the server's authoritative
+ * state. This mirrors MovePlan.occupantId in movement.ts exactly, and for
+ * the identical reason: `formationAt` below reads the TRUE board, so if the
+ * blocking formation happens to be an enemy this side has never detected,
+ * `reason` alone (naming nothing) is still safe, but the caller (engine.ts's
+ * verticalInsertAction, then server/index.ts) MUST NOT upgrade that generic
+ * reason to anything more specific without first checking, via fog.ts's
+ * contactLevel, that the mover's own side has actually detected occupantId
+ * at IDENTIFIED-or-better. `reason` here is deliberately already the
+ * generic-safe text for every case — this doc comment exists so a future
+ * edit that tries to "improve" it into naming the occupant does not
+ * reintroduce the exact bug this file's MOVE fix closed.
+ */
+export function verticalInsertLandingLegal(
+  state: GameState,
+  f: Formation,
+  x: number,
+  y: number
+): { ok: boolean; reason: string; occupantId: string | null } {
+  if (!inMapBounds(x, y)) return { ok: false, reason: 'Off the map sheet.', occupantId: null };
   const tile = tileAt(state, x, y);
-  if (!tile) return { ok: false, reason: 'Off the map sheet.' };
-  if (!crossable(state, f, tile)) return { ok: false, reason: 'Not a landing zone this formation can occupy — impassable terrain.' };
-  if (formationAt(state, x, y)) return { ok: false, reason: 'Landing zone is already occupied.' };
+  if (!tile) return { ok: false, reason: 'Off the map sheet.', occupantId: null };
+  if (!crossable(state, f, tile)) {
+    return { ok: false, reason: 'Not a landing zone this formation can occupy — impassable terrain.', occupantId: null };
+  }
+  const occupant = formationAt(state, x, y);
+  if (occupant) return { ok: false, reason: 'Landing zone is already occupied.', occupantId: occupant.id };
   const d = distance(f.x, f.y, x, y);
-  if (d > VERTICAL_INSERT_RADIUS) return { ok: false, reason: `Beyond the ${VERTICAL_INSERT_RADIUS}-tile insertion radius.` };
+  if (d > VERTICAL_INSERT_RADIUS) return { ok: false, reason: `Beyond the ${VERTICAL_INSERT_RADIUS}-tile insertion radius.`, occupantId: null };
   // Fog-of-war correct: this side's OWN contact table, not the true enemy
   // positions — an enemy this side has never detected cannot be avoided by
   // name, so it does not block a landing zone near it.
   const contacts = state.players[f.owner].contacts;
   for (const c of Object.values(contacts)) {
-    if (distance(c.x, c.y, x, y) <= 1) return { ok: false, reason: 'Landing zone is adjacent to a detected enemy formation.' };
+    if (distance(c.x, c.y, x, y) <= 1) return { ok: false, reason: 'Landing zone is adjacent to a detected enemy formation.', occupantId: null };
   }
-  return { ok: true, reason: '' };
+  return { ok: true, reason: '', occupantId: null };
 }
 
 /** True if ANY legal landing tile exists for `f` right now — for the disabled-reason UI. */
@@ -1336,14 +1438,30 @@ export function hasVerticalInsertLandingZone(state: GameState, f: Formation): bo
   return false;
 }
 
-export function verticalInsertAction(state: GameState, formationId: string, x: number, y: number): GameState {
+/**
+ * Result of an attempted Vertical Insert. Shaped exactly like
+ * MoveActionResult (see moveFormation) for the same reason: `occupantId` is
+ * ground truth and MUST be passed through fog.ts's safeOccupantRefusalMessage
+ * (server/index.ts) before `reason` is ever relayed to the mover — see the
+ * doc comment on verticalInsertLandingLegal above.
+ */
+export interface VerticalInsertActionResult {
+  state: GameState;
+  ok: boolean;
+  reason: string;
+  occupantId: string | null;
+}
+
+export function verticalInsertAction(state: GameState, formationId: string, x: number, y: number): VerticalInsertActionResult {
+  const fail = (reason: string, occupantId: string | null = null): VerticalInsertActionResult => ({ state, ok: false, reason, occupantId });
   const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer || f.hasActedThisTurn) return state;
-  if (!SPECIAL_OP_TYPES.includes(f.type)) return state; // Commandos and Guards only
-  if ((f.verticalInsertsUsed ?? 0) >= VERTICAL_INSERT_MAX_USES) return state;
-  if (!canAfford(state, 'VERTICAL_INSERT')) return state;
+  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
+  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
+  if (!SPECIAL_OP_TYPES.includes(f.type)) return fail('Only Commandos or Guards can conduct a vertical insertion.'); // Commandos and Guards only
+  if ((f.verticalInsertsUsed ?? 0) >= VERTICAL_INSERT_MAX_USES) return fail('No vertical-insertion uses left for this formation.');
+  if (!canAfford(state, 'VERTICAL_INSERT')) return fail('Not enough AP for a vertical insertion.');
   const legal = verticalInsertLandingLegal(state, f, x, y);
-  if (!legal.ok) return state;
+  if (!legal.ok) return fail(legal.reason, legal.occupantId);
 
   spendAP(state, 'VERTICAL_INSERT');
   f.x = x;
@@ -1357,7 +1475,7 @@ export function verticalInsertAction(state: GameState, formationId: string, x: n
   f.lastOrder = `Vertical insertion to grid ${gridRef(x, y)} (${remaining} insertion${remaining === 1 ? '' : 's'} left)`;
   log(state, `${f.name} conducted a vertical insertion to grid ${gridRef(x, y)} — ${remaining} left this operation.`, 'ALL');
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, reason: '', occupantId: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1366,11 +1484,12 @@ export function verticalInsertAction(state: GameState, formationId: string, x: n
 // detection directly regardless of any formation's own sight or LOS.
 // ---------------------------------------------------------------------------
 
-export function uavReconAction(state: GameState, x: number, y: number): GameState {
+export function uavReconAction(state: GameState, x: number, y: number): SimpleActionResult {
+  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
   const ps = state.players[state.activePlayer];
-  if (!inMapBounds(x, y)) return state;
-  if (ps.uavCharges <= 0) return state;
-  if (!canAfford(state, 'UAV_RECON')) return state;
+  if (!inMapBounds(x, y)) return fail('Off the map sheet.');
+  if (ps.uavCharges <= 0) return fail('No UAV sorties remaining.');
+  if (!canAfford(state, 'UAV_RECON')) return fail('Not enough AP for a UAV sweep.');
   spendAP(state, 'UAV_RECON');
   ps.uavCharges -= 1;
 
@@ -1406,7 +1525,7 @@ export function uavReconAction(state: GameState, x: number, y: number): GameStat
     `UAV sweep over grid ${gridRef(x, y)} (radius ${UAV_SWEEP_RADIUS}) — ${found} contact${found === 1 ? '' : 's'}. ${ps.uavCharges} sortie${ps.uavCharges === 1 ? '' : 's'} remaining.`
   );
   refreshAllSpotting(state);
-  return state;
+  return { state, ok: true, reason: '' };
 }
 
 // ---------------------------------------------------------------------------

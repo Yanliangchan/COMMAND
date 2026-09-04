@@ -9,7 +9,8 @@ export const TopBar: React.FC<{
   objectivesTotal: number;
   uavArmed?: boolean;
   onUav?: () => void;
-}> = ({ state, you, objectivesHeld, objectivesTotal, uavArmed, onUav }) => {
+  onLeave?: () => void;
+}> = ({ state, you, objectivesHeld, objectivesTotal, uavArmed, onUav, onLeave }) => {
   const mine = state.players[you];
   const myTurn = state.activePlayer === you;
   return (
@@ -82,6 +83,20 @@ export const TopBar: React.FC<{
           >
             <i>UAV</i>
             <b data-testid="uav-charges">{state.players[you].uavCharges}</b>
+          </button>
+        )}
+        {onLeave && (
+          <button
+            className="btn-ghost small"
+            data-testid="leave-match-btn"
+            title="Leave this match and return to the lobby. The other side is notified and the room is closed — this cannot be undone."
+            onClick={() => {
+              if (window.confirm('Leave this match? The other side will be notified and the room will close. This cannot be undone.')) {
+                onLeave();
+              }
+            }}
+          >
+            Leave
           </button>
         )}
       </div>

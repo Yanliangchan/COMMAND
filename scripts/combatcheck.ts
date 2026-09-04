@@ -1002,5 +1002,67 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
   check(typeof res.reason === 'string', 'moveGroup always reports a reason, even implicitly via a safe partial success');
 }
 
+// =============================================================================
+// SILENT-REFUSAL FEEDBACK (follow-up to the MOVE fix) — every other action
+// handler must now report ok:false + a reason on a refused attempt, exactly
+// like moveFormation/moveGroup already did, instead of silently handing back
+// an unchanged GameState. Three representative scenarios across different
+// action families, each checked for both a truthful `ok:false` AND that
+// nothing about the formation/AP actually changed.
+// =============================================================================
+{
+  // Reorganize on cooldown.
+  const f = mk('INFANTRY', 10, 10, 'SABRE');
+  const s = scenario([f]);
+  f.lastReorganizedRound = s.round;
+  const apBefore = s.players.SABRE.ap;
+  const res = engine.reorganizeAction(s, f.id);
+  check(res.ok === false && typeof res.reason === 'string' && res.reason.length > 0, 'Reorganize on cooldown reports ok:false with a reason (was silent before this fix)');
+  check(s.players.SABRE.ap === apBefore, 'a refused Reorganize does not spend AP');
+  check(s.formations[f.id].hasActedThisTurn === false, 'a refused Reorganize does not spend the major action');
+}
+{
+  // Fortify with no AP.
+  const f = mk('INFANTRY', 10, 10, 'SABRE');
+  const s = scenario([f]);
+  s.players.SABRE.ap = 0;
+  const res = engine.fortifyAction(s, f.id);
+  check(res.ok === false && res.reason.length > 0, 'Fortify with no AP reports ok:false with a reason');
+  check(s.formations[f.id].fortified === false, 'a refused Fortify does not dig the formation in');
+}
+{
+  // Engineer Bridge targeting an invalid (non-river) tile.
+  const eng = mk('ENGINEER', 10, 10, 'SABRE');
+  const s = scenario([eng]);
+  const tile = s.tiles[10][11];
+  s.tiles[10][11] = { ...tile, terrain: 'GRASS', river: false };
+  const apBefore = s.players.SABRE.ap;
+  const res = engine.engineerBridgeAction(s, eng.id, 11, 10);
+  check(res.ok === false && res.reason.length > 0, 'Engineer Bridge on a non-river tile reports ok:false with a reason');
+  check(s.players.SABRE.ap === apBefore, 'a refused Engineer Bridge does not spend AP');
+  check(s.tiles[10][11].bridge !== true, 'a refused Engineer Bridge does not build anything');
+}
+{
+  // Withdraw when not threatened at all — sanity that the wrapped result
+  // still matches the standing canWithdraw() gate used by the UI.
+  const f = mk('INFANTRY', 10, 10, 'SABRE');
+  const s = scenario([f]);
+  const res = engine.withdrawAction(s, f.id);
+  check(res.ok === false, 'Withdraw with nothing to withdraw from reports ok:false');
+  check(engine.canWithdraw(s, f) === false, 'canWithdraw() agrees — the UI-facing gate and the engine refusal are consistent');
+}
+{
+  // Artillery fire mission at an empty tile — must succeed/fail identically
+  // whether that emptiness is real or (per the audit) never distinguishable
+  // from an undetected-enemy hit, since a real target there would simply be
+  // struck instead of triggering this refusal (see artilleryAction's own
+  // doc comment). Confirms the refusal path now reports ok:false too.
+  const gun = mk('ARTILLERY', 10, 10, 'SABRE');
+  const s = scenario([gun]);
+  const res = engine.artilleryAction(s, gun.id, 12, 10);
+  check(res.ok === false && res.reason.length > 0, 'a fire mission at an empty tile reports ok:false with a reason');
+  check(s.formations[gun.id].ammo === 4, 'a refused fire mission does not spend a round');
+}
+
 console.log(failures ? `\nFAIL: ${failures} combat-model assertion(s)` : '\nPASS: combat model holds.');
 process.exit(failures ? 1 : 0);

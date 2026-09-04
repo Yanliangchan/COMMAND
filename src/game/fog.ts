@@ -173,6 +173,35 @@ export function safeMoveRefusalMessage(
   return GENERIC_BLOCKED_TILE_MESSAGE;
 }
 
+/** Generic, uninformative refusal text for an order blocked by a landing zone the mover has no legitimate knowledge of. */
+export const GENERIC_BLOCKED_LANDING_MESSAGE = 'That landing zone cannot be used.';
+
+/**
+ * The same discipline as safeMoveRefusalMessage, generalised for any other
+ * order whose engine-level refusal can (like MOVE's ENEMY_HELD) point at a
+ * specific ground-truth occupant — currently Vertical Insert's "landing zone
+ * is already occupied" check (see verticalInsertLandingLegal in engine.ts,
+ * which reads `formationAt`, the true board, not a fog-filtered one).
+ * `occupantId` is null for every refusal that is NOT occupant-shaped (wrong
+ * terrain, out of radius, adjacent to a formation this side already
+ * legitimately detected, …) — those are always safe to relay verbatim, so
+ * this is a no-op for them. Only when an occupant id is present AND the
+ * mover's own side has not detected it at IDENTIFIED-or-better does `reason`
+ * get downgraded to `generic`.
+ */
+export function safeOccupantRefusalMessage(
+  state: GameState,
+  mover: PlayerId,
+  occupantId: string | null,
+  reason: string,
+  generic: string = GENERIC_BLOCKED_LANDING_MESSAGE
+): string {
+  if (!occupantId) return reason;
+  const level = contactLevel(state, mover, occupantId);
+  if (level === 'IDENTIFIED' || level === 'CONFIRMED') return reason;
+  return generic;
+}
+
 /**
  * Redact one kill-feed entry (phase 7) for `viewer`, mirroring the live
  * formation rules exactly: your own losses are always yours in full; an
