@@ -19,6 +19,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { readFile, stat as fsStat } from 'node:fs/promises';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -55,7 +56,64 @@ const MIME_TYPES: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
 };
 
+// ---------------------------------------------------------------------------
+// Security headers — applied to EVERY HTTP response this process sends,
+// static or otherwise. The app itself loads nothing beyond its own bundle
+// plus Google Fonts' stylesheet + font files (see index.html) and talks to
+// itself over ws:/wss: on its own origin, so the CSP is scoped to exactly
+// that rather than a broad allowlist. `style-src 'unsafe-inline'` is needed
+// because several React components set inline `style={{...}}` (real DOM
+// style attributes) — there is no third-party or user-supplied CSS, so this
+// is a deliberate, narrow relaxation, not a blanket one (script-src has no
+// such relaxation: no inline scripts, no eval, anywhere in this app).
+// HSTS is emitted because it is meaningful to browsers regardless of where
+// TLS terminates, but note: Railway terminates TLS at its edge, so whether
+// this header's directive is actually *honoured end-to-end* also depends on
+// that edge/proxy configuration, which lives outside this repository.
+// ---------------------------------------------------------------------------
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data:",
+  "connect-src 'self' ws: wss:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+function applySecurityHeaders(res: ServerResponse) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()');
+  res.setHeader('Content-Security-Policy', CSP);
+  // Meaningful to the browser even though Railway's edge terminates TLS —
+  // see comment above. 180 days, include subdomains; no preload (we don't
+  // control the apex domain's DNS from this repo).
+  res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+}
+
+// Text-ish types worth compressing; binary/already-compressed types are left alone.
+const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg', '.txt', '.map']);
+
+// Small in-memory cache of pre-compressed static assets, built lazily on
+// first request per (file, encoding) pair. dist/ is a handful of hashed,
+// immutable files (~450 KB total) so this costs nothing meaningful and
+// avoids re-compressing the same bundle on every page load.
+const compressedCache = new Map<string, { br?: Buffer; gzip?: Buffer; mtimeMs: number }>();
+
+function pickEncoding(acceptEncoding: string | undefined): 'br' | 'gzip' | null {
+  const ae = (acceptEncoding || '').toLowerCase();
+  if (ae.includes('br')) return 'br';
+  if (ae.includes('gzip')) return 'gzip';
+  return null;
+}
+
 async function serveStatic(req: IncomingMessage, res: ServerResponse) {
+  applySecurityHeaders(res);
   if (req.url === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('ok');
@@ -70,17 +128,59 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
       return;
     }
     let isFile = false;
+    let mtimeMs = 0;
     try {
       const s = await fsStat(filePath);
       isFile = s.isFile();
+      mtimeMs = s.mtimeMs;
     } catch {
       isFile = false;
     }
+    const isIndexFallback = !isFile;
     // SPA fallback: any non-file GET (client-side routes, deep links) serves index.html.
-    if (!isFile) filePath = path.join(DIST_DIR, 'index.html');
-    const data = await readFile(filePath);
+    if (!isFile) {
+      filePath = path.join(DIST_DIR, 'index.html');
+      try {
+        mtimeMs = (await fsStat(filePath)).mtimeMs;
+      } catch {
+        mtimeMs = 0;
+      }
+    }
     const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    const headers: Record<string, string> = { 'Content-Type': contentType };
+    // Vite emits content-hashed filenames for everything under assets/ — safe
+    // to cache for a year, immutable. index.html (and the SPA fallback) names
+    // the current hashed bundle, so it must always be revalidated instead.
+    if (!isIndexFallback && /\/assets\//.test(filePath)) {
+      headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+    } else {
+      headers['Cache-Control'] = 'no-cache';
+    }
+
+    const encoding = COMPRESSIBLE.has(ext) ? pickEncoding(req.headers['accept-encoding'] as string | undefined) : null;
+    if (encoding) {
+      let entry = compressedCache.get(filePath);
+      if (!entry || entry.mtimeMs !== mtimeMs) {
+        entry = { mtimeMs };
+        compressedCache.set(filePath, entry);
+      }
+      let body = encoding === 'br' ? entry.br : entry.gzip;
+      if (!body) {
+        const raw = await readFile(filePath);
+        body = encoding === 'br' ? brotliCompressSync(raw) : gzipSync(raw);
+        if (encoding === 'br') entry.br = body;
+        else entry.gzip = body;
+      }
+      headers['Content-Encoding'] = encoding;
+      headers['Vary'] = 'Accept-Encoding';
+      res.writeHead(200, headers);
+      res.end(body);
+      return;
+    }
+
+    const data = await readFile(filePath);
+    res.writeHead(200, headers);
     res.end(data);
   } catch {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -503,13 +603,89 @@ const httpServer = createServer((req, res) => {
 const wss = new WebSocketServer({ server: httpServer, path: '/ws', maxPayload: 64 * 1024 });
 const MAX_ROOMS = 2000;
 
-wss.on('connection', (ws) => {
+// ---------------------------------------------------------------------------
+// Lightweight rate limiting (no dependency — this is a prototype server, not
+// a reason to pull in a full limiter library). Two independent buckets:
+//
+//  - a per-socket message-frequency cap, defending against one connection
+//    spamming `action`/`get_replay`/etc. as fast as the socket allows.
+//  - a per-IP room-creation cap, defending against one client opening many
+//    sockets to repeatedly `create`/`bot`/`quick` past the per-socket limit
+//    (each of those allocates a Room, the resource MAX_ROOMS already bounds
+//    in aggregate — this bounds how fast any single source can burn through
+//    that shared budget).
+//
+// `req.socket.remoteAddress` is the TCP peer as this process sees it. Railway
+// terminates TLS and proxies at its edge, so in that deployment this is the
+// proxy's address space, not necessarily the original client's — a real
+// per-client limit there would need to trust (and parse) a platform-supplied
+// forwarded-for header, which is an infrastructure decision outside this
+// repo. This still bounds any single connection's own behaviour regardless.
+// ---------------------------------------------------------------------------
+const MSG_WINDOW_MS = 1000;
+const MSG_LIMIT_PER_WINDOW = 30;
+const ROOM_CREATE_WINDOW_MS = 60 * 1000;
+const ROOM_CREATE_LIMIT_PER_WINDOW = 20;
+
+function makeWindowCounter(windowMs: number) {
+  const counts = new Map<string, { count: number; windowStart: number }>();
+  return {
+    hit(key: string, limit: number): boolean {
+      const now = Date.now();
+      let entry = counts.get(key);
+      if (!entry || now - entry.windowStart >= windowMs) {
+        entry = { count: 0, windowStart: now };
+        counts.set(key, entry);
+      }
+      entry.count++;
+      return entry.count <= limit;
+    },
+    sweep() {
+      const now = Date.now();
+      for (const [key, entry] of counts) {
+        if (now - entry.windowStart >= windowMs * 2) counts.delete(key);
+      }
+    },
+  };
+}
+const msgLimiter = makeWindowCounter(MSG_WINDOW_MS);
+const roomCreateLimiter = makeWindowCounter(ROOM_CREATE_WINDOW_MS);
+setInterval(() => {
+  msgLimiter.sweep();
+  roomCreateLimiter.sweep();
+}, 5 * 60 * 1000).unref();
+
+const ROOM_CREATING_TYPES = new Set(['create', 'bot', 'quick']);
+
+wss.on('connection', (ws, req) => {
+  const remoteAddr = req.socket.remoteAddress || 'unknown';
+  let socketMsgCount = 0;
+  let socketMsgWindowStart = Date.now();
+
   ws.on('message', (raw) => {
+    // Per-socket message-rate cap — cheap, independent of JSON validity so a
+    // flood of garbage bytes is throttled just as much as valid messages.
+    const now = Date.now();
+    if (now - socketMsgWindowStart >= MSG_WINDOW_MS) {
+      socketMsgWindowStart = now;
+      socketMsgCount = 0;
+    }
+    socketMsgCount++;
+    if (socketMsgCount > MSG_LIMIT_PER_WINDOW) {
+      send(ws, { t: 'error', message: 'Too many messages — slow down.' });
+      return;
+    }
+
     let msg: ClientMsg;
     try {
       msg = JSON.parse(raw.toString());
     } catch {
       send(ws, { t: 'error', message: 'Malformed message.' });
+      return;
+    }
+
+    if (ROOM_CREATING_TYPES.has(msg.t) && !roomCreateLimiter.hit(remoteAddr, ROOM_CREATE_LIMIT_PER_WINDOW)) {
+      send(ws, { t: 'error', message: 'Too many rooms created from this connection — please wait a moment.' });
       return;
     }
 
