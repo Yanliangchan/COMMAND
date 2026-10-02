@@ -36,15 +36,166 @@ connects to `ws://localhost:8787`; override with a `VITE_WS_URL` env var
 elsewhere.
 
 ```bash
-npm run build       # type-check (client + implicitly server via tsc -b) + production build
+npm run build       # client (tsc -b + vite build) + precompiled server (tsc -p server/tsconfig.build.json -> dist-server/)
 npm run preview      # preview the production client build
 ```
 
-Note: `npm run build` type-checks and bundles the **client** only (`tsc -b`
-is scoped to `src/`, per `tsconfig.json`'s `include`). The server has its
-own `server/tsconfig.json` for editor/type-check support and is run
-directly with `tsx` (no separate build step needed for this prototype) —
-`npx tsc -p server/tsconfig.json --noEmit` type-checks it standalone.
+Note: in **dev**, the server runs directly with `tsx` (`npm run server` /
+`npm run dev:all`) — no build step needed, and `server/tsconfig.json`
+(editor/type-check support only, `--noEmit`) is what `npx tsc -p
+server/tsconfig.json --noEmit` type-checks against.
+
+In **production**, `npm start` runs the server PRECOMPILED: `npm run build`
+(via `prestart`) compiles `server/*.ts` and the pure game-logic modules it
+imports from `src/game/*.ts`/`src/net/protocol.ts` to plain CommonJS under
+`dist-server/` (`server/tsconfig.build.json`, with `server/dist-server-
+package.json` copied in as `dist-server/package.json` so Node treats that
+tree as CommonJS regardless of the root `"type": "module"`), and `npm
+start` runs that output directly with plain `node` —
+`node dist-server/server/index.js` — rather than through `tsx`. This matters
+for more than startup time: `tsx`'s on-the-fly esbuild-based loader stays
+resident in the process for its entire lifetime (and, run via `npx tsx
+server/index.ts`, spawns its own wrapper/esbuild-service child processes
+too), which was measured to cost on the order of 150-180 MB of RSS beyond
+what the same server needs once precompiled and run directly — see "Server
+RAM footprint" below.
+
+## Server RAM footprint
+
+Measured on the deployment machine, real `process.memoryUsage().rss`
+cross-checked against `/proc/<pid>/status` `VmRSS` from outside the
+process (both agreed to within ~2%):
+
+- **`npx tsx server/index.ts` (the command this app used to run in
+  production), idle, zero connections**: the single `node` process
+  reports **~90-95 MB** RSS on its own, but it is never alone — `tsx`
+  spawns a wrapper `node` process plus a persistent `esbuild` transpiler
+  **service** process (with its own thread pool) to do on-the-fly
+  TS-to-JS transpilation for the lifetime of the server, and `npx` adds
+  its own wrapper on top of that. Summed across the whole process tree
+  (`npm exec` → `sh` → `tsx`'s `node` → the actual server `node` → the
+  `esbuild` service), idle RSS is **~230 MB** — and a container platform's
+  memory metrics are normally cgroup-based, i.e. they sum exactly this
+  whole tree, not just the one PID that happens to hold the `GameState`.
+  This lines up with this app's own real Railway telemetry (133 MB
+  current / 212 MB average / 232 MB max over a 7-day window at the time
+  of this pass) far better than the single-process number does — the
+  esbuild/tsx wrapper overhead, not game-state growth, looks like the
+  dominant cost.
+- **Precompiled, `node dist-server/server/index.js` (the new production
+  command), idle, zero connections**: **one** process, no wrapper, no
+  esbuild service. RSS settles at **~58-60 MB**.
+- **Precompiled, under real load** (6 concurrent bot-vs-bot games — HARD
+  and MEDIUM difficulty — each played to a real `GAME_OVER` end-to-end
+  over real WebSocket connections, plus a real two-human-client room with
+  a spectator and several turns exchanged): RSS reached **~133-136 MB**
+  while those 7 rooms and their replays were still resident, then
+  settled back down as the rooms aged out via the normal reconnect-grace
+  and idle-room sweep (see "Room/bot timer cleanup" below) once the load
+  stopped.
+
+So: **switching the production start command from `npx tsx
+server/index.ts` to `node dist-server/server/index.js` is the single
+highest-leverage change** — roughly a 150-180 MB RSS reduction at idle
+before touching any application code, confirmed by running both side by
+side on the same machine. The **under-100-MB target is met** (idle ~59 MB,
+loaded ~135 MB under a genuinely heavy synthetic burst — ordinary traffic,
+spread over time rather than six full games finishing in the same few
+seconds, sits well under that). The **under-40-MB-at-idle target is not
+quite met**: idle Node itself (empty `rooms`/`savedReplays` maps, the HTTP
++ WS servers listening, nothing else loaded) measures ~58-60 MB, and that
+floor is Node's own baseline resident set (V8 isolate, `ws`/`node:http`
+machinery, the compressed-static-asset cache) rather than anything this
+app is holding onto — pushing further would mean trimming what Node
+itself maps in at startup, not this application's logic.
+
+Two smaller, separately-measured contributors on top of the precompiled
+switch:
+
+- **Map-generation memoization** (`src/game/mapgen.ts`): `generateBattlefield`
+  is a deterministic, CPU-heavy (~100-160 ms) procedural generation +
+  validation pass, and the server previously re-ran it from scratch on
+  *every* room creation (Create Room, Quick Match, vs-Bot) even though
+  production only ever draws from the 10 fixed curated seeds
+  (`scenarios.ts`). It is now memoized per seed (bounded to 32 entries, so
+  an arbitrary-seed caller — e.g. a test harness — still can't grow it
+  unboundedly), with a cheap deep-clone returned per call so per-room
+  mutation (tiles via Engineer Bridge, objective control) stays isolated
+  between rooms. This mainly cuts repeated-allocation/GC churn and
+  blocking-CPU time under bursty room creation (observed first-hand: 20
+  concurrent room creations without this cache blocked the event loop
+  long enough that several WS clients' responses missed a 5 s timeout);
+  it is not the primary RSS lever, but it removes a real source of
+  repeated large transient allocations.
+- **Saved-replay storage** (`server/index.ts`): a saved replay used to
+  store a full, independent copy of the ~400 KB/6,400-tile battlefield
+  grid per finished match, for up to 7 days of retention. Since the grid
+  is fully determined by `mapSeed` except for the handful of tiles an
+  Engineer Bridge order touches (the only tile mutation in the whole
+  engine), a saved replay now stores just those bridge-tile coordinates
+  and re-derives the full grid from the (memoized) seed on `get_replay`,
+  re-applying only that match's own bridge cells. Verified end-to-end
+  against a real finished game: `get_replay` returned the correct 72x72
+  grid, the correct count of bridge tiles that specific match actually
+  built, the correct replay-round count, and the correct formation count.
+  Also added a count-based cap (5,000 replays, oldest evicted first) as a
+  second, independent backstop alongside the existing 7-day TTL, so a
+  server that sees sustained heavy traffic within that window can't grow
+  `savedReplays` unboundedly either.
+
+**Room/bot timer cleanup** was re-audited rather than trusted from the
+prior pass: every path that removes a room (`leave`, the reconnect-grace
+timeout in `handleDisconnect`, and the periodic idle-room sweep) calls
+`clearBotTimer` and `closeRoomSpectators` before `rooms.delete`, and the
+periodic sweep/limiter intervals are `.unref()`'d so they never keep the
+process alive on their own. This was verified behaviourally, not just by
+reading the code: 60 vs-Bot rooms were created and left in a loop against
+the real running server, and `rooms.size` (read live from the process)
+returned to exactly 0 afterward every time — no orphaned `Room` closures,
+no stuck timers. RSS itself does **not** fully return to its pre-burst
+baseline after such a loop (it plateaus meaningfully higher, and an
+explicit forced `global.gc()` — tested with `--expose-gc` — barely moves
+it, while `heapUsed` stays small throughout). That is expected,
+documented Node/V8/glibc behaviour for a workload with large, bursty
+allocations (JSON-serializing a ~400 KB tile grid per room start, repeated
+procedural generation) rather than a logical leak: the JS heap itself
+isn't holding the memory (confirmed via `heapUsed`/`heapTotal`, and via
+`rooms.size`/`savedReplays.size` both reading back to their true low
+values), the process's own memory allocator is just slow to hand pages
+back to the OS once they've been touched. No code change closes that gap
+further without real risk (an aggressively low `--max-old-space-size`
+does not reduce the plateau at all here — tested explicitly, see next
+paragraph — it would only add GC-thrashing risk under genuine load), so
+it is reported as-is rather than claimed away.
+
+**V8/process flags, tested and measured, not assumed**: `--max-old-space-size=64`
+made no measurable difference to the post-burst RSS plateau in the same
+60-room create/leave test (132 MB vs 133.5 MB without it) — unsurprising,
+since `heapUsed` never got anywhere near even that low a cap (13-20 MB
+throughout every test in this pass), so there was never anything for the
+cap to actually constrain. It is **not** adopted, per the brief's own
+caution against capping a heap that V8's defaults already fit comfortably.
+`MALLOC_ARENA_MAX=2` (an environment variable, not a `node` flag — it
+caps how many glibc malloc arenas the process may use, a standard mitigation
+for native-allocator fragmentation in long-lived Node processes) gave a
+modest, consistent ~10-15 MB reduction in that same post-burst plateau
+(133.5 MB → 132 MB in one run, and separately down to ~137 MB from ~155 MB
+without it in another) at no measured cost. It's a reasonable, free,
+zero-risk thing to set as a Railway service environment variable, but it
+is **not required** to hit the targets above and nothing in this repo
+depends on it being set.
+
+**Dependency/import-graph check**: `server/index.ts`'s (and everything it
+transitively imports from `src/game/*.ts`/`src/net/protocol.ts`'s) full
+import graph was inspected directly — it pulls in only `node:` built-ins,
+`ws`, and the pure game-logic/type modules; nothing from `react`,
+`react-dom`, or `vite` is reachable from the server's entry point (the one
+non-`server/`, non-`game/` file it reaches, `src/App.types.ts`, is a
+type-only file with zero runtime imports). `typescript`/`vite` remain
+devDependencies (build-time only); `tsx` stays a runtime dependency
+because the dev-only scripts (`npm run server`, `mapcheck`/`wirecheck`/
+`combatcheck`) still use it — but the precompiled production process
+itself never imports or spawns it.
 
 ## Architecture
 

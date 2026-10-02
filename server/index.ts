@@ -10,10 +10,17 @@
 // In dev, run with `npm run server` (tsx, no build step needed) alongside
 // `npm run dev` (Vite) — two processes, client points at ws://localhost:PORT.
 //
-// In production, `npm start` runs this same file as a SINGLE process: it
-// serves the built client (vite build's dist/) over plain HTTP *and* the
-// WebSocket server on the `/ws` path of that same HTTP server/port, so the
-// whole app is one reachable service with no separate host/CORS/URL config.
+// In production, `npm start` runs this same source PRECOMPILED to plain
+// CommonJS (`npm run build` -> `server/tsconfig.build.json` -> `dist-server/`,
+// via the `prestart` hook) and executed with plain `node`, not `tsx` — see
+// the "Server RAM footprint" section of the README for why: tsx's always-on
+// esbuild loader (and, launched via `npx tsx`, its wrapper/esbuild-service
+// child processes) was measured to cost on the order of 150-180 MB of RSS
+// that a precompiled process launched directly with `node` does not pay.
+// Still a SINGLE process either way: it serves the built client (vite
+// build's dist/) over plain HTTP *and* the WebSocket server on the `/ws`
+// path of that same HTTP server/port, so the whole app is one reachable
+// service with no separate host/CORS/URL config.
 // ============================================================================
 
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -21,10 +28,10 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { readFile, stat as fsStat } from 'node:fs/promises';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import * as engine from '../src/game/engine';
 import { filterStateForPlayer, filterStateForSpectator, safeMoveRefusalMessage, safeOccupantRefusalMessage } from '../src/game/fog';
+import { generateBattlefield } from '../src/game/mapgen';
 import { randomScenario, scenarioById, Scenario } from '../src/game/scenarios';
 import { GameState, MatchRules, PlayerId, otherPlayer, validateMatchRules } from '../src/game/types';
 import { ClientMsg, CreateRulesInput, GameAction, ReplayViewState, RoomRulesInfo, ServerMsg, WireGameState } from '../src/net/protocol';
@@ -36,8 +43,16 @@ const PORT = Number(process.env.PORT) || 8787;
 // Static file serving (the built client) — same process, same port as WS.
 // ---------------------------------------------------------------------------
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DIST_DIR = path.join(__dirname, '../dist');
+// Anchored on process.cwd() rather than import.meta.url/__dirname: both the
+// dev path (`npm run server`, tsx from the repo root) and the production path
+// (`npm start`, plain `node` on the precompiled server from the repo root)
+// are always launched with the repo root as the working directory, and this
+// formulation is identical whether this file is run as ESM (tsx, dev) or
+// compiled to CommonJS (production build) — avoiding `import.meta`, which is
+// only legal under an ESM module target and would otherwise force the
+// precompiled build to stay ESM (and fight Node's extension-on-relative-
+// import requirement) just to keep this one path computation working.
+const DIST_DIR = path.join(process.cwd(), 'dist');
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -237,17 +252,47 @@ const rooms = new Map<string, Room>();
 // database the way it would for rooms, and nothing about the shape of
 // SavedReplay stops that later.
 // ---------------------------------------------------------------------------
+/**
+ * The tile grid (~400 KB) is by far the largest piece of a GameState, and
+ * it is (almost) entirely a function of `mapSeed` — generateBattlefield is
+ * deterministic and now memoized per seed (src/game/mapgen.ts), so every
+ * saved replay re-paying that ~400 KB verbatim would mean up to 7 days'
+ * worth of finished games — easily hundreds on a server that has seen
+ * traffic — each carrying their own near-duplicate copy of one of only 10
+ * distinct base grids.
+ *
+ * "Almost" because a match CAN mutate its own tiles: Engineer Bridge sets
+ * `tile.bridge = true; tile.road = true` on the specific tile it builds on
+ * (see engineerBridgeAction in src/game/engine.ts — the only tile mutation
+ * in the whole engine; Engineer Clear never touches a tile, only a
+ * formation's `fortified` flag). So a saved replay does NOT store `.tiles`
+ * at all — only the handful of (x, y) cells, if any, where that specific
+ * match actually built a bridge. `get_replay` reconstructs the full grid
+ * by re-deriving the base map from `mapSeed` (cheap: the memoized,
+ * already-validated result, deep-cloned) and re-applying just that match's
+ * own bridge cells on top of it — giving back the exact grid that match
+ * ended on, without ever storing a duplicate base grid per replay.
+ */
 interface SavedReplay {
   code: string;
   mapName: string;
+  mapSeed: number;
   winner: PlayerId | 'DRAW' | null;
-  full: ReplayViewState;
+  /** Spectator-filtered state, minus `tiles` — see module comment above. */
+  full: Omit<ReplayViewState, 'tiles'>;
+  /** Tiles this specific match built a bridge on — reapplied onto the regenerated base grid. */
+  bridgeTiles: { x: number; y: number }[];
   savedAt: number;
 }
 const savedReplays = new Map<string, SavedReplay>();
 const REPLAY_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const REPLAY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — well past any room's own TTL
 const REPLAY_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+// Independent of the time-based retention above: a server that sees heavy
+// traffic over several days could otherwise accumulate an unbounded number
+// of replays within the 7-day window. Oldest-first eviction, same pattern
+// as the room-create limiter's windows and the mapgen seed cache.
+const MAX_SAVED_REPLAYS = 5000;
 
 function genReplayCode(): string {
   let code = '';
@@ -262,14 +307,41 @@ function saveReplay(room: Room) {
   if (room.state.phase !== 'GAME_OVER' || room.state.replayCode) return;
   let code = genReplayCode();
   while (savedReplays.has(code)) code = genReplayCode();
+  if (savedReplays.size >= MAX_SAVED_REPLAYS) {
+    const oldestKey = savedReplays.keys().next().value;
+    if (oldestKey !== undefined) savedReplays.delete(oldestKey);
+  }
+  const spectatorView = filterStateForSpectator(room.state);
+  const { tiles, ...full } = spectatorView;
+  const bridgeTiles: { x: number; y: number }[] = [];
+  tiles.forEach((row, y) =>
+    row.forEach((t, x) => {
+      if (t.bridge) bridgeTiles.push({ x, y });
+    })
+  );
   savedReplays.set(code, {
     code,
     mapName: room.state.mapName,
+    mapSeed: room.state.mapSeed,
     winner: room.state.winner,
-    full: filterStateForSpectator(room.state),
+    full,
+    bridgeTiles,
     savedAt: Date.now(),
   });
   room.state.replayCode = code;
+}
+
+/** Reassemble the full `ReplayViewState` for a saved replay — see SavedReplay's doc comment. */
+function hydrateReplay(saved: SavedReplay): ReplayViewState {
+  const map = generateBattlefield(saved.mapSeed);
+  for (const { x, y } of saved.bridgeTiles) {
+    const t = map.tiles[y]?.[x];
+    if (t) {
+      t.bridge = true;
+      t.road = true;
+    }
+  }
+  return { ...saved.full, tiles: map.tiles } as ReplayViewState;
 }
 
 // ---------------------------------------------------------------------------
@@ -814,7 +886,7 @@ wss.on('connection', (ws, req) => {
           send(ws, { t: 'error', message: 'No replay found for that code — it may have expired or never existed.' });
           return;
         }
-        send(ws, { t: 'replay_data', code: saved.code, mapName: saved.mapName, winner: saved.winner, full: saved.full });
+        send(ws, { t: 'replay_data', code: saved.code, mapName: saved.mapName, winner: saved.winner, full: hydrateReplay(saved) });
         break;
       }
       case 'reconnect': {
