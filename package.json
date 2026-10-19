@@ -14,15 +14,18 @@
     "mapcheck": "tsx scripts/mapcheck.ts",
     "wirecheck": "tsx scripts/wirecheck.ts",
     "combatcheck": "tsx scripts/combatcheck.ts",
-    "check": "npm run mapcheck && npm run wirecheck && npm run combatcheck"
+    "check": "npm run mapcheck && npm run wirecheck && npm run combatcheck && npm run islandcheck",
+    "islandcheck": "tsx scripts/islandcheck.ts"
   },
   "dependencies": {
+    "d3-delaunay": "^6.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tsx": "^4.23.13",
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@types/d3-delaunay": "^6.0.4",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@types/ws": "^8.18.1",

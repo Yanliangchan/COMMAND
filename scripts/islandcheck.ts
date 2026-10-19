@@ -1,0 +1,94 @@
+// ============================================================================
+// ISLAND OPS — board checks and a bot-vs-bot balance/pacing sim.
+//   npx tsx scripts/islandcheck.ts [games]
+//
+// The relaunch targets this sim measures against: a capture every turn,
+// several attacks per turn, games that finish, and no faction that dominates.
+// ============================================================================
+
+import { BOARD, REGION_IDS } from '../src/island/map';
+import { apply, newGame } from '../src/island/engine';
+import { botAction } from '../src/island/bot';
+import { FACTION_IDS, FactionId } from '../src/island/types';
+
+let failures = 0;
+const check = (c: boolean, m: string) => {
+  console.log(`${c ? ' ok ' : 'FAIL'}  ${m}`);
+  if (!c) failures++;
+};
+
+// --- board -----------------------------------------------------------------
+check(BOARD.regions.length === 39, `39 regions (got ${BOARD.regions.length})`);
+check(BOARD.regions.every((r) => r.neighbours.every((n) => BOARD.byId[n].neighbours.includes(r.id))), 'adjacency is symmetric');
+check(BOARD.regions.every((r) => r.neighbours.length >= 2), 'every region has at least two neighbours');
+const seen = new Set([REGION_IDS[0]]);
+const queue = [REGION_IDS[0]];
+while (queue.length) for (const n of BOARD.byId[queue.pop()!].neighbours) if (!seen.has(n)) (seen.add(n), queue.push(n));
+check(seen.size === REGION_IDS.length, 'every region is reachable over land and crossings');
+
+// --- sim -------------------------------------------------------------------
+const GAMES = Number(process.argv[2] ?? 300);
+const wins: Record<string, number> = {};
+const seats: Record<string, number> = {};
+const fair: Record<string, number> = {};
+let turns = 0, attacks = 0, captures = 0, rounds = 0, finished = 0, timeouts = 0, illegal = 0;
+const reasons: Record<string, number> = {};
+const turnsPerGame: number[] = [];
+
+for (let g = 0; g < GAMES; g++) {
+  const n = 3 + (g % 3);
+  const pool = [...FACTION_IDS];
+  const factions: FactionId[] = [];
+  for (let i = 0; i < n; i++) factions.push(pool.splice((g * 7 + i * 3) % pool.length, 1)[0]);
+  factions.forEach((f) => {
+    seats[f] = (seats[f] ?? 0) + 1;
+    fair[f] = (fair[f] ?? 0) + 1 / n;
+  });
+  let s = newGame({ human: null, factions, seed: 1000 + g });
+  let steps = 0;
+  while (s.phase !== 'GAME_OVER' && steps < 20000) {
+    try {
+      s = apply(s, botAction(s));
+    } catch (e) {
+      illegal++;
+      console.log('illegal', (e as Error).message);
+      break;
+    }
+    steps++;
+  }
+  if (s.winner) {
+    finished++;
+    wins[s.winner] = (wins[s.winner] ?? 0) + 1;
+    const key = s.winReason!.startsWith('Ops') ? player0(s.winReason!) : s.winReason!.startsWith('last') ? 'last standing' : 'clock';
+    reasons[key] = (reasons[key] ?? 0) + 1;
+    if (key === 'clock') timeouts++;
+  }
+  turns += s.stats.turns;
+  attacks += s.stats.attacks;
+  captures += s.stats.captures;
+  rounds += s.round;
+  turnsPerGame.push(s.stats.turns);
+}
+function player0(r: string) {
+  return r.includes('Secure') ? 'mission: sectors' : r.includes('Eliminate') ? 'mission: eliminate' : 'mission: regions';
+}
+
+turnsPerGame.sort((a, b) => a - b);
+console.log(`\n${GAMES} games (3–5 bots each)`);
+console.log(`finished ${finished}, illegal actions ${illegal}, decided on the clock ${timeouts}`);
+console.log(`dice rolls per turn ${(attacks / turns).toFixed(2)}, captures per turn ${(captures / turns).toFixed(2)}`);
+console.log(`rounds per game ${(rounds / GAMES).toFixed(1)}, turns per game median ${turnsPerGame[GAMES >> 1]} (p90 ${turnsPerGame[Math.floor(GAMES * 0.9)]})`);
+console.log('win reasons', reasons);
+const share = (f: string) => (wins[f] ?? 0) / fair[f];
+for (const f of FACTION_IDS)
+  console.log(`  ${f.padEnd(9)} won ${wins[f] ?? 0} of ${seats[f]} seats — ${share(f).toFixed(2)}× its fair share`);
+
+check(illegal === 0, 'bots never attempt an illegal action');
+check(finished === GAMES, 'every game reaches a winner');
+check(captures / turns >= 1, 'at least one capture per turn on average');
+check(timeouts / GAMES < 0.05, 'under 5% of games go to the clock');
+check(FACTION_IDS.every((f) => share(f) > 0.75 && share(f) < 1.3), 'every faction wins within 0.75–1.3× its fair share');
+if (failures) {
+  console.log(`\n${failures} check(s) failed`);
+  process.exit(1);
+}

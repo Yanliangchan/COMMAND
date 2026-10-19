@@ -1,4 +1,83 @@
-# COMMAND — Lead the force. Shape the battlefield.
+# COMMAND: Island Ops
+
+**Take the island. Sector by sector.** A fast, bright, RISK-style strategy
+game in Total Defence colours: 3–5 SAF services fight an exercise for a
+stylised Singapore. Matches run about 8 rounds; every turn has dice on the
+table and regions changing hands.
+
+Island Ops is the relaunch. It replaces the original operational simulation
+as the front door; the original game is still playable at `/#classic` (and
+documented below, unchanged).
+
+## Play
+
+```bash
+npm install
+npm run dev          # http://localhost:5173 — Island Ops, single player vs bots
+npm run islandcheck  # board checks + bot-vs-bot balance and pacing sim
+```
+
+## The rules on one page
+
+- **The board.** 39 regions in 6 sectors on the main island, plus four
+  offshore islands (Jurong Island, Sentosa, Pulau Ubin, Pulau Tekong) reached
+  by bridge or ferry. Towns and hills marked ▲ are *strongholds*: the
+  defender adds +1 to their best die.
+- **Mobilise.** Troops = regions ÷ 3 (minimum 3) + a bonus for every whole
+  sector held (Central 5, South 4, others 3). Trade Asset Cards (three of a
+  kind or one of each) for 4, 6, 8, 10, 12, 15, then +5 troops, escalating
+  across the whole table. Holding the region on a traded card puts +2 there.
+- **Assault.** Attack neighbours from regions with 2+ troops. Attacker rolls up
+  to 3 dice, defender up to 2, highest pairs compared, ties to the defender.
+  Roll once, or Blitz to the finish. Capture at least once in a turn to earn an
+  Asset Card.
+- **Redeploy.** One move between connected regions you own, then the turn ends.
+- **Win.** Complete your secret **Ops Order** (two named sectors, 24 regions,
+  or eliminate a named rival), or be the last force standing.
+
+### The services
+
+| Service | Power |
+| --- | --- |
+| **Army** | NS Call-Up: +1 troop every Mobilise. |
+| **Navy** | Amphibious Assault: attack any enemy coastal region within reach of your coastal regions. |
+| **Air Force** | Precision Strike: once a turn, remove a troop from any enemy region. |
+| **Commandos** | Heliborne Insertion: once a turn, attack a region two steps away. |
+| **Digital & Intelligence** | Signals Intelligence: an Asset Card every turn, and +2 troops per traded set. |
+
+### Measured (bot-vs-bot, `npm run islandcheck`, 600 games of 3–5 players)
+
+| | Island Ops | Classic COMMAND |
+| --- | --- | --- |
+| Dice rolls per turn | **6.8** | under 1 engagement per round |
+| Regions captured per turn | **3.3** | — |
+| Rounds per game | **8.6** | 13–24 |
+| Games that finish | **100%** | — |
+
+Faction win rates are within 0.83–1.15× of an even share; the sim fails if
+any faction leaves the 0.75–1.3× band.
+
+## Code layout (Island Ops)
+
+```
+src/island/
+  map.ts          Board: island outlines, region sites, Voronoi cells, adjacency, sectors.
+  types.ts        Factions, cards, missions, state and action types, tuning constants.
+  engine.ts       Pure rules: newGame / apply(state, action) with a seeded RNG.
+  bot.ts          botAction(state): one next action, so bot turns play out visibly.
+  IslandApp.tsx   Title screen → match.
+  ui/             MapView (SVG diorama), GameScreen (HUD + turn flow), Dice, Hand, Glyphs.
+  island.css      The Island Ops look.
+scripts/islandcheck.ts   Board invariants + balance/pacing sim.
+```
+
+Not yet built: online multiplayer for Island Ops (the existing WebSocket
+server and room system are the intended base), async play-by-notification,
+art pass for miniatures and landmarks, sound design beyond the reused cues.
+
+---
+
+# Classic COMMAND — Lead the force. Shape the battlefield.
 
 **COMMAND** is a multiplayer turn-based military strategy game inspired by the
 Singapore Armed Forces (SAF). Built with **Vite + React +
