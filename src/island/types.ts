@@ -162,6 +162,8 @@ export interface PlayerView {
   lastReport: RoundReport | null;
   winner: FactionId | null;
   winReason: string | null;
+  log: GameState['log'];
+  stats: GameState['stats'];
 }
 
 export interface Budget {

@@ -9,6 +9,7 @@ export interface Setup {
   faction: FactionId;
   opponents: number;
   level: BotLevel;
+  name?: string;
 }
 
 const LEVELS: { id: BotLevel; label: string; blurb: string }[] = [
@@ -17,7 +18,19 @@ const LEVELS: { id: BotLevel; label: string; blurb: string }[] = [
   { id: 'VETERAN', label: 'Veteran', blurb: 'Aggressive bots that take every opening.' },
 ];
 
-export function TitleScreen({ initial, onStart }: { initial: Setup; onStart: (s: Setup) => void }) {
+export function TitleScreen({
+  initial, onStart, onCreateOnline, onJoinOnline, joinCode, busy, notice,
+}: {
+  initial: Setup;
+  onStart: (s: Setup) => void;
+  onCreateOnline: (s: Setup) => void;
+  onJoinOnline: (code: string, s: Setup) => void;
+  /** Prefilled from a shared ?room= link. */
+  joinCode?: string;
+  busy?: boolean;
+  notice?: { id: number; text: string } | null;
+}) {
+  const [code, setCode] = useState(joinCode ?? '');
   const [setup, setSetup] = useState(initial);
   const [howTo, setHowTo] = useState(false);
   const backdrop = useMemo(() => {
@@ -91,8 +104,40 @@ export function TitleScreen({ initial, onStart }: { initial: Setup; onStart: (s:
               </div>
             </div>
             <button className="io-btn io-btn-primary io-btn-deploy" onClick={() => onStart(setup)} data-testid="deploy">
-              Deploy
+              Play vs Bots
             </button>
+          </div>
+
+          <div className="io-online">
+            <div className="io-online-head">
+              <b>Play online</b>
+              <span>Friends plan at the same time; bots fill any empty seat.</span>
+            </div>
+            <div className="io-online-row">
+              <input
+                className="io-input"
+                placeholder="Your callsign"
+                maxLength={20}
+                value={setup.name ?? ''}
+                onChange={(e) => setSetup({ ...setup, name: e.target.value })}
+                data-testid="name"
+              />
+              <button className="io-btn io-btn-ghost" disabled={busy} onClick={() => onCreateOnline(setup)} data-testid="create-room">
+                Create room
+              </button>
+              <span className="io-or">or</span>
+              <input
+                className="io-input io-code"
+                placeholder="CODE"
+                maxLength={5}
+                value={code}
+                onChange={(e) => setCode(e.target.value.toUpperCase())}
+                data-testid="join-code"
+              />
+              <button className="io-btn io-btn-ghost" disabled={busy || code.length < 5} onClick={() => onJoinOnline(code, setup)} data-testid="join-room">
+                Join
+              </button>
+            </div>
           </div>
         </section>
 
@@ -110,6 +155,11 @@ export function TitleScreen({ initial, onStart }: { initial: Setup; onStart: (s:
       </div>
 
       {howTo && <HowToPlay onClose={() => setHowTo(false)} />}
+      {notice && (
+        <div className="io-toast" key={notice.id}>
+          {notice.text}
+        </div>
+      )}
     </div>
   );
 }

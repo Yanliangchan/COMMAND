@@ -13,9 +13,32 @@ documented below, unchanged).
 
 ```bash
 npm install
-npm run dev          # http://localhost:5173 — Island Ops, single player vs bots
+npm run dev:all      # game server (ws://localhost:8787) + client (http://localhost:5173)
 npm run islandcheck  # rules checks + bot-vs-bot balance and pacing sim
+npm run iocheck      # online smoke test against a real server process
 ```
+
+Single player against bots runs entirely in the browser (`npm run dev` is
+enough). Online play needs the server: in production `npm start` serves the
+built client and both games' sockets from one process — the classic sim on
+`/ws`, Island Ops on `/io`.
+
+## Online
+
+- **Rooms:** pick a Pasukan, enter a callsign, **Create room**, and share the
+  five-letter code or the `?room=CODE` link. Friends **Join**, pick a free
+  Pasukan in the lobby, and the host starts; bots take any empty seat.
+- **Simultaneous turns:** everyone plans at once against a 90-second clock.
+  The round resolves the moment every human is ready — and when the clock runs
+  out, a bot plans for anyone still thinking ("Encik took command"), so one
+  slow player never holds the table up. You can **Change orders** until the
+  round resolves.
+- **The server is the umpire:** it holds the only true state, validates every
+  order, and sends each player only their own fogged view.
+- **Refresh-safe:** your seat token lives in the tab's session storage; reload
+  and you're back in your seat.
+- **Banter:** one-tap emotes — *Shiok! · Alamak! · Steady lah · Wah lau · Bo
+  jio! · Can or not?*
 
 ## How it plays
 
@@ -80,10 +103,15 @@ src/island/
   engine.ts       Pure rules: newGame, viewFor (fog), recon, validate/submitOrders,
                   resolveRound → { state, report }. RNG only for setup.
   bot.ts          planBot(view): recon, then orders — from the fogged view only.
-  IslandApp.tsx   Title screen → match.
-  ui/             MapView (SVG diorama), GameScreen (planning, playback, report), Glyphs.
+  protocol.ts     Online wire protocol (client ⇄ server).
+  net.ts          useIslandOnline(): the browser side of a room.
+  IslandApp.tsx   Title → local match, or online lobby → match.
+  ui/             MapView (SVG diorama), GameScreen (planning, playback, report —
+                  driven by a PlayerView, so local and online share it), Lobby, Glyphs.
   island.css      The Island Ops look.
+server/island.ts         Online rooms: seats, planning clock, resolution, fogged views.
 scripts/islandcheck.ts   Rules checks + balance/pacing sim.
+scripts/iocheck.mts      Online smoke test.
 ```
 
 ---

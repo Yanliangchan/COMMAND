@@ -14,8 +14,9 @@
     "mapcheck": "tsx scripts/mapcheck.ts",
     "wirecheck": "tsx scripts/wirecheck.ts",
     "combatcheck": "tsx scripts/combatcheck.ts",
-    "check": "npm run mapcheck && npm run wirecheck && npm run combatcheck && npm run islandcheck",
-    "islandcheck": "tsx scripts/islandcheck.ts"
+    "check": "npm run mapcheck && npm run wirecheck && npm run combatcheck && npm run islandcheck && npm run iocheck",
+    "islandcheck": "tsx scripts/islandcheck.ts",
+    "iocheck": "tsx scripts/iocheck.mts"
   },
   "dependencies": {
     "d3-delaunay": "^6.0.4",

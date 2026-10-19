@@ -251,6 +251,8 @@ export function viewFor(s: GameState, me: FactionId): PlayerView {
     lastReport: s.lastReport,
     winner: s.winner,
     winReason: s.winReason,
+    log: s.log.slice(-60),
+    stats: { ...s.stats },
   };
 }
 

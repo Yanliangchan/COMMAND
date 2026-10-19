@@ -7,11 +7,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { sound } from '../../audio/sound';
 import { BOARD, INSTALLATIONS, INSTALLATION_INFO, REGION_IDS, SEA_ZONES, ZoneId } from '../map';
-import {
-  IllegalAction, alive, defenceBonus, installationsOf, player, recon, regionsOf, resolveRound, sharedZones, shipCapacity, submitOrders, validateOrders, viewFor,
-} from '../engine';
-import { BotLevel, planBot } from '../bot';
-import { FACTIONS, FactionId, GameState, MAX_ROUNDS, Order, PlayerView, ReportStep, RoundReport, Side, VP_TARGET } from '../types';
+import { defenceBonus, sharedZones, shipCapacity } from '../engine';
+import { EMOTES, Emote, SeatInfo } from '../protocol';
+import { FACTIONS, FactionId, MAX_ROUNDS, Order, PlayerView, ReportStep, RoundReport, Side, VP_TARGET } from '../types';
 import { Emblem } from './Glyphs';
 import { Badge, Fx, Highlight, MapView, Marker, OrderArrow } from './MapView';
 
@@ -28,8 +26,8 @@ interface Picker {
 
 interface Playback {
   report: RoundReport;
-  before: GameState;
-  after: GameState;
+  before: PlayerView;
+  after: PlayerView;
   index: number;
   overrides: Record<string, Badge>;
   arrows: OrderArrow[];
@@ -51,6 +49,10 @@ function intelText(v: PlayerView['map'][string]): { text: string; fog: boolean }
   if (v.intel.kind === 'band') return { text: v.intel.max >= 99 ? `${v.intel.min}+` : `${v.intel.min}–${v.intel.max}`, fog: true };
   return { text: '?', fog: true };
 }
+
+const regionsIn = (v: PlayerView, f: FactionId) => REGION_IDS.filter((r) => v.map[r].owner === f);
+const installationsIn = (v: PlayerView, f: FactionId) => Object.keys(INSTALLATIONS).filter((r) => v.map[r].owner === f);
+const troopsAt = (v: PlayerView, r: string) => (v.map[r].intel.kind === 'exact' ? v.map[r].intel.troops : 0);
 
 function sideText(sd: Side) {
   const bonus = sd.bonuses.reduce((n, b) => n + b.n, 0);
@@ -83,8 +85,29 @@ function reportLines(report: RoundReport, me: FactionId): ReportLine[] {
   return lines;
 }
 
-export function GameScreen({ initial, level, onExit, onRestart }: { initial: GameState; level: BotLevel; onExit: () => void; onRestart: () => void }) {
-  const [game, setGame] = useState(initial);
+export interface MatchProps {
+  /** What you can see now. During playback this is already the post-round view. */
+  view: PlayerView;
+  /** A round that just resolved, to play back before showing `view`. */
+  pending: { report: RoundReport; before: PlayerView } | null;
+  onPlayed: () => void;
+  /** Your orders are in; waiting on the others. */
+  submitted: boolean;
+  onRecon: (region: string) => Promise<string | null>;
+  onSubmit: (orders: Order[]) => Promise<string | null>;
+  onUnready?: () => void;
+  /** Online only: the table, the clock, banter. */
+  seats?: SeatInfo[];
+  deadline?: number | null;
+  notice?: { id: number; text: string } | null;
+  emotes?: { id: number; from: FactionId; text: string }[];
+  onEmote?: (text: Emote) => void;
+  roomCode?: string;
+  onExit: () => void;
+  onRestart?: () => void;
+}
+
+export function GameScreen({ view, pending, onPlayed, submitted, onRecon, onSubmit, onUnready, seats, deadline, notice, emotes = [], onEmote, roomCode, onExit, onRestart }: MatchProps) {
   const [draft, setDraft] = useState<Order[]>([]);
   const [tool, setTool] = useState<Tool>('deploy');
   const [amount, setAmount] = useState<Amount>(1);
@@ -98,15 +121,46 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   const [logOpen, setLogOpen] = useState(false);
   const [banners, setBanners] = useState<{ id: number; title: string; sub?: string; color: string }[]>([]);
   const [shake, setShake] = useState(0);
+  const [now, setNow] = useState(Date.now());
   const banner = useCallback((title: string, color: string, sub?: string) => {
     const id = Math.random();
     setBanners((bs) => [...bs, { id, title, sub, color }]);
     window.setTimeout(() => setBanners((bs) => bs.filter((b) => b.id !== id)), 1900);
   }, []);
-  const me = game.factions.find((f) => player(game, f).human)!;
-  const view = useMemo(() => viewFor(game, me), [game, me]);
-  const over = game.phase === 'GAME_OVER' && !playback;
-  const planning = !playback && game.phase === 'PLANNING' && player(game, me).alive;
+  const me = view.me;
+  const meAlive = view.players.find((p) => p.id === me)?.alive ?? false;
+  const over = view.phase === 'GAME_OVER' && !playback && !pending;
+  const planning = !playback && !pending && view.phase === 'PLANNING' && meAlive && !submitted;
+
+  // A new round starts with a clean slate.
+  useEffect(() => {
+    setDraft([]);
+    setFrom(null);
+    setSelShip(null);
+    setPicker(null);
+  }, [view.round]);
+
+  // Server notices (rejected orders, Encik taking over) show as toasts.
+  useEffect(() => {
+    if (notice) setToast(notice.text);
+  }, [notice]);
+
+  // The planning clock.
+  useEffect(() => {
+    if (!deadline) return;
+    const t = window.setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [deadline]);
+
+  // A resolved round arrives: play it back.
+  useEffect(() => {
+    if (!pending || playback) return;
+    setReport(null);
+    sound.play('turn');
+    banner('Orders in — Execute!', FACTIONS[me].color, `Round ${pending.report.round}: every Pasukan moves at once`);
+    setPlayback({ report: pending.report, before: pending.before, after: view, index: -1, overrides: {}, arrows: [], card: null, naval: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
 
   useEffect(() => {
     if (!toast) return;
@@ -124,12 +178,12 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   const sortiesLeft = view.budget.sorties - draft.filter((o) => o.kind === 'STRIKE' || o.kind === 'CAS').length;
   const committed = (r: string, except?: Order) =>
     draft.reduce((n, o) => n + ((o.kind === 'MOVE' || o.kind === 'LAND') && o.from === r && o !== except ? o.count : 0), 0);
-  const available = (r: string, except?: Order) => (game.map[r].owner === me ? game.map[r].troops + (deployed[r] ?? 0) - committed(r, except) - 1 : 0);
+  const available = (r: string, except?: Order) => (view.map[r].owner === me ? troopsAt(view, r) + (deployed[r] ?? 0) - committed(r, except) - 1 : 0);
   const shipZoneAfter = (shipId: string) => {
     const sail = draft.find((o) => o.kind === 'SAIL' && o.ship === shipId) as Extract<Order, { kind: 'SAIL' }> | undefined;
-    return sail ? sail.to : game.ships.find((sh) => sh.id === shipId)?.zone ?? null;
+    return sail ? sail.to : view.ships.find((sh) => sh.id === shipId)?.zone ?? null;
   };
-  const myShipsIn = (z: ZoneId) => game.ships.filter((sh) => sh.owner === me && sh.zone && shipZoneAfter(sh.id) === z).length;
+  const myShipsIn = (z: ZoneId) => view.ships.filter((sh) => sh.owner === me && sh.zone && shipZoneAfter(sh.id) === z).length;
   const lifted = (z: ZoneId, except?: Order) => draft.reduce((n, o) => n + (o.kind === 'LAND' && o.zone === z && o !== except ? o.count : 0), 0);
 
   // ---- planning actions ----
@@ -141,7 +195,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   };
 
   const openPicker = (a: string, b: string) => {
-    if (game.map[a].owner !== me) return;
+    if (view.map[a].owner !== me) return;
     const existing = draft.find((o): o is Extract<Order, { kind: 'MOVE' | 'LAND' }> => (o.kind === 'MOVE' || o.kind === 'LAND') && o.from === a && o.to === b);
     if (BOARD.byId[a].neighbours.includes(b)) {
       const max = available(a, existing);
@@ -182,45 +236,43 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
     const existing = draft.find((o) => o.kind === kind && o.region === region);
     if (existing) return setDraft((d) => d.filter((o) => o !== existing));
     if (sortiesLeft <= 0) return setToast('No air sorties left this round.');
-    if (kind === 'STRIKE' && game.map[region].owner === me) return setToast("Don't bomb your own ground.");
+    if (kind === 'STRIKE' && view.map[region].owner === me) return setToast("Don't bomb your own ground.");
     setDraft((d) => [...d, { kind, region }]);
     sound.play('ui');
   };
 
   const doRecon = (region: string) => {
-    if (game.map[region].owner === me) return setToast('Recon enemy ground — you know your own.');
-    try {
-      setGame(recon(game, me, region));
+    if (view.map[region].owner === me) return setToast('Recon enemy ground — you know your own.');
+    if (view.reconsLeft <= 0) return setToast('No recon left this round.');
+    void onRecon(region).then((err) => {
+      if (err) return setToast(err);
       setToast(`Recon: ${BOARD.byId[region].name} and its neighbours revealed for this round.`);
       sound.play('contact');
-    } catch (e) {
-      if (e instanceof IllegalAction) setToast(e.message);
-      else throw e;
-    }
+    });
   };
 
   const onRegion = (id: string) => {
     if (!planning) return;
     if (tool === 'deploy') {
-      if (game.map[id].owner !== me) return setToast('Deploy on your own ground.');
+      if (view.map[id].owner !== me) return setToast('Deploy on your own ground.');
       return addDeploy(id);
     }
     if (tool === 'strike' || tool === 'cas') return toggleAir(tool === 'strike' ? 'STRIKE' : 'CAS', id);
     if (tool === 'recon') return doRecon(id);
     if (from && from !== id) return openPicker(from, id);
-    if (game.map[id].owner === me) setFrom(from === id ? null : id);
+    if (view.map[id].owner === me) setFrom(from === id ? null : id);
   };
 
   const onShip = (id: string) => {
     if (!planning) return;
-    const ship = game.ships.find((sh) => sh.id === id)!;
+    const ship = view.ships.find((sh) => sh.id === id)!;
     if (ship.owner !== me) return setToast(`${ship.name} — ${FACTIONS[ship.owner].name}.`);
     setSelShip(selShip === id ? null : id);
   };
 
   const onZone = (z: ZoneId) => {
     if (!planning || !selShip) return;
-    const ship = game.ships.find((sh) => sh.id === selShip)!;
+    const ship = view.ships.find((sh) => sh.id === selShip)!;
     if (z !== ship.zone && !(ship.zone && SEA_ZONES[ship.zone].neighbours.includes(z))) return setToast('Ships sail one zone at a time.');
     setDraft((d) => {
       const rest = d.filter((o) => !(o.kind === 'SAIL' && o.ship === selShip));
@@ -230,44 +282,31 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   };
 
   const drag = {
-    canStart: (id: string) => planning && game.map[id].owner === me && available(id) > 0,
+    canStart: (id: string) => planning && view.map[id].owner === me && available(id) > 0,
     drop: (a: string, b: string) => {
       setTool('move');
       openPicker(a, b);
     },
   };
 
-  // ---- Ready: submit, let the bots plan, resolve, play it back ----
+  // ---- Ready: hand the orders over; the round resolves once everyone's are in ----
   const ready = () => {
     if (!planning) return;
-    const err = validateOrders(game, me, draft);
-    if (err) return setToast(err);
-    let s = submitOrders(game, me, draft);
-    for (const f of alive(s)) {
-      if (f === me) continue;
-      const orders = planBot(
-        () => viewFor(s, f),
-        (r) => (s = recon(s, f, r)),
-        level,
-      );
-      s = submitOrders(s, f, orders);
-    }
-    const { state, report: rep } = resolveRound(s);
-    setDraft([]);
-    setFrom(null);
-    setSelShip(null);
-    setReport(null);
-    sound.play('turn');
-    banner('Orders in — Execute!', FACTIONS[me].color, `Round ${rep.round}: every Pasukan moves at once`);
-    setPlayback({ report: rep, before: s, after: state, index: -1, overrides: {}, arrows: [], card: null, naval: null });
+    if (deployLeft > 0) return setToast(`Deploy all ${view.budget.troops} new troops first.`);
+    void onSubmit(draft).then((err) => {
+      if (err) return setToast(err);
+      setFrom(null);
+      setSelShip(null);
+      sound.play('ui');
+    });
   };
 
   // ---- playback director ----
   const finishPlayback = useCallback(
     (pb: Playback) => {
       const lost = REGION_IDS.filter((r) => pb.before.map[r].owner === me && pb.after.map[r].owner !== me);
-      setGame(pb.after);
       setPlayback(null);
+      onPlayed();
       setReport({ round: pb.report.round, lines: reportLines(pb.report, me) });
       setTool('deploy');
       if (pb.after.phase !== 'GAME_OVER') window.setTimeout(() => banner(`Round ${pb.after.round}`, FACTIONS[me].color, 'Plan your orders'), 200);
@@ -277,7 +316,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
         window.setTimeout(() => setFx((f) => f.filter((x) => !ids.includes(x.id))), 5000);
       }
     },
-    [me],
+    [me, onPlayed, banner],
   );
 
   useEffect(() => {
@@ -356,18 +395,18 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   }, [playback, finishPlayback]);
 
   // ---- what the map shows ----
-  const shownView = useMemo(() => (playback ? viewFor(playback.before, me) : view), [playback?.before, view, me]);
+  const shownView = playback ? playback.before : pending ? pending.before : view;
   const badges = useMemo(() => {
     const out: Record<string, Badge> = {};
     for (const r of REGION_IDS) {
       const rv = shownView.map[r];
       const t = intelText(rv);
       out[r] = { owner: rv.owner, text: t.text, fog: t.fog };
-      if (!playback && rv.owner === me && deployed[r]) out[r] = { ...out[r], text: String(game.map[r].troops + deployed[r]), extra: `+${deployed[r]}` };
+      if (!playback && rv.owner === me && deployed[r]) out[r] = { ...out[r], text: String(troopsAt(view, r) + deployed[r]), extra: `+${deployed[r]}` };
     }
     if (playback) Object.assign(out, playback.overrides);
     return out;
-  }, [shownView, playback, deployed, game, me]);
+  }, [shownView, playback, deployed, view, me]);
 
   const myColor = FACTIONS[me].color;
   const arrows: OrderArrow[] = playback
@@ -376,7 +415,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
         if (o.kind === 'MOVE' || o.kind === 'LAND')
           return [{ id: `o-${i}`, from: o.from, to: o.to, color: myColor, label: String(o.count), via: o.kind === 'LAND' ? o.zone : undefined, onClick: () => openPicker(o.from, o.to) }];
         if (o.kind === 'SAIL') {
-          const zone = game.ships.find((sh) => sh.id === o.ship)?.zone;
+          const zone = view.ships.find((sh) => sh.id === o.ship)?.zone;
           return zone ? [{ id: `o-${i}`, from: zone, to: o.to, color: myColor, sail: true }] : [];
         }
         return [];
@@ -390,9 +429,9 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
 
   const highlights: Record<string, Highlight> = {};
   if (planning && !picker) {
-    if (tool === 'deploy') for (const r of regionsOf(game, me)) highlights[r] = 'place';
-    if (tool === 'strike') for (const r of REGION_IDS) if (game.map[r].owner !== me) highlights[r] = 'strike';
-    if (tool === 'recon' && view.reconsLeft > 0) for (const r of REGION_IDS) if (game.map[r].owner !== me) highlights[r] = 'recon';
+    if (tool === 'deploy') for (const r of regionsIn(view, me)) highlights[r] = 'place';
+    if (tool === 'strike') for (const r of REGION_IDS) if (view.map[r].owner !== me) highlights[r] = 'strike';
+    if (tool === 'recon' && view.reconsLeft > 0) for (const r of REGION_IDS) if (view.map[r].owner !== me) highlights[r] = 'recon';
     if (tool === 'move' && from) {
       highlights[from] = 'source';
       for (const n of BOARD.byId[from].neighbours) highlights[n] = 'target';
@@ -401,10 +440,10 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   }
 
   const threats =
-    playback || !player(game, me).alive
+    playback || !meAlive
       ? []
-      : regionsOf(game, me).filter((r) => {
-          const mine = game.map[r].troops + (deployed[r] ?? 0) + defenceBonus(r);
+      : regionsIn(view, me).filter((r) => {
+          const mine = troopsAt(view, r) + (deployed[r] ?? 0) + defenceBonus(r);
           return BOARD.byId[r].neighbours.some((n) => {
             const iv = view.map[n];
             if (iv.owner === me) return false;
@@ -442,8 +481,8 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
     ? playback.report.steps.slice(0, playback.index + 1).some((st) => st.kind !== 'NAVAL')
       ? playback.after.ships
       : playback.before.ships
-    : game.ships;
-  const selZone = selShip ? game.ships.find((s) => s.id === selShip)?.zone : null;
+    : (pending?.before ?? view).ships;
+  const selZone = selShip ? view.ships.find((s) => s.id === selShip)?.zone : null;
 
   return (
     <div className={`io-game${shake % 2 ? ' io-shake-a' : shake ? ' io-shake-b' : ''}`}>
@@ -466,23 +505,23 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
         />
       </div>
 
-      <TopBar game={game} me={me} playing={!!playback} onExit={onExit} onLog={() => setLogOpen((v) => !v)} />
+      <TopBar view={view} me={me} playing={!!playback} seats={seats} deadline={deadline} now={now} roomCode={roomCode} onExit={onExit} onLog={() => setLogOpen((v) => !v)} />
 
       <div className="io-side">
-        <Installations game={game} me={me} />
+        <Installations view={shownView} me={me} />
       </div>
 
       {planning && (
         <OrdersPanel
           draft={draft}
-          game={game}
+          view={view}
           me={me}
           onRemove={(o) => setDraft((d) => d.filter((x) => x !== o))}
           onEdit={(o) => (o.kind === 'MOVE' || o.kind === 'LAND' ? openPicker(o.from, o.to) : undefined)}
         />
       )}
 
-      {logOpen && <LogPanel game={game} onClose={() => setLogOpen(false)} />}
+      {logOpen && <LogPanel view={view} onClose={() => setLogOpen(false)} />}
 
       {playback?.card && <StepCard step={playback.card} me={me} />}
 
@@ -510,6 +549,41 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
         </div>
       )}
 
+      {submitted && !playback && !pending && view.phase === 'PLANNING' && (
+        <div className="io-panel io-panel-wait" style={{ ['--c' as string]: myColor }} data-testid="waiting">
+          <span>
+            <b>Orders in.</b>{' '}
+            {(() => {
+              const waiting = view.players.filter((p) => p.alive && !p.ready).map((p) => seats?.find((x) => x.faction === p.id)?.name ?? FACTIONS[p.id].short);
+              return waiting.length ? `Waiting for ${waiting.join(', ')}…` : 'Resolving…';
+            })()}
+          </span>
+          {onUnready && (
+            <button className="io-btn io-btn-ghost io-skip" onClick={onUnready}>
+              Change orders
+            </button>
+          )}
+        </div>
+      )}
+
+      {onEmote && (
+        <div className="io-emote-bar" aria-label="Quick chat">
+          {EMOTES.map((e) => (
+            <button key={e} className="io-emote-btn" onClick={() => onEmote(e)}>
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="io-emotes">
+        {emotes.map((e) => (
+          <div key={e.id} className="io-emote" style={{ ['--c' as string]: FACTIONS[e.from].color }}>
+            <b>{seats?.find((x) => x.faction === e.from)?.name ?? FACTIONS[e.from].short}</b> {e.text}
+          </div>
+        ))}
+      </div>
+
       {planning && (
         <PlanPanel
           view={view}
@@ -528,7 +602,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
         />
       )}
 
-      {!planning && !playback && !over && (
+      {!meAlive && !playback && !pending && !over && (
         <div className="io-panel io-panel-wait">
           <span>
             <b>You have been wiped off the island.</b>
@@ -543,17 +617,17 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
         <div className="io-modal-backdrop io-picker-backdrop" onClick={() => setPicker(null)}>
           <div className="io-picker" onClick={(e) => e.stopPropagation()} data-testid="picker">
             <div className="io-picker-head">
-              {picker.zone ? '⚓ Landing' : game.map[picker.to].owner === me ? 'Reinforce' : 'Attack'}: <b>{BOARD.byId[picker.from].name}</b> → <b>{BOARD.byId[picker.to].name}</b>
+              {picker.zone ? '⚓ Landing' : view.map[picker.to].owner === me ? 'Reinforce' : 'Attack'}: <b>{BOARD.byId[picker.from].name}</b> → <b>{BOARD.byId[picker.to].name}</b>
             </div>
             <div className="io-picker-sub">
-              {game.map[picker.from].unit}
+              {view.map[picker.from].unit}
               {picker.zone ? ` · across the ${SEA_ZONES[picker.zone].name} by ship` : ''}
             </div>
             <div className="io-slider-row">
               <input type="range" min={0} max={picker.max} value={picker.count} onChange={(e) => setPicker({ ...picker, count: Number(e.target.value) })} />
               <span className="io-count">{picker.count}</span>
             </div>
-            {game.map[picker.to].owner !== me && (
+            {view.map[picker.to].owner !== me && (
               <div className="io-picker-sub">
                 Their defence: {intelText(view.map[picker.to]).text} troops +{defenceBonus(picker.to)} ({BOARD.byId[picker.to].stronghold ? 'stronghold' : 'dug in'}). Ties go to the
                 defender — and they may be moving too.
@@ -571,25 +645,39 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
         </div>
       )}
 
-      {over && <Victory game={game} me={me} onRestart={onRestart} onExit={onExit} />}
+      {over && <Victory view={view} me={me} onRestart={onRestart} onExit={onExit} />}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
 
-function TopBar({ game, me, playing, onExit, onLog }: { game: GameState; me: FactionId; playing: boolean; onExit: () => void; onLog: () => void }) {
+function TopBar({
+  view, me, playing, seats, deadline, now, roomCode, onExit, onLog,
+}: {
+  view: PlayerView;
+  me: FactionId;
+  playing: boolean;
+  seats?: SeatInfo[];
+  deadline?: number | null;
+  now: number;
+  roomCode?: string;
+  onExit: () => void;
+  onLog: () => void;
+}) {
+  const left = deadline ? Math.max(0, Math.ceil((deadline - now) / 1000)) : null;
   return (
     <div className="io-topbar">
       <div className="io-logo-mini">
         COMMAND<span>ISLAND OPS</span>
       </div>
       <div className="io-players">
-        {[...game.factions]
-          .sort((a, b) => player(game, b).vp - player(game, a).vp)
-          .map((f) => {
-            const p = player(game, f);
+        {[...view.players]
+          .sort((a, b) => b.vp - a.vp)
+          .map((p) => {
+            const f = p.id;
             const fac = FACTIONS[f];
+            const seat = seats?.find((s) => s.faction === f);
             return (
               <div key={f} className={`io-player${f === me ? ' io-player-active' : ''}${!p.alive ? ' io-player-dead' : ''}`} style={{ ['--c' as string]: fac.color, ['--d' as string]: fac.deep }}>
                 <span className="io-player-emblem">
@@ -597,13 +685,15 @@ function TopBar({ game, me, playing, onExit, onLog }: { game: GameState; me: Fac
                 </span>
                 <span className="io-player-text">
                   <b>
-                    {fac.short}
+                    {seat && !seat.bot ? seat.name : fac.short}
                     {f === me && <em> YOU</em>}
+                    {seat && !playing && p.alive && <span className={`io-ready-dot${p.ready ? ' on' : ''}${!seat.connected ? ' off' : ''}`} title={!seat.connected ? 'disconnected' : p.ready ? 'orders in' : 'planning'} />}
                   </b>
                   <small>
                     <span className="io-vp" key={p.vp}>
                       {p.vp} VP
-                    </span> · {regionsOf(game, f).length} regions · {installationsOf(game, f).length}★
+                    </span>{' '}
+                    · {p.regions} regions · {installationsIn(view, f).length}★
                   </small>
                 </span>
               </div>
@@ -611,8 +701,9 @@ function TopBar({ game, me, playing, onExit, onLog }: { game: GameState; me: Fac
           })}
       </div>
       <div className="io-top-right">
+        {left !== null && !playing && view.phase === 'PLANNING' && <span className={`io-clock${left <= 15 ? ' io-clock-low' : ''}`}>⏱ {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}</span>}
         <span className="io-round">
-          Round {game.round}/{MAX_ROUNDS} · first to {VP_TARGET} VP{playing ? ' · resolving' : ''}
+          {roomCode ? `Room ${roomCode} · ` : ''}Round {view.round}/{MAX_ROUNDS} · first to {VP_TARGET} VP{playing ? ' · resolving' : ''}
         </span>
         <button className="io-chip-btn" onClick={onLog}>
           Log
@@ -625,8 +716,8 @@ function TopBar({ game, me, playing, onExit, onLog }: { game: GameState; me: Fac
   );
 }
 
-function Installations({ game, me }: { game: GameState; me: FactionId }) {
-  const held = installationsOf(game, me).length;
+function Installations({ view, me }: { view: PlayerView; me: FactionId }) {
+  const held = installationsIn(view, me).length;
   return (
     <div className="io-sectors">
       <div className="io-sectors-head">
@@ -636,7 +727,7 @@ function Installations({ game, me }: { game: GameState; me: FactionId }) {
         </span>
       </div>
       {Object.entries(INSTALLATIONS).map(([r, kind]) => {
-        const owner = game.map[r].owner;
+        const owner = view.map[r].owner;
         return (
           <div key={r} className={`io-ki-row${owner === me ? ' io-sector-mine' : ''}`} title={INSTALLATION_INFO[kind].perk}>
             <i style={{ background: FACTIONS[owner].color }} />
@@ -649,7 +740,7 @@ function Installations({ game, me }: { game: GameState; me: FactionId }) {
   );
 }
 
-function orderText(o: Order, game: GameState): string {
+function orderText(o: Order, view: PlayerView): string {
   const n = (id: string) => BOARD.byId[id].name;
   switch (o.kind) {
     case 'DEPLOY':
@@ -659,7 +750,7 @@ function orderText(o: Order, game: GameState): string {
     case 'LAND':
       return `⚓ ${o.count} · ${n(o.from)} → ${n(o.to)}`;
     case 'SAIL':
-      return `${game.ships.find((s) => s.id === o.ship)?.name} → ${SEA_ZONES[o.to].name}`;
+      return `${view.ships.find((s) => s.id === o.ship)?.name} → ${SEA_ZONES[o.to].name}`;
     case 'STRIKE':
       return `✈ Strike ${n(o.region)}`;
     case 'CAS':
@@ -667,7 +758,7 @@ function orderText(o: Order, game: GameState): string {
   }
 }
 
-function OrdersPanel({ draft, game, me, onRemove, onEdit }: { draft: Order[]; game: GameState; me: FactionId; onRemove: (o: Order) => void; onEdit: (o: Order) => void }) {
+function OrdersPanel({ draft, view, me, onRemove, onEdit }: { draft: Order[]; view: PlayerView; me: FactionId; onRemove: (o: Order) => void; onEdit: (o: Order) => void }) {
   const shown = draft.filter((o) => o.kind !== 'DEPLOY');
   return (
     <div className="io-orders" style={{ ['--c' as string]: FACTIONS[me].color }} data-testid="orders">
@@ -679,7 +770,7 @@ function OrdersPanel({ draft, game, me, onRemove, onEdit }: { draft: Order[]; ga
         shown.map((o, i) => (
           <div key={i} className="io-order-row">
             <button className="io-order-text" onClick={() => onEdit(o)}>
-              {orderText(o, game)}
+              {orderText(o, view)}
             </button>
             <button className="io-order-x" onClick={() => onRemove(o)} aria-label="Remove order">
               ✕
@@ -693,8 +784,8 @@ function OrdersPanel({ draft, game, me, onRemove, onEdit }: { draft: Order[]; ga
   );
 }
 
-function LogPanel({ game, onClose }: { game: GameState; onClose: () => void }) {
-  const items = game.log.slice(-60).reverse();
+function LogPanel({ view, onClose }: { view: PlayerView; onClose: () => void }) {
+  const items = view.log.slice(-60).reverse();
   return (
     <div className="io-log">
       <div className="io-log-head">
@@ -933,11 +1024,11 @@ function PlanPanel({ view, tool, setTool, amount, setAmount, deployLeft, sorties
   );
 }
 
-function Victory({ game, me, onRestart, onExit }: { game: GameState; me: FactionId; onRestart: () => void; onExit: () => void }) {
-  const w = game.winner!;
+function Victory({ view, me, onRestart, onExit }: { view: PlayerView; me: FactionId; onRestart?: () => void; onExit: () => void }) {
+  const w = view.winner!;
   const won = w === me;
   const fac = FACTIONS[w];
-  const table = [...game.factions].sort((a, b) => player(game, b).vp - player(game, a).vp);
+  const table = [...view.players].sort((a, b) => b.vp - a.vp);
   return (
     <div className="io-modal-backdrop">
       <div className="io-victory" style={{ ['--c' as string]: fac.color, ['--d' as string]: fac.deep }}>
@@ -946,31 +1037,33 @@ function Victory({ game, me, onRestart, onExit }: { game: GameState; me: Faction
         </div>
         <h1>{won ? 'Victory!' : 'Defeat'}</h1>
         <p className="io-victory-who">{won ? 'The island is yours, Commander.' : `${fac.name} takes the exercise.`}</p>
-        <p className="io-victory-reason">{game.winReason}</p>
+        <p className="io-victory-reason">{view.winReason}</p>
         <div className="io-victory-table">
-          {table.map((f) => (
-            <div key={f} style={{ ['--c' as string]: FACTIONS[f].color }}>
+          {table.map((p) => (
+            <div key={p.id} style={{ ['--c' as string]: FACTIONS[p.id].color }}>
               <i />
-              <span>{FACTIONS[f].name}</span>
-              <b>{player(game, f).vp} VP</b>
+              <span>{FACTIONS[p.id].name}</span>
+              <b>{p.vp} VP</b>
             </div>
           ))}
         </div>
         <div className="io-victory-stats">
           <span>
-            <b>{game.round}</b> rounds
+            <b>{view.round}</b> rounds
           </span>
           <span>
-            <b>{game.stats.battles}</b> battles
+            <b>{view.stats.battles}</b> battles
           </span>
           <span>
-            <b>{game.stats.captures}</b> captures
+            <b>{view.stats.captures}</b> captures
           </span>
         </div>
         <div className="io-victory-actions">
-          <button className="io-btn io-btn-primary" onClick={onRestart}>
-            Play Again
-          </button>
+          {onRestart && (
+            <button className="io-btn io-btn-primary" onClick={onRestart}>
+              Play Again
+            </button>
+          )}
           <button className="io-btn io-btn-ghost" onClick={onExit}>
             Main Menu
           </button>

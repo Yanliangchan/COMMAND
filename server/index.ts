@@ -28,6 +28,7 @@ import { randomScenario, scenarioById, Scenario } from '../src/game/scenarios';
 import { GameState, MatchRules, PlayerId, otherPlayer, validateMatchRules } from '../src/game/types';
 import { ClientMsg, CreateRulesInput, GameAction, ReplayViewState, RoomRulesInfo, ServerMsg, WireGameState } from '../src/net/protocol';
 import { BotDifficulty, decideBotAction } from './bot';
+import { islandWss } from './island';
 
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -471,7 +472,18 @@ const httpServer = createServer((req, res) => {
 // Caps guard against a single client exhausting server memory: an oversized
 // message (maxPayload) or an unbounded flood of rooms (MAX_ROOMS, checked
 // before every room-creating message below).
-const wss = new WebSocketServer({ server: httpServer, path: '/ws', maxPayload: 64 * 1024 });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+
+// Two games share one port: the classic sim on /ws, Island Ops on /io.
+httpServer.on('upgrade', (req, socket, head) => {
+  const pathname = (req.url || '/').split('?')[0];
+  const target = pathname === '/ws' ? wss : pathname === '/io' ? islandWss : null;
+  if (!target) {
+    socket.destroy();
+    return;
+  }
+  target.handleUpgrade(req, socket, head, (ws) => target.emit('connection', ws, req));
+});
 const MAX_ROOMS = 2000;
 
 wss.on('connection', (ws) => {
@@ -719,5 +731,5 @@ process.on('uncaughtException', (err) => {
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`[COMMAND] listening on :${PORT} — HTTP (static: ${DIST_DIR}) + WebSocket on /ws`);
+  console.log(`[COMMAND] listening on :${PORT} — HTTP (static: ${DIST_DIR}) + WebSocket on /ws (classic) and /io (Island Ops)`);
 });
