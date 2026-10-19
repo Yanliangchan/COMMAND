@@ -742,11 +742,19 @@ a:focus-visible {
   margin-right: 4px;
 }
 
-.io-ops {
+.io-side {
   position: absolute;
   top: 76px;
   left: 14px;
   width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 4;
+  max-height: calc(100% - 230px);
+}
+
+.io-ops {
   background: var(--panel);
   border: 2px solid var(--line);
   border-left: 6px solid var(--c);
@@ -1297,8 +1305,10 @@ a:focus-visible {
 .io-toast {
   position: absolute;
   bottom: 150px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: max-content;
   background: #fffaf0;
   color: #2b2116;
   border-radius: 999px;
@@ -1522,6 +1532,17 @@ a:focus-visible {
   gap: 10px;
 }
 
+/* --- Wide screens: keep the island clear of the side panels ------------- */
+
+@media (min-width: 1101px) {
+  .io-map-wrap {
+    left: 252px;
+  }
+  .io-side {
+    width: 236px;
+  }
+}
+
 /* --- Small screens ------------------------------------------------------ */
 
 @media (max-width: 1100px) {
@@ -1549,12 +1570,17 @@ a:focus-visible {
   .io-round {
     display: none;
   }
-  .io-ops {
+  .io-side {
     top: 70px;
     left: 8px;
     width: auto;
     right: 8px;
+  }
+  .io-ops {
     padding: 6px 10px;
+  }
+  .io-sectors {
+    display: none;
   }
   .io-ops-alt {
     display: none;
@@ -1582,5 +1608,277 @@ a:focus-visible {
   }
   .io-dice-tray {
     min-width: 0;
+  }
+}
+
+/* --- v0.2: odds, drag, threats, sectors, recap, skip -------------------- */
+
+.io-game .io-map {
+  touch-action: none;
+}
+
+.io-drag-line {
+  stroke-dasharray: 10 7;
+  pointer-events: none;
+}
+
+.io-tag rect {
+  fill: #fff;
+  stroke: #1d2a36;
+  stroke-width: 1.4;
+}
+
+.io-tag text {
+  font-family: var(--display);
+  font-size: 10.5px;
+  text-anchor: middle;
+  fill: #1d2a36;
+  pointer-events: none;
+}
+
+.io-tag {
+  animation: io-pop 0.25s ease-out;
+  transform-box: fill-box;
+  pointer-events: none;
+}
+
+.io-threat path {
+  fill: #ff5a4e;
+  stroke: #fff;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+.io-threat text {
+  font-family: var(--display);
+  font-size: 10px;
+  text-anchor: middle;
+  fill: #fff;
+}
+
+.io-threat {
+  pointer-events: none;
+  animation: io-threat 1.6s ease-in-out infinite;
+}
+
+@keyframes io-threat {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.io-alert-ring {
+  fill: none;
+  stroke: #ff5a4e;
+  stroke-width: 5;
+  animation: io-alert 1s ease-in-out infinite;
+}
+
+@keyframes io-alert {
+  0%,
+  100% {
+    r: 18;
+    opacity: 1;
+  }
+  50% {
+    r: 30;
+    opacity: 0.35;
+  }
+}
+
+.io-odds {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px 4px 6px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  --tone: #7ddc6a;
+}
+
+.io-odds-mid {
+  --tone: #ffc83d;
+}
+
+.io-odds-bad {
+  --tone: #ff7b6e;
+}
+
+.io-odds-pct {
+  font-family: var(--display);
+  font-size: 30px;
+  line-height: 1;
+  color: var(--tone);
+  min-width: 64px;
+  text-align: right;
+}
+
+.io-odds-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  min-width: 96px;
+}
+
+.io-odds-bar {
+  height: 7px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.io-odds-bar i {
+  display: block;
+  height: 100%;
+  background: var(--tone);
+  border-radius: 99px;
+  transition: width 0.3s ease;
+}
+
+.io-sectors {
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  padding: 8px 12px 10px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.io-sectors-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 6px;
+}
+
+.io-next {
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: none;
+  font-size: 12px;
+}
+
+.io-next b {
+  color: var(--gold);
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 15px;
+}
+
+.io-sector-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 34px 22px;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.io-sector-mine .io-sector-name {
+  color: var(--gold);
+}
+
+.io-sector-bar {
+  display: flex;
+  gap: 2px;
+  height: 9px;
+}
+
+.io-sector-bar i {
+  flex: 1;
+  border-radius: 3px;
+}
+
+.io-sector-count {
+  text-align: right;
+  color: var(--muted);
+}
+
+.io-sector-bonus {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.io-recap {
+  position: absolute;
+  top: 76px;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: min(440px, calc(100% - 32px));
+  background: #fffaf0;
+  color: #2b2116;
+  border-radius: 16px;
+  padding: 10px 14px 12px;
+  z-index: 7;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+  animation: io-drop 0.3s ease-out;
+}
+
+.io-recap-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--display);
+  font-size: 15px;
+  color: #9a2b1d;
+}
+
+.io-recap .io-icon-btn {
+  background: rgba(0, 0, 0, 0.07);
+  color: #2b2116;
+  width: 28px;
+  height: 28px;
+}
+
+.io-recap ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 14px;
+}
+
+.io-recap li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  line-height: 1.3;
+}
+
+.io-recap li i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transform: translateY(1px);
+}
+
+.io-skip {
+  padding: 6px 12px;
+  font-size: 14px;
+  margin-left: 6px;
+}
+
+.io-dice-held {
+  font-family: var(--display);
+  color: #8fd6ff;
+  animation: io-pop 0.35s ease-out;
+}
+
+@media (max-width: 760px) {
+  .io-recap {
+    top: 150px;
+  }
+  .io-panel-wait {
+    white-space: normal;
+    width: calc(100% - 16px);
+    bottom: 8px;
   }
 }

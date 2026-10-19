@@ -4,13 +4,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sound } from '../../audio/sound';
-import { BOARD, SECTORS, SECTOR_IDS, regionsInSector } from '../map';
+import { BOARD, SECTORS, SECTOR_IDS, SectorId, regionsInSector } from '../map';
 import {
   IllegalAction, apply, attackOptions, canStrike, connectedOwned, current, missionProgress, player, regionsOf, reinforcement, troopsOf,
 } from '../engine';
 import { BotLevel, botAction } from '../bot';
-import { Action, FACTIONS, FactionId, GameEvent, GameState, MAX_HAND } from '../types';
-import { DiceTray } from './Dice';
+import { captureChance, oddsLabel } from '../odds';
+import { Action, AMPHIBIOUS_MAX_DICE, FACTIONS, FactionId, GameEvent, GameState, MAX_HAND } from '../types';
+import { DiceTray, trayDuration } from './Dice';
 import { Emblem } from './Glyphs';
 import { HandDrawer } from './Hand';
 import { Arrow, Fx, Highlight, MapView } from './MapView';
@@ -33,6 +34,100 @@ interface Selection {
 type Amount = 1 | 5 | 'all';
 type Speed = 1 | 2 | 4;
 
+const SPEED_KEY = 'island_ops_speed_v1';
+
+function loadSpeed(): Speed {
+  try {
+    const v = Number(localStorage.getItem(SPEED_KEY));
+    if (v === 1 || v === 2 || v === 4) return v;
+  } catch {
+    // Storage unavailable — use the default.
+  }
+  return 2;
+}
+
+/** The board as it stood when your turn ended — what the recap compares against. */
+interface Snapshot {
+  owners: Record<string, FactionId>;
+  troops: number;
+  alive: FactionId[];
+  sectors: Partial<Record<SectorId, FactionId>>;
+}
+
+interface RecapLine {
+  color: string;
+  text: string;
+}
+
+interface Recap {
+  lines: RecapLine[];
+  lost: string[];
+}
+
+function sectorHolders(game: GameState): Partial<Record<SectorId, FactionId>> {
+  const out: Partial<Record<SectorId, FactionId>> = {};
+  for (const sec of SECTOR_IDS) {
+    const regions = regionsInSector(sec);
+    const owner = game.map[regions[0]].owner;
+    if (regions.every((r) => game.map[r].owner === owner)) out[sec] = owner;
+  }
+  return out;
+}
+
+function snapshot(game: GameState, human: FactionId): Snapshot {
+  return {
+    owners: Object.fromEntries(Object.entries(game.map).map(([r, h]) => [r, h.owner])),
+    troops: troopsOf(game, human),
+    alive: game.order.filter((f) => player(game, f).alive),
+    sectors: sectorHolders(game),
+  };
+}
+
+function buildRecap(before: Snapshot, game: GameState, human: FactionId): Recap {
+  const lines: RecapLine[] = [];
+  const lost: string[] = [];
+  const takenFromMe = new Map<FactionId, string[]>();
+  const gains = new Map<FactionId, number>();
+  for (const [r, was] of Object.entries(before.owners)) {
+    const now = game.map[r].owner;
+    if (now === was) continue;
+    gains.set(now, (gains.get(now) ?? 0) + 1);
+    if (was === human) {
+      lost.push(r);
+      takenFromMe.set(now, [...(takenFromMe.get(now) ?? []), BOARD.byId[r].name]);
+    }
+  }
+  for (const [f, names] of takenFromMe)
+    lines.push({ color: FACTIONS[f].color, text: `${FACTIONS[f].name} took ${names.join(', ')} from you.` });
+  for (const [f, n] of gains) {
+    if (f === human || takenFromMe.has(f)) continue;
+    lines.push({ color: FACTIONS[f].color, text: `${FACTIONS[f].name} captured ${n} region${n > 1 ? 's' : ''}.` });
+  }
+  const holders = sectorHolders(game);
+  for (const sec of SECTOR_IDS) {
+    const now = holders[sec];
+    if (now && now !== before.sectors[sec] && now !== human)
+      lines.push({ color: FACTIONS[now].color, text: `${FACTIONS[now].name} secured the ${SECTORS[sec].name} (+${SECTORS[sec].bonus}/turn).` });
+    if (before.sectors[sec] === human && now !== human)
+      lines.push({ color: '#ff5a4e', text: `You lost your hold on the ${SECTORS[sec].name}.` });
+  }
+  for (const f of before.alive) {
+    if (!player(game, f).alive) lines.push({ color: FACTIONS[f].color, text: `${FACTIONS[f].name} was eliminated.` });
+  }
+  const delta = troopsOf(game, human) - before.troops;
+  if (!lines.length) lines.push({ color: FACTIONS[human].color, text: 'Quiet front. Nobody touched your ground.' });
+  else if (delta < 0) lines.push({ color: '#ff5a4e', text: `You lost ${-delta} troops in all.` });
+  return { lines, lost };
+}
+
+/** Your regions where a single enemy neighbour has more troops than you do. */
+function threatenedRegions(game: GameState, human: FactionId): string[] {
+  return regionsOf(game, human).filter((r) => {
+    const mine = game.map[r].troops;
+    return BOARD.byId[r].neighbours.some((n) => game.map[n].owner !== human && game.map[n].troops > mine);
+  });
+}
+
 export function GameScreen({ initial, level, onExit, onRestart }: { initial: GameState; level: BotLevel; onExit: () => void; onRestart: () => void }) {
   const [game, setGame] = useState(initial);
   const [sel, setSel] = useState<Selection>({});
@@ -40,12 +135,23 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   const [count, setCount] = useState(1);
   const [handOpen, setHandOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
-  const [speed, setSpeed] = useState<Speed>(1);
+  const [speed, setSpeedState] = useState<Speed>(loadSpeed);
   const [fx, setFx] = useState<Fx[]>([]);
   const [battle, setBattle] = useState<Battle | null>(null);
+  const [battleKey, setBattleKey] = useState(0);
   const [banners, setBanners] = useState<Banner[]>([]);
   const [toast, setToast] = useState<string | null>(null);
+  const [recap, setRecap] = useState<Recap | null>(null);
   const lastTick = useRef(game.tick - 1);
+  const snap = useRef<Snapshot | null>(null);
+  const setSpeed = (v: Speed) => {
+    setSpeedState(v);
+    try {
+      localStorage.setItem(SPEED_KEY, String(v));
+    } catch {
+      // Not persisted; harmless.
+    }
+  };
   const human = game.order.find((f) => player(game, f).human) ?? null;
   const me = current(game);
   const myTurn = me === human && game.phase !== 'GAME_OVER';
@@ -68,6 +174,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
       switch (e.kind) {
         case 'BATTLE':
           setBattle(e);
+          setBattleKey(game.tick);
           sound.play('attack');
           break;
         case 'CAPTURE': {
@@ -113,7 +220,8 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   useEffect(() => {
     if (!battle) return;
     // Your own rolls always get time to read; bot rolls follow the speed setting.
-    const t = window.setTimeout(() => setBattle(null), battle.attacker === human ? 2400 : 1500 / speed);
+    const mine = battle.attacker === human;
+    const t = window.setTimeout(() => setBattle(null), mine ? trayDuration(battle, false) : trayDuration(battle, true) / speed);
     return () => clearTimeout(t);
   }, [battle, human, speed]);
 
@@ -128,16 +236,42 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
     if (over || myTurn) return;
     const action = botAction(game, level);
     const lastEvent = game.events[game.events.length - 1];
-    const justFought = lastEvent?.tick === game.tick && (lastEvent.event.kind === 'BATTLE' || lastEvent.event.kind === 'CAPTURE' || lastEvent.event.kind === 'ELIMINATED');
-    const base = justFought ? 1250 : action.type === 'PLACE' ? 500 : action.type === 'ATTACK' || action.type === 'STRIKE' ? 450 : action.type === 'TRADE' ? 800 : 350;
+    const fight = game.events.find((e) => e.tick === game.tick && e.event.kind === 'BATTLE')?.event as Battle | undefined;
+    const justFought = lastEvent?.tick === game.tick && (fight || lastEvent.event.kind === 'ELIMINATED');
+    // After a fight, wait for its dice cascade to play out before the next move.
+    const base = justFought ? Math.max(1250, fight ? trayDuration(fight, true) : 0) : action.type === 'PLACE' ? 500 : action.type === 'ATTACK' || action.type === 'STRIKE' ? 450 : action.type === 'TRADE' ? 800 : 350;
     const t = window.setTimeout(() => setGame((g) => (g === game ? apply(g, action) : g)), base / speed);
     return () => clearTimeout(t);
   }, [game, myTurn, over, level, speed]);
 
-  // Keep selections valid as the board changes under them.
+  // Keep selections valid as the board changes under them; snapshot the board
+  // as your turn ends and show what changed when it comes round again.
   useEffect(() => {
-    if (!myTurn) setSel({});
+    if (!human) return;
+    if (!myTurn) {
+      setSel({});
+      if (!over && player(game, human).alive) snap.current = snapshot(game, human);
+      return;
+    }
+    if (!snap.current) return;
+    const r = buildRecap(snap.current, game, human);
+    snap.current = null;
+    setRecap(r);
+    const ids = r.lost.map((region) => `alert-${game.tick}-${region}`);
+    setFx((f) => [...f, ...r.lost.map((region, i) => ({ id: ids[i], kind: 'alert' as const, region, color: '#ff5a4e' }))]);
+    window.setTimeout(() => setFx((f) => f.filter((x) => !ids.includes(x.id))), 6000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTurn]);
+
+  // Run the bots straight through to your next turn (or the end) with no animation.
+  const skipToMyTurn = () => {
+    let g = game;
+    for (let i = 0; i < 20000 && g.phase !== 'GAME_OVER' && current(g) !== human; i++) g = apply(g, botAction(g, level));
+    lastTick.current = g.tick;
+    setBattle(null);
+    if (g.phase !== 'GAME_OVER') sound.play('turn');
+    setGame(g);
+  };
 
   const dispatch = useCallback(
     (action: Action) => {
@@ -178,6 +312,35 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
     for (const r of redeployTargets) h[r] = 'friendly';
     return h;
   }, [game, myTurn, placing, sel, options, redeployTargets, me]);
+
+  const tags = useMemo(() => {
+    const t: Record<string, string> = {};
+    if (!sel.from || sel.to || game.phase !== 'ASSAULT') return t;
+    const a = game.map[sel.from].troops;
+    for (const o of options) {
+      const p = captureChance(a, game.map[o.to].troops, BOARD.byId[o.to].stronghold, o.mode === 'AMPHIBIOUS' ? AMPHIBIOUS_MAX_DICE : 3);
+      t[o.to] = `${Math.round(p * 100)}%`;
+    }
+    return t;
+  }, [game, sel.from, sel.to, options]);
+
+  const threats = useMemo(() => (human && player(game, human).alive ? threatenedRegions(game, human) : []), [game, human]);
+
+  const drag = useMemo(
+    () => ({
+      canStart: (id: string) =>
+        myTurn && !game.pendingMove && !placing && (game.phase === 'ASSAULT' || game.phase === 'REDEPLOY') && game.map[id].owner === me && game.map[id].troops >= 2,
+      drop: (from: string, to: string) => {
+        if (game.phase === 'ASSAULT') {
+          if (attackOptions(game, from).some((o) => o.to === to)) return setSel({ from, to });
+          return setToast(`${BOARD.byId[from].name} can't reach ${BOARD.byId[to].name}.`);
+        }
+        if (connectedOwned(game, from).includes(to)) return setSel({ from, to });
+        setToast('Redeploy between your own connected regions.');
+      },
+    }),
+    [game, myTurn, placing, me],
+  );
 
   const arrow: Arrow | null = battle
     ? { from: battle.from, to: battle.to, color: FACTIONS[battle.attacker].color }
@@ -236,11 +399,20 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setSel({});
-      // A focused button already handles its own Enter; don't fire twice.
+      // A focused button handles its own Enter; don't fire twice.
       if (e.key === 'Enter' && myTurn && !(e.target as HTMLElement).closest?.('button')) primaryRef.current();
     };
+    // Mouse clicks shouldn't leave a button holding focus, or Enter would press
+    // it again instead of the main action. Keyboard clicks (detail 0) keep focus.
+    const onClick = (e: MouseEvent) => {
+      if (e.detail > 0) (e.target as HTMLElement).closest?.('button')?.blur();
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('click', onClick);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('click', onClick);
+    };
   }, [myTurn]);
 
   const meP = human ? player(game, human) : null;
@@ -248,18 +420,35 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   return (
     <div className="io-game">
       <div className="io-map-wrap">
-        <MapView holdings={game.map} highlights={highlights} dimOthers={Object.keys(highlights).length > 0} fx={fx} arrow={arrow} onRegion={onRegion} />
+        <MapView
+          holdings={game.map}
+          highlights={highlights}
+          dimOthers={Object.keys(highlights).length > 0}
+          fx={fx}
+          arrow={arrow}
+          onRegion={onRegion}
+          threats={threats}
+          tags={tags}
+          drag={drag}
+        />
       </div>
 
       <TopBar game={game} human={human} speed={speed} setSpeed={setSpeed} onExit={onExit} onLog={() => setLogOpen((v) => !v)} />
 
-      {meP && <OpsOrder game={game} human={human!} />}
+      {meP && (
+        <div className="io-side">
+          <OpsOrder game={game} human={human!} />
+          {meP.alive && <SectorPanel game={game} human={human!} />}
+        </div>
+      )}
+
+      {recap && myTurn && <RecapCard recap={recap} onClose={() => setRecap(null)} />}
 
       {logOpen && <LogPanel game={game} onClose={() => setLogOpen(false)} />}
 
       {battle && (
         <div className="io-dice-anchor">
-          <DiceTray battle={battle} compact={battle.attacker !== human} />
+          <DiceTray key={battleKey} battle={battle} compact={battle.attacker !== human} />
         </div>
       )}
 
@@ -289,6 +478,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
           attack={attack}
           openHand={() => setHandOpen(true)}
           primaryRef={primaryRef}
+          onSkip={skipToMyTurn}
         />
       )}
 
@@ -374,6 +564,60 @@ function OpsOrder({ game, human }: { game: GameState; human: FactionId }) {
   );
 }
 
+function SectorPanel({ game, human }: { game: GameState; human: FactionId }) {
+  const next = reinforcement(game, human).total;
+  return (
+    <div className="io-sectors">
+      <div className="io-sectors-head">
+        <span>Sectors</span>
+        <span className="io-next">
+          Next Mobilise <b>+{next}</b>
+        </span>
+      </div>
+      {SECTOR_IDS.map((sec) => {
+        const regions = regionsInSector(sec);
+        const mine = regions.filter((r) => game.map[r].owner === human).length;
+        const holder = regions.every((r) => game.map[r].owner === game.map[regions[0]].owner) ? game.map[regions[0]].owner : null;
+        return (
+          <div key={sec} className={`io-sector-row${holder === human ? ' io-sector-mine' : ''}`}>
+            <span className="io-sector-name">{SECTORS[sec].name.replace(' Sector', '')}</span>
+            <span className="io-sector-bar" aria-hidden="true">
+              {regions.map((r) => (
+                <i key={r} style={{ background: FACTIONS[game.map[r].owner].color, opacity: game.map[r].owner === human ? 1 : 0.35 }} />
+              ))}
+            </span>
+            <span className="io-sector-count">
+              {holder && holder !== human ? <b style={{ color: FACTIONS[holder].color }}>{FACTIONS[holder].short}</b> : `${mine}/${regions.length}`}
+            </span>
+            <span className="io-sector-bonus">+{SECTORS[sec].bonus}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RecapCard({ recap, onClose }: { recap: Recap; onClose: () => void }) {
+  return (
+    <div className="io-recap" role="status" data-testid="recap">
+      <div className="io-recap-head">
+        <b>While you were away</b>
+        <button className="io-icon-btn" onClick={onClose} aria-label="Dismiss">
+          ✕
+        </button>
+      </div>
+      <ul>
+        {recap.lines.map((l, i) => (
+          <li key={i}>
+            <i style={{ background: l.color }} />
+            {l.text}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function LogPanel({ game, onClose }: { game: GameState; onClose: () => void }) {
   const items = game.log.slice(-40).reverse();
   return (
@@ -427,9 +671,10 @@ interface PanelProps {
   attack: (blitz: boolean) => void;
   openHand: () => void;
   primaryRef: React.MutableRefObject<() => void>;
+  onSkip: () => void;
 }
 
-function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, count, setCount, dispatch, attack, openHand, primaryRef }: PanelProps) {
+function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, count, setCount, dispatch, attack, openHand, primaryRef, onSkip }: PanelProps) {
   const me = current(game);
   const fac = FACTIONS[me];
 
@@ -441,6 +686,9 @@ function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, cou
           <span>
             <b>You have been eliminated.</b> Watching the rest of the exercise…
           </span>
+          <button className="io-btn io-btn-ghost io-skip" onClick={onSkip}>
+            Skip to the end ⏭
+          </button>
         </div>
       );
     return (
@@ -451,6 +699,11 @@ function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, cou
         <span>
           <b>{fac.name}</b> is {game.phase === 'MOBILISE' ? 'mobilising' : game.phase === 'ASSAULT' ? 'on the attack' : 'redeploying'}…
         </span>
+        {human && (
+          <button className="io-btn io-btn-ghost io-skip" onClick={onSkip} data-testid="skip">
+            Skip to my turn ⏭
+          </button>
+        )}
       </div>
     );
   }
@@ -523,7 +776,10 @@ function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, cou
     if (sel.from && sel.to) {
       const a = game.map[sel.from].troops, d = game.map[sel.to].troops;
       const mode = attackOptions(game, sel.from).find((o) => o.to === sel.to)?.mode;
-      const dice = Math.min(3, a - 1);
+      const maxDice = mode === 'AMPHIBIOUS' ? AMPHIBIOUS_MAX_DICE : 3;
+      const dice = Math.min(maxDice, a - 1);
+      const p = captureChance(a, d, BOARD.byId[sel.to].stronghold, maxDice);
+      const tone = p >= 0.7 ? 'good' : p >= 0.4 ? 'mid' : 'bad';
       primary = { label: 'Roll Dice', run: () => attack(false) };
       body = (
         <div className="io-attack">
@@ -535,8 +791,17 @@ function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, cou
             </span>{' '}
             <b>{BOARD.byId[sel.to].name}</b>
           </div>
+          <div className={`io-odds io-odds-${tone}`} title="Chance a Blitz from here ends with the region captured" data-testid="odds">
+            <span className="io-odds-pct">{Math.round(p * 100)}%</span>
+            <span className="io-odds-text">
+              <b>{oddsLabel(p)}</b>
+              <span className="io-odds-bar">
+                <i style={{ width: `${p * 100}%` }} />
+              </span>
+            </span>
+          </div>
           <small>
-            You roll {dice} · they roll {Math.min(2, d)}
+            Blitz capture chance · you roll {dice} · they roll {Math.min(2, d)}
             {BOARD.byId[sel.to].stronghold ? ' · stronghold: +1 on their best die' : ''}
           </small>
           <button className="io-btn io-btn-blitz" onClick={() => attack(true)}>

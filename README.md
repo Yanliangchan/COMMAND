@@ -35,6 +35,19 @@ npm run islandcheck  # board checks + bot-vs-bot balance and pacing sim
 - **Win.** Complete your secret **Ops Order** (two named sectors, 24 regions,
   or eliminate a named rival), or be the last force standing.
 
+### Playing it
+
+- **Attack by dragging** from your region onto a target, or tap one then the
+  other. While you aim, every target shows your chance to capture it; the attack
+  panel shows the exact Blitz odds (computed, not estimated: `src/island/odds.ts`,
+  checked against the engine by `islandcheck`).
+- **Blitz** plays every roll in a quick cascade with a running tally.
+- **Bots** run at 2× by default (remembered), and **Skip to my turn** jumps
+  straight past them. Either way, your turn opens with a **While you were
+  away** recap, and regions you lost pulse red.
+- **Red ▲ markers** flag your regions with a bigger enemy stack next door. The
+  **Sectors** panel shows who holds what and your troops for next turn.
+
 ### The services
 
 | Service | Power |
@@ -64,6 +77,7 @@ src/island/
   types.ts        Factions, cards, missions, state and action types, tuning constants.
   engine.ts       Pure rules: newGame / apply(state, action) with a seeded RNG.
   bot.ts          botAction(state): one next action, so bot turns play out visibly.
+  odds.ts         Exact capture odds for a Blitz (dice enumeration + DP).
   IslandApp.tsx   Title screen → match.
   ui/             MapView (SVG diorama), GameScreen (HUD + turn flow), Dice, Hand, Glyphs.
   island.css      The Island Ops look.

@@ -27,24 +27,54 @@ export function Die({ value, color, lost, rolling, bonus }: { value: number; col
   );
 }
 
-/** Shows the last roll of a battle: a short tumble, then the faces settle and losers grey out. */
+function timing(battle: Battle, compact?: boolean) {
+  const tumble = compact ? 300 : 500;
+  const steps = battle.rolls.length - 1;
+  // A long Blitz still plays every roll, just faster, so the cascade never drags.
+  const step = steps ? Math.min(compact ? 140 : 300, (compact ? 900 : 2400) / steps) : 0;
+  return { tumble, step, steps };
+}
+
+/** How long the tray needs on screen to play out and still be read. */
+export function trayDuration(battle: Battle, compact?: boolean): number {
+  const t = timing(battle, compact);
+  return t.tumble + t.step * t.steps + (compact ? 900 : 1900);
+}
+
+/**
+ * A short tumble, then every roll of the battle in turn (a Blitz cascades
+ * through them with a running tally), settling on the last.
+ */
 export function DiceTray({ battle, compact }: { battle: Battle; compact?: boolean }) {
   const [rolling, setRolling] = useState(true);
   const [tumble, setTumble] = useState(0);
+  const [index, setIndex] = useState(0);
   useEffect(() => {
+    const t = timing(battle, compact);
     setRolling(true);
-    const spin = setInterval(() => setTumble((t) => t + 1), 70);
-    const stop = setTimeout(() => {
-      clearInterval(spin);
-      setRolling(false);
-    }, compact ? 350 : 550);
+    setIndex(0);
+    const timers: number[] = [];
+    const spin = window.setInterval(() => setTumble((x) => x + 1), 70);
+    timers.push(
+      window.setTimeout(() => {
+        clearInterval(spin);
+        setRolling(false);
+      }, t.tumble),
+    );
+    for (let i = 1; i <= t.steps; i++) timers.push(window.setTimeout(() => setIndex(i), t.tumble + t.step * i));
     return () => {
       clearInterval(spin);
-      clearTimeout(stop);
+      timers.forEach(clearTimeout);
     };
   }, [battle, compact]);
 
-  const roll = battle.rolls[battle.rolls.length - 1];
+  // A new battle can arrive while the last one's cascade is mid-way; never read past its rolls.
+  const at = Math.min(index, battle.rolls.length - 1);
+  const roll = battle.rolls[at];
+  const done = !rolling && at === battle.rolls.length - 1;
+  const shown = battle.rolls.slice(0, at + 1);
+  const atkLoss = rolling ? 0 : shown.reduce((n, r) => n + r.atkLoss, 0);
+  const defLoss = rolling ? 0 : shown.reduce((n, r) => n + r.defLoss, 0);
   const atk = FACTIONS[battle.attacker], def = FACTIONS[battle.defender];
   const pairs = Math.min(roll.atk.length, roll.def.length);
   const fake = (i: number) => 1 + ((tumble * 7 + i * 3) % 6);
@@ -59,13 +89,13 @@ export function DiceTray({ battle, compact }: { battle: Battle; compact?: boolea
       <div className="io-dice-rows">
         <div className="io-dice-row">
           {roll.atk.map((v, i) => (
-            <Die key={i} value={rolling ? fake(i) : v} color={atk.color} rolling={rolling} lost={!rolling && i < pairs && v <= roll.def[i]} />
+            <Die key={`${at}-${i}`} value={rolling ? fake(i) : v} color={atk.color} rolling={rolling} lost={!rolling && i < pairs && v <= roll.def[i]} />
           ))}
         </div>
         <div className="io-dice-row">
           {roll.def.map((v, i) => (
             <Die
-              key={i}
+              key={`${at}-${i}`}
               value={rolling ? fake(i + 3) : i === 0 && roll.stronghold ? v - 1 : v}
               bonus={!rolling && i === 0 && roll.stronghold}
               color={def.color}
@@ -77,14 +107,19 @@ export function DiceTray({ battle, compact }: { battle: Battle; compact?: boolea
       </div>
       {!rolling && (
         <div className="io-dice-result">
-          {battle.rolls.length > 1 && <span className="io-dice-blitz">BLITZ ×{battle.rolls.length}</span>}
+          {battle.rolls.length > 1 && (
+            <span className="io-dice-blitz">
+              BLITZ {at + 1}/{battle.rolls.length}
+            </span>
+          )}
           <span>
-            <b style={{ color: atk.color }}>{atk.short}</b> −{battle.atkLoss}
+            <b style={{ color: atk.color }}>{atk.short}</b> −{atkLoss}
           </span>
           <span>
-            <b style={{ color: def.color }}>{def.short}</b> −{battle.defLoss}
+            <b style={{ color: def.color }}>{def.short}</b> −{defLoss}
           </span>
-          {battle.captured && <span className="io-dice-captured">CAPTURED!</span>}
+          {done && battle.captured && <span className="io-dice-captured">CAPTURED!</span>}
+          {done && !battle.captured && battle.rolls.length > 1 && <span className="io-dice-held">HELD</span>}
         </div>
       )}
     </div>

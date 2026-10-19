@@ -3,7 +3,7 @@
 // regions painted in their owner's colour, chunky troop badges, landmarks.
 // ============================================================================
 
-import { memo } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { BOARD, SECTORS, SECTOR_IDS, polyPath } from '../map';
 import { FACTIONS, FactionId, Holding } from '../types';
 import { LandmarkGlyph } from './Glyphs';
@@ -12,7 +12,8 @@ export type Highlight = 'source' | 'attack' | 'amphibious' | 'strike' | 'friendl
 
 export interface Fx {
   id: string;
-  kind: 'ripple' | 'blast';
+  /** ripple: a capture · blast: a strike · alert: one of yours was lost while you were away */
+  kind: 'ripple' | 'blast' | 'alert';
   region: string;
   color: string;
 }
@@ -33,6 +34,27 @@ interface Props {
   showLabels?: boolean;
   /** Fade every region without a highlight, so the live choices pop. */
   dimOthers?: boolean;
+  /** Regions to flag with a warning marker: an enemy stack next door outnumbers them. */
+  threats?: string[];
+  /** Short labels floated above a region's badge — capture odds while aiming. */
+  tags?: Record<string, string>;
+  /** Drag from one region onto another (attack or redeploy). */
+  drag?: { canStart: (id: string) => boolean; drop: (from: string, to: string) => void };
+}
+
+interface DragState {
+  from: string;
+  x: number;
+  y: number;
+  /** Only draw the line once the pointer has really moved — a tap stays a tap. */
+  live: boolean;
+  startX: number;
+  startY: number;
+}
+
+function regionAt(clientX: number, clientY: number): string | null {
+  const el = document.elementFromPoint(clientX, clientY);
+  return el?.closest('[data-region]')?.getAttribute('data-region') ?? null;
 }
 
 const MAIN_PATH = polyPath(BOARD.mainland);
@@ -86,7 +108,55 @@ function SeaAndBase() {
   );
 }
 
-function MapViewInner({ holdings, highlights = {}, fx = [], arrow, onRegion, showBadges = true, showLabels = true, dimOthers = false }: Props) {
+function MapViewInner({ holdings, highlights = {}, fx = [], arrow, onRegion, showBadges = true, showLabels = true, dimOthers = false, threats = [], tags = {}, drag }: Props) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [dragging, setDragging] = useState<DragState | null>(null);
+  const dragRef = useRef(drag);
+  dragRef.current = drag;
+  const draggingRef = useRef(dragging);
+  draggingRef.current = dragging;
+
+  const toSvg = (clientX: number, clientY: number) => {
+    const svg = svgRef.current!;
+    const pt = new DOMPoint(clientX, clientY).matrixTransform(svg.getScreenCTM()!.inverse());
+    return { x: pt.x, y: pt.y };
+  };
+
+  const startDrag = (id: string, e: React.PointerEvent) => {
+    if (!dragRef.current?.canStart(id) || e.button > 0) return;
+    const p = toSvg(e.clientX, e.clientY);
+    setDragging({ from: id, ...p, live: false, startX: e.clientX, startY: e.clientY });
+  };
+
+  // Track the pointer on the window, not with pointer capture, so a plain tap
+  // still lands as a normal click on the region under it.
+  const active = dragging !== null;
+  useEffect(() => {
+    if (!active) return;
+    const move = (e: PointerEvent) =>
+      setDragging((d) => {
+        if (!d) return d;
+        const live = d.live || Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 10;
+        return { ...d, ...toSvg(e.clientX, e.clientY), live };
+      });
+    const up = (e: PointerEvent) => {
+      const d = draggingRef.current;
+      setDragging(null);
+      if (d?.live) {
+        const to = regionAt(e.clientX, e.clientY);
+        if (to && to !== d.from) dragRef.current?.drop(d.from, to);
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+  }, [active]);
+
   const renderRegion = (id: string) => {
     const h = holdings[id];
     const hl = highlights[id];
@@ -97,6 +167,7 @@ function MapViewInner({ holdings, highlights = {}, fx = [], arrow, onRegion, sho
         className={`io-region${hl ? ` io-hl-${hl}` : dimOthers ? ' io-dim' : ''}${onRegion ? ' io-clickable' : ''}`}
         style={{ fill: h ? FACTIONS[h.owner].color : '#9aa58a' }}
         onClick={onRegion ? () => onRegion(id) : undefined}
+        onPointerDown={drag ? (e) => startDrag(id, e) : undefined}
         data-region={id}
       />
     );
@@ -108,7 +179,7 @@ function MapViewInner({ holdings, highlights = {}, fx = [], arrow, onRegion, sho
   return (
     // Framed tight on the land: the sea margin is decoration, and every pixel of
     // scale matters on a phone.
-    <svg className="io-map" viewBox="35 60 930 480" preserveAspectRatio="xMidYMid meet">
+    <svg ref={svgRef} className={`io-map${drag ? ' io-map-live' : ''}`} viewBox="35 60 930 480" preserveAspectRatio="xMidYMid meet">
       <defs>
         <radialGradient id="io-sea" cx="50%" cy="45%" r="75%">
           <stop offset="0%" stopColor="#1b7f9c" />
@@ -166,12 +237,30 @@ function MapViewInner({ holdings, highlights = {}, fx = [], arrow, onRegion, sho
         )}
       </g>
 
-      {arrow && (
+      {arrow && !dragging?.live && (
         <path d={arrowPath(arrow.from, arrow.to)} className="io-arrow" stroke={arrow.color} markerEnd="url(#io-arrowhead)" />
+      )}
+
+      {dragging?.live && (
+        <line
+          x1={BOARD.byId[dragging.from].site[0]}
+          y1={BOARD.byId[dragging.from].site[1]}
+          x2={dragging.x}
+          y2={dragging.y}
+          className="io-arrow io-drag-line"
+          stroke="#ffd23f"
+          markerEnd="url(#io-arrowhead)"
+        />
       )}
 
       {fx.map((f) => {
         const [x, y] = BOARD.byId[f.region].site;
+        if (f.kind === 'alert')
+          return (
+            <g key={f.id} pointerEvents="none">
+              <circle cx={x} cy={y} r={24} className="io-alert-ring" />
+            </g>
+          );
         return f.kind === 'ripple' ? (
           <g key={f.id} pointerEvents="none">
             <circle cx={x} cy={y} r={10} className="io-ripple" stroke={f.color} />
@@ -198,6 +287,8 @@ function MapViewInner({ holdings, highlights = {}, fx = [], arrow, onRegion, sho
                 transform={`translate(${r.site[0]} ${r.site[1]})`}
                 className={`io-badge${onRegion ? ' io-clickable' : ''}`}
                 onClick={onRegion ? () => onRegion(r.id) : undefined}
+                onPointerDown={drag ? (e) => startDrag(r.id, e) : undefined}
+                data-region={r.id}
               >
                 <g filter="url(#io-badge-shadow)">
                   <circle r={rad + 2.5} fill="#fff" />
@@ -208,6 +299,18 @@ function MapViewInner({ holdings, highlights = {}, fx = [], arrow, onRegion, sho
                 <text key={h.troops} className="io-badge-num" dy="0.36em" fontSize={rad * 1.05}>
                   {h.troops}
                 </text>
+                {threats.includes(r.id) && (
+                  <g transform={`translate(${rad * 0.75} ${-rad * 0.85})`} className="io-threat">
+                    <path d="M0 -8 L8 6 L-8 6Z" />
+                    <text y="4.5">!</text>
+                  </g>
+                )}
+                {tags[r.id] && (
+                  <g transform={`translate(0 ${-rad - 13})`} className="io-tag">
+                    <rect x={-17} y={-9} width={34} height={17} rx={8.5} />
+                    <text y={4}>{tags[r.id]}</text>
+                  </g>
+                )}
                 {showLabels && (
                   <text className="io-region-name" y={rad + 11}>
                     {r.name}

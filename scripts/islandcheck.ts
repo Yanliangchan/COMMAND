@@ -9,6 +9,7 @@
 import { BOARD, REGION_IDS } from '../src/island/map';
 import { apply, newGame } from '../src/island/engine';
 import { botAction } from '../src/island/bot';
+import { captureChance } from '../src/island/odds';
 import { FACTION_IDS, FactionId } from '../src/island/types';
 
 let failures = 0;
@@ -38,6 +39,33 @@ check(seen.size === REGION_IDS.length, 'every region is reachable over land and 
   }
   check(!emptyAfterCapture, 'no region ever sits at 0 troops, even mid-capture');
   check(ok, 'a pending move-in already holds its minimum force');
+}
+
+// --- odds: the preview must match what the engine actually rolls -----------
+{
+  // A neighbouring pair; one plain, one stronghold target, at a few strengths.
+  const from = 'jurong-west', plain = 'tengah', strong = 'jurong-east';
+  const cases: [string, number, number][] = [[plain, 4, 2], [plain, 6, 5], [strong, 5, 3], [strong, 9, 6], [plain, 3, 3]];
+  let worst = 0;
+  for (const [to, a, d] of cases) {
+    const trials = 4000;
+    let wins = 0;
+    for (let t = 0; t < trials; t++) {
+      const s = newGame({ human: null, factions: ['ARMY', 'NAVY', 'DIS'], seed: 90000 + t * 7 });
+      const me = s.order[s.turnIndex];
+      const foe = s.order.find((f) => f !== me)!;
+      s.map[from] = { owner: me, troops: a };
+      s.map[to] = { owner: foe, troops: d };
+      s.phase = 'ASSAULT';
+      s.reserve = 0;
+      const after = apply(s, { type: 'ATTACK', from, to, blitz: true });
+      if (after.map[to].owner === me) wins++;
+    }
+    const exact = captureChance(a, d, BOARD.byId[to].stronghold);
+    worst = Math.max(worst, Math.abs(wins / trials - exact));
+  }
+  check(worst < 0.025, `capture odds match 4,000 real engine blitzes per case (worst gap ${(worst * 100).toFixed(1)} pts)`);
+  check(Math.abs(captureChance(2, 1, false) - 15 / 36) < 1e-9, 'one die vs one die: attacker wins 15/36');
 }
 
 // --- sim -------------------------------------------------------------------
