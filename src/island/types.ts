@@ -120,6 +120,7 @@ export type GameEvent =
   | { kind: 'TURN'; who: FactionId; round: number }
   | { kind: 'VICTORY'; who: FactionId; reason: string };
 
+/** After a capture: `min` troops are already in `to`; MOVE_IN sets the total, min..max. */
 export interface PendingMove {
   from: string;
   to: string;

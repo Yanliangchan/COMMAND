@@ -26,6 +26,20 @@ const queue = [REGION_IDS[0]];
 while (queue.length) for (const n of BOARD.byId[queue.pop()!].neighbours) if (!seen.has(n)) (seen.add(n), queue.push(n));
 check(seen.size === REGION_IDS.length, 'every region is reachable over land and crossings');
 
+// --- rules spot checks -----------------------------------------------------
+{
+  // Troops are conserved through a full bot game except for dice losses, strikes and new troops.
+  let s = newGame({ human: null, factions: ['ARMY', 'NAVY', 'DIS'], seed: 7 });
+  let ok = true, emptyAfterCapture = false;
+  for (let i = 0; i < 3000 && s.phase !== 'GAME_OVER'; i++) {
+    s = apply(s, botAction(s));
+    if (REGION_IDS.some((r) => s.map[r].troops < 1)) emptyAfterCapture = true;
+    if (s.pendingMove && s.map[s.pendingMove.to].troops !== s.pendingMove.min) ok = false;
+  }
+  check(!emptyAfterCapture, 'no region ever sits at 0 troops, even mid-capture');
+  check(ok, 'a pending move-in already holds its minimum force');
+}
+
 // --- sim -------------------------------------------------------------------
 const GAMES = Number(process.argv[2] ?? 300);
 const wins: Record<string, number> = {};

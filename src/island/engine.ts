@@ -365,13 +365,14 @@ function resolveBattle(s: GameState, from: string, to: string, blitz: boolean, m
   }
   if (!regionsOf(s, defender).length) eliminate(s, defender, me);
 
+  // The dice that won walk in at once, so the region is never shown empty;
+  // anything beyond that is the player's call.
   const lastDice = rolls[rolls.length - 1].atk.length;
   const max = s.map[from].troops - 1;
   const min = Math.min(lastDice, max);
-  if (min >= max) {
-    s.map[from].troops -= max;
-    s.map[to].troops = max;
-  } else s.pendingMove = { from, to, min, max };
+  s.map[from].troops -= min;
+  s.map[to].troops = min;
+  if (min < max) s.pendingMove = { from, to, min, max };
   checkVictory(s);
 }
 
@@ -463,9 +464,9 @@ export function apply(prev: GameState, action: Action): GameState {
     case 'MOVE_IN': {
       const pm = s.pendingMove;
       must(pm, 'Nothing to move in.');
-      const n = Math.min(pm.max, Math.max(pm.min, Math.floor(action.count)));
-      s.map[pm.from].troops -= n;
-      s.map[pm.to].troops += n;
+      const extra = Math.min(pm.max, Math.max(pm.min, Math.floor(action.count))) - pm.min;
+      s.map[pm.from].troops -= extra;
+      s.map[pm.to].troops += extra;
       s.pendingMove = null;
       break;
     }
