@@ -18,19 +18,17 @@ export type SectorId = 'WEST' | 'NORTH' | 'NORTHEAST' | 'EAST' | 'CENTRAL' | 'SO
 export interface SectorDef {
   id: SectorId;
   name: string;
-  /** Troops a turn for holding every region in the sector (RISK's continent bonus). */
-  bonus: number;
   /** Where the faint sector name is painted on the map. */
   label: Pt;
 }
 
 export const SECTORS: Record<SectorId, SectorDef> = {
-  WEST: { id: 'WEST', name: 'Western Sector', bonus: 3, label: [190, 300] },
-  NORTH: { id: 'NORTH', name: 'Northern Sector', bonus: 3, label: [400, 150] },
-  NORTHEAST: { id: 'NORTHEAST', name: 'North-East Sector', bonus: 3, label: [650, 200] },
-  EAST: { id: 'EAST', name: 'Eastern Sector', bonus: 3, label: [800, 280] },
-  CENTRAL: { id: 'CENTRAL', name: 'Central Sector', bonus: 5, label: [460, 270] },
-  SOUTH: { id: 'SOUTH', name: 'Southern Sector', bonus: 4, label: [520, 380] },
+  WEST: { id: 'WEST', name: 'Western Sector', label: [190, 300] },
+  NORTH: { id: 'NORTH', name: 'Northern Sector', label: [400, 150] },
+  NORTHEAST: { id: 'NORTHEAST', name: 'North-East Sector', label: [650, 200] },
+  EAST: { id: 'EAST', name: 'Eastern Sector', label: [800, 280] },
+  CENTRAL: { id: 'CENTRAL', name: 'Central Sector', label: [460, 270] },
+  SOUTH: { id: 'SOUTH', name: 'Southern Sector', label: [520, 380] },
 };
 
 export const SECTOR_IDS = Object.keys(SECTORS) as SectorId[];
@@ -42,7 +40,7 @@ interface RegionSeed {
   name: string;
   sector: SectorId;
   site: Pt;
-  /** Close country (towns, hills): the defender adds +1 to their highest die. */
+  /** Close country (towns, hills): the defender fights harder here. */
   stronghold?: boolean;
   landmark?: Landmark;
   /** Offshore island outline — such a region IS its island. */
@@ -78,7 +76,7 @@ const REGION_SEEDS: RegionSeed[] = [
   { id: 'lim-chu-kang', name: 'Lim Chu Kang', sector: 'NORTH', site: [220, 200] },
   { id: 'kranji', name: 'Kranji', sector: 'NORTH', site: [315, 160] },
   { id: 'woodlands', name: 'Woodlands', sector: 'NORTH', site: [410, 108], landmark: 'causeway', stronghold: true },
-  { id: 'sembawang', name: 'Sembawang', sector: 'NORTH', site: [495, 118] },
+  { id: 'sembawang', name: 'Sembawang', sector: 'NORTH', site: [495, 118], landmark: 'port' },
   { id: 'yishun', name: 'Yishun', sector: 'NORTH', site: [520, 175], stronghold: true },
   { id: 'mandai', name: 'Mandai', sector: 'NORTH', site: [390, 185] },
   // NORTHEAST
@@ -107,7 +105,7 @@ const REGION_SEEDS: RegionSeed[] = [
   { id: 'clementi', name: 'Clementi', sector: 'SOUTH', site: [350, 380] },
   { id: 'queenstown', name: 'Queenstown', sector: 'SOUTH', site: [420, 395] },
   { id: 'bukit-merah', name: 'Bukit Merah', sector: 'SOUTH', site: [475, 418] },
-  { id: 'tanjong-pagar', name: 'Tanjong Pagar', sector: 'SOUTH', site: [530, 425], stronghold: true },
+  { id: 'tanjong-pagar', name: 'Tanjong Pagar', sector: 'SOUTH', site: [530, 425], stronghold: true, landmark: 'port' },
   { id: 'marina-bay', name: 'Marina Bay', sector: 'SOUTH', site: [595, 395], landmark: 'towers', stronghold: true },
   { id: 'kallang', name: 'Kallang', sector: 'SOUTH', site: [635, 350], landmark: 'stadium' },
   { id: 'marine-parade', name: 'Marine Parade', sector: 'SOUTH', site: [710, 348] },
@@ -293,3 +291,87 @@ export function distance(a: string, b: string): number {
   const p = BOARD.byId[a].site, q = BOARD.byId[b].site;
   return Math.hypot(p[0] - q[0], p[1] - q[1]);
 }
+
+// ---------------------------------------------------------------------------
+// Sea zones — where the ships are. Each borders a set of coastal regions; ships
+// in a zone carry landings between any two of them, and the zones form a ring
+// around the island.
+// ---------------------------------------------------------------------------
+
+export type ZoneId = 'NORTH' | 'WEST' | 'SOUTH' | 'EAST';
+
+export interface SeaZone {
+  id: ZoneId;
+  name: string;
+  /** Where the zone's name and its ships are drawn. */
+  anchor: Pt;
+  coast: string[];
+  neighbours: ZoneId[];
+}
+
+export const SEA_ZONES: Record<ZoneId, SeaZone> = {
+  NORTH: {
+    id: 'NORTH',
+    name: 'Johor Strait',
+    anchor: [590, 82],
+    coast: ['lim-chu-kang', 'kranji', 'woodlands', 'sembawang', 'seletar', 'punggol', 'ubin', 'pasir-ris', 'tekong'],
+    neighbours: ['WEST', 'EAST'],
+  },
+  WEST: {
+    id: 'WEST',
+    name: 'Western Approaches',
+    anchor: [105, 225],
+    coast: ['lim-chu-kang', 'tuas', 'pioneer', 'jurong-island'],
+    neighbours: ['NORTH', 'SOUTH'],
+  },
+  SOUTH: {
+    id: 'SOUTH',
+    name: 'Singapore Strait',
+    anchor: [690, 470],
+    coast: ['jurong-island', 'pioneer', 'jurong-east', 'clementi', 'queenstown', 'bukit-merah', 'tanjong-pagar', 'sentosa', 'marina-bay', 'kallang', 'marine-parade'],
+    neighbours: ['WEST', 'EAST'],
+  },
+  EAST: {
+    id: 'EAST',
+    name: 'Changi Waters',
+    anchor: [905, 400],
+    coast: ['changi', 'bedok', 'tekong', 'pasir-ris', 'marine-parade'],
+    neighbours: ['NORTH', 'SOUTH'],
+  },
+};
+
+export const ZONE_IDS = Object.keys(SEA_ZONES) as ZoneId[];
+
+export function zonesOf(region: string): ZoneId[] {
+  return ZONE_IDS.filter((z) => SEA_ZONES[z].coast.includes(region));
+}
+
+// ---------------------------------------------------------------------------
+// Key Installations — what the fight is about. Each one held at the end of a
+// round scores a point, and each gives its holder something extra.
+// ---------------------------------------------------------------------------
+
+export type InstallationKind = 'AIRBASE' | 'PORT' | 'CITY' | 'INDUSTRY' | 'RADAR' | 'CAUSEWAY';
+
+export const INSTALLATIONS: Record<string, InstallationKind> = {
+  tengah: 'AIRBASE',
+  seletar: 'AIRBASE',
+  'paya-lebar': 'AIRBASE',
+  changi: 'AIRBASE',
+  tuas: 'PORT',
+  sembawang: 'PORT',
+  'tanjong-pagar': 'PORT',
+  'marina-bay': 'CITY',
+  'jurong-island': 'INDUSTRY',
+  'bukit-timah': 'RADAR',
+  woodlands: 'CAUSEWAY',
+};
+
+export const INSTALLATION_INFO: Record<InstallationKind, { label: string; perk: string }> = {
+  AIRBASE: { label: 'Air Base', perk: '+1 air sortie a round' },
+  PORT: { label: 'Naval Base', perk: 'Sunk ships recommission here' },
+  CITY: { label: 'City Centre', perk: '+2 troops a round' },
+  INDUSTRY: { label: 'Energy Hub', perk: '+2 troops a round' },
+  RADAR: { label: 'Radar Station', perk: '+1 recon a round' },
+  CAUSEWAY: { label: 'Causeway', perk: '+1 troop a round' },
+};

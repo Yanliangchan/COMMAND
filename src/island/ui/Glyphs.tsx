@@ -1,35 +1,23 @@
 // Small hand-drawn SVG glyphs: faction emblems, card kinds and map landmarks.
 
 import type { Landmark } from '../map';
-import type { CardKind, FactionId } from '../types';
+import type { FactionId } from '../types';
 
 const EMBLEM_PATHS: Record<FactionId, string> = {
-  ARMY: 'M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17l-6.1 3.4 1.5-6.8L2.2 9l6.9-.7z',
-  NAVY:
-    'M12 1.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM10.8 6.5h2.4v12.3c2.6-.4 4.6-2.2 5.2-4.6h-2.1l3.2-3.4 3.2 3.4h-1.8c-.8 4-4.6 7.3-8.9 7.3s-8.1-3.3-8.9-7.3H1.3l3.2-3.4 3.2 3.4H5.6c.6 2.4 2.6 4.2 5.2 4.6zM7.5 9h9v2.2h-9z',
-  AIRFORCE: 'M12 1.5l1.8 7 8.7 4.3v2.4l-8.6-2.2-.9 5.4 3.3 2.2v2.1L12 21.6l-4.3 1.1v-2.1l3.3-2.2-.9-5.4-8.6 2.2v-2.4l8.7-4.3z',
-  DIS: 'M12 4.5c5.4 0 9.6 4.7 10.6 7.5-1 2.8-5.2 7.5-10.6 7.5S2.4 14.8 1.4 12C2.4 9.2 6.6 4.5 12 4.5zm0 3a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zm0 2.7a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z',
+  // Singa: a lion's face in its mane.
+  SINGA: 'M12.0 0.5 L13.9 3.6 L17.0 1.6 L17.4 5.3 L21.0 4.8 L19.7 8.3 L23.2 9.4 L20.6 12.0 L23.2 14.6 L19.7 15.7 L21.0 19.2 L17.4 18.7 L17.0 22.4 L13.9 20.4 L12.0 23.5 L10.1 20.4 L7.0 22.4 L6.6 18.7 L3.0 19.2 L4.3 15.7 L0.8 14.6 L3.4 12.0 L0.8 9.4 L4.3 8.3 L3.0 4.8 L6.6 5.3 L7.0 1.6 L10.1 3.6Z M12 6.3a5.7 5.7 0 1 0 0.01 0Z M9.6 11a1 1 0 1 0 0.01 0Z M14.4 11a1 1 0 1 0 0.01 0Z M10.6 14.2h2.8l-1.4 1.6z',
+  // Harimau: three claw marks.
+  HARIMAU: 'M5 3.5c3 3 4.5 9 3.6 17l-2.2-.3c.6-7-.6-12-3-15zM11 2.5c3 3.5 4.3 10 3.3 18.5l-2.3-.2c.7-7.6-.4-13.4-2.9-16.6zM17.3 3.5c2.7 3 3.8 8.7 3 16.4l-2.2-.3c.5-6.6-.4-11.6-2.6-14.5z',
+  // Helang: spread wings and head.
+  HELANG: 'M12 4.2a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8zM1 9.5l8 2.6 3 3 3-3 8-2.6-3.6 4.4-4.7 1.8-2.7 5.1-2.7-5.1-4.7-1.8z',
+  // Jerung: a dorsal fin cutting the water.
+  JERUNG: 'M4 16.5C8 15.8 11.2 12 13.2 3.5c1.2 5.2 3.4 10 7.8 13zM2 19.2c2-1.4 3.6-1.4 5 0s3 1.4 5 0 3-1.4 5 0 3 1.4 5 0v2c-2 1.4-3.6 1.4-5 0s-3-1.4-5 0-3 1.4-5 0-3-1.4-5 0z',
 };
 
 export function Emblem({ faction, size = 24, color = 'currentColor' }: { faction: FactionId; size?: number; color?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path d={EMBLEM_PATHS[faction]} fill={color} fillRule="evenodd" />
-    </svg>
-  );
-}
-
-const KIND_PATHS: Record<CardKind, string> = {
-  LAND: 'M2 15h20l-2.5 4.5h-15zM5 10.5h10l2.5 4.5H4zM14.5 11.2l7-2.4v1.8l-7 2.4z',
-  SEA: 'M1.5 15h21l-3.5 5H5zM5.5 11h12.5l1 4H4.5zM9.5 6.5h5V11h-5zM11.4 2.5h1.2v4h-1.2z',
-  AIR: 'M12 2l1.6 6.2 8 4v2.2l-8-2-.8 5 3 2v2L12 20.5l-3.8.9v-2l3-2-.8-5-8 2v-2.2l8-4z',
-  WILD: 'M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17l-6.1 3.4 1.5-6.8L2.2 9l6.9-.7z',
-};
-
-export function KindIcon({ kind, size = 22 }: { kind: CardKind; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d={KIND_PATHS[kind]} fill="currentColor" />
     </svg>
   );
 }
@@ -100,7 +88,7 @@ export function LandmarkGlyph({ kind }: { kind: Landmark }) {
     case 'airbase':
       return (
         <g {...common} transform="scale(0.75)">
-          <path d={KIND_PATHS.AIR} transform="translate(-12 -12)" />
+          <path d="M12 2l1.6 6.2 8 4v2.2l-8-2-.8 5 3 2v2L12 20.5l-3.8.9v-2l3-2-.8-5-8 2v-2.2l8-4z" transform="translate(-12 -12)" />
         </g>
       );
     case 'port':

@@ -1,180 +1,231 @@
 // ============================================================================
-// ISLAND OPS — game state and rules constants.
+// ISLAND OPS — game state, orders and tuning constants.
+//
+// Every Pasukan (task force) plans its round in secret and at the same time;
+// the server — or, single-player, the client — resolves all orders together.
+// No dice: battles are decided by strength, and the uncertainty comes from not
+// knowing what the others ordered or exactly how strong they are.
 // ============================================================================
 
-import type { SectorId } from './map';
+import type { InstallationKind, ZoneId } from './map';
 
-export type FactionId = 'ARMY' | 'NAVY' | 'AIRFORCE' | 'DIS';
+export type FactionId = 'SINGA' | 'HARIMAU' | 'HELANG' | 'JERUNG';
 
 export interface FactionDef {
   id: FactionId;
+  /** "Pasukan Singa" */
   name: string;
   short: string;
+  animal: string;
   color: string;
   /** Darker shade for borders, badges and text on light fills. */
   deep: string;
   motto: string;
-  power: string;
-  powerText: string;
+  doctrine: string;
+  doctrineText: string;
+  /** Real SAF battalions in this Pasukan's order of battle (see README: Formation naming). */
+  battalions: string[];
+  /** The RSN squadron its ships belong to. */
+  squadron: string;
 }
 
 export const FACTIONS: Record<FactionId, FactionDef> = {
-  ARMY: {
-    id: 'ARMY', name: 'Army', short: 'ARMY', color: '#5fa832', deep: '#2f5e16',
-    motto: 'Ready, Decisive, Formidable',
-    power: 'NS Call-Up', powerText: '+1 extra troop every Mobilise phase, on top of everything else.',
+  SINGA: {
+    id: 'SINGA', name: 'Pasukan Singa', short: 'SINGA', animal: 'Lion', color: '#e0483c', deep: '#7a1d15',
+    motto: 'Majulah', doctrine: 'Total Mobilisation', doctrineText: '+1 troop every round.',
+    battalions: ['1 SIR', '2 SIR', '40 SAR', '21 SA', '10 C4I Bn'], squadron: '185 SQN',
   },
-  NAVY: {
-    id: 'NAVY', name: 'Navy', short: 'RSN', color: '#2f5fd0', deep: '#16306f',
-    motto: 'Beyond the Horizon',
-    power: 'Amphibious Assault', powerText: 'Attack any enemy coastal region within reach of your coastal regions, across the water.',
+  HARIMAU: {
+    id: 'HARIMAU', name: 'Pasukan Harimau', short: 'HARIMAU', animal: 'Tiger', color: '#f29a1f', deep: '#7a4504',
+    motto: 'Senyap, Pantas', doctrine: 'Ambush', doctrineText: '+1 strength whenever you defend. +1 recon a round, and you see exact enemy numbers along your borders.',
+    battalions: ['3 SIR', '5 SIR', '41 SAR', '35 SCE', '11 C4I Bn'], squadron: '188 SQN',
   },
-  AIRFORCE: {
-    id: 'AIRFORCE', name: 'Air Force', short: 'RSAF', color: '#23b5d9', deep: '#0d5a6e',
-    motto: 'Above All',
-    power: 'Precision Strike', powerText: 'Once a turn, knock a troop off any enemy region on the island.',
+  HELANG: {
+    id: 'HELANG', name: 'Pasukan Helang', short: 'HELANG', animal: 'Eagle', color: '#3d8ee8', deep: '#163e74',
+    motto: 'Above All', doctrine: 'Air Superiority', doctrineText: '+1 air sortie every round.',
+    battalions: ['8 SIR', '1 GDS', '42 SAR', '20 SA', '12 C4I Bn'], squadron: '189 SQN',
   },
-  DIS: {
-    id: 'DIS', name: 'Digital & Intelligence', short: 'DIS', color: '#9150c8', deep: '#45206a',
-    motto: 'Stronger Together',
-    power: 'Signals Intelligence', powerText: 'Draw an Asset Card every turn, even without a capture, and every set you trade is worth +2 troops.',
+  JERUNG: {
+    id: 'JERUNG', name: 'Pasukan Jerung', short: 'JERUNG', animal: 'Shark', color: '#16a88f', deep: '#0a4d42',
+    motto: 'Beyond the Horizon', doctrine: 'Sea Control', doctrineText: 'An extra ship, ships carry 2 more troops, and your naval gunfire hits twice as hard.',
+    battalions: ['9 SIR', '1 CDO BN', '48 SAR', '30 SCE', '16 C4I Bn'], squadron: '191 SQN',
   },
 };
 
 export const FACTION_IDS = Object.keys(FACTIONS) as FactionId[];
 
-export type CardKind = 'LAND' | 'SEA' | 'AIR' | 'WILD';
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 
-export interface Card {
-  id: number;
-  kind: CardKind;
-  /** The SAF asset on the card face. */
-  asset: string;
-  /** Holding this region when the card is traded puts +2 troops on it. */
-  region: string | null;
+export interface Holding {
+  owner: FactionId;
+  troops: number;
+  /** The company holding it, e.g. "Charlie Coy, 40 SAR". */
+  unit: string;
 }
 
-export const ASSETS: Record<Exclude<CardKind, 'WILD'>, string[]> = {
-  LAND: ['Leopard 2SG', 'Hunter AFV', 'Bionix II', 'Terrex ICV', 'HIMARS', 'Pegasus Howitzer'],
-  SEA: ['Formidable Frigate', 'Invincible Submarine', 'Littoral Mission Vessel', 'Endurance LST'],
-  AIR: ['F-15SG', 'F-35B', 'AH-64D Apache', 'CH-47 Chinook', 'Hermes UAV'],
-};
+const COMPANIES = ['Alpha Coy', 'Bravo Coy', 'Charlie Coy', 'Support Coy'];
 
-export type AttackMode = 'LAND' | 'AMPHIBIOUS';
+/** Every company in a Pasukan's ORBAT, in the order they're sent to hold ground. */
+export function companies(f: FactionId): string[] {
+  const out: string[] = [];
+  for (const coy of COMPANIES) for (const bn of FACTIONS[f].battalions) out.push(`${coy}, ${bn}`);
+  return out;
+}
 
-export type Phase = 'MOBILISE' | 'ASSAULT' | 'REDEPLOY' | 'GAME_OVER';
-
-export type MissionKind = 'SECTORS' | 'REGIONS' | 'ELIMINATE';
-
-export interface Mission {
-  kind: MissionKind;
-  sectors?: SectorId[];
-  regions?: number;
-  target?: FactionId;
-  text: string;
+export interface Ship {
+  id: string;
+  /** e.g. "185 SQN · 2" */
+  name: string;
+  owner: FactionId;
+  /** null while in drydock after being sunk. */
+  zone: ZoneId | null;
+  /** Rounds until a sunk ship can recommission at a naval base its owner holds. */
+  repair: number;
 }
 
 export interface Player {
   id: FactionId;
   human: boolean;
   alive: boolean;
-  cards: Card[];
-  mission: Mission;
-  /** Captured at least one region this turn — earns a card at end of turn. */
-  conquered: boolean;
-  powerUsed: boolean;
-  eliminatedBy?: FactionId;
+  vp: number;
+  /** Regions revealed by recon this round (exact numbers, until the round resolves). */
+  revealed: string[];
+  reconsUsed: number;
+  /** This round's orders once submitted; null while still planning. */
+  orders: Order[] | null;
+  eliminatedRound?: number;
 }
 
-export interface Holding {
-  owner: FactionId;
-  troops: number;
-}
-
-export interface DiceRoll {
-  attacker: FactionId;
-  defender: FactionId;
-  from: string;
-  to: string;
-  atk: number[];
-  def: number[];
-  atkLoss: number;
-  defLoss: number;
-  /** +1 to the defender's highest die from a stronghold. */
-  stronghold: boolean;
-}
-
-export type GameEvent =
-  | { kind: 'BATTLE'; from: string; to: string; attacker: FactionId; defender: FactionId; rolls: DiceRoll[]; atkLoss: number; defLoss: number; captured: boolean; mode: AttackMode }
-  | { kind: 'CAPTURE'; region: string; by: FactionId; from: FactionId }
-  | { kind: 'SECTOR'; sector: SectorId; by: FactionId }
-  | { kind: 'ELIMINATED'; who: FactionId; by: FactionId }
-  | { kind: 'STRIKE'; region: string; by: FactionId; killed: number }
-  | { kind: 'CARD'; who: FactionId; card: Card }
-  | { kind: 'TRADE'; who: FactionId; troops: number }
-  | { kind: 'TURN'; who: FactionId; round: number }
-  | { kind: 'VICTORY'; who: FactionId; reason: string };
-
-/** After a capture: `min` troops are already in `to`; MOVE_IN sets the total, min..max. */
-export interface PendingMove {
-  from: string;
-  to: string;
-  min: number;
-  max: number;
-}
+export type Phase = 'PLANNING' | 'GAME_OVER';
 
 export interface GameState {
   seed: number;
   rng: number;
   round: number;
-  turnIndex: number;
-  order: FactionId[];
-  players: Record<FactionId, Player | undefined>;
-  map: Record<string, Holding>;
   phase: Phase;
-  reserve: number;
-  /** Set right after a capture — the player must move troops in before anything else. */
-  pendingMove: PendingMove | null;
-  deck: Card[];
-  discard: Card[];
-  tradesDone: number;
-  /** Incremented every action; UI uses it to key animations. */
-  tick: number;
-  events: { tick: number; event: GameEvent }[];
+  factions: FactionId[];
+  players: Partial<Record<FactionId, Player>>;
+  map: Record<string, Holding>;
+  ships: Ship[];
+  /** The last round's resolution, for the playback and the recap. */
+  lastReport: RoundReport | null;
   log: { round: number; who: FactionId | null; text: string }[];
   winner: FactionId | null;
   winReason: string | null;
-  stats: { attacks: number; captures: number; turns: number };
+  stats: { battles: number; captures: number };
 }
 
-export type Action =
-  | { type: 'PLACE'; region: string; count: number }
-  | { type: 'TRADE'; cardIds: number[] }
-  | { type: 'END_MOBILISE' }
-  | { type: 'ATTACK'; from: string; to: string; blitz: boolean }
-  | { type: 'MOVE_IN'; count: number }
-  | { type: 'STRIKE'; region: string }
-  | { type: 'END_ASSAULT' }
-  | { type: 'REDEPLOY'; from: string; to: string; count: number }
-  | { type: 'END_TURN' };
+// ---------------------------------------------------------------------------
+// Orders — what a player submits for a round
+// ---------------------------------------------------------------------------
 
-export const START_TROOPS: Record<number, number> = { 2: 32, 3: 28, 4: 24, 5: 20 };
-export const MIN_REINFORCEMENT = 3;
-export const ARMY_BONUS = 1;
-export const STRIKE_DAMAGE = 1;
-export const CARD_REGION_BONUS = 2;
-/** DIS turns intelligence into manpower: every set it trades is worth this much more. */
-export const DIS_TRADE_BONUS = 2;
-export const MAX_HAND = 5;
-export const AMPHIBIOUS_REACH = 230;
-export const REGION_GOAL = 24;
-/** Landing craft carry less: an amphibious assault rolls at most this many dice. */
-export const AMPHIBIOUS_MAX_DICE = 3;
-/** Safety valve: a stalemated game is decided on regions held after this round. */
-export const MAX_ROUNDS = 40;
+export type Order =
+  /** Put new troops down in one of your regions. */
+  | { kind: 'DEPLOY'; region: string; count: number }
+  /** March to a neighbouring region: reinforce it if yours, attack it if not. */
+  | { kind: 'MOVE'; from: string; to: string; count: number }
+  /** Ship troops across a sea zone you control, coast to coast. */
+  | { kind: 'LAND'; from: string; to: string; zone: ZoneId; count: number }
+  /** Sail a ship to a neighbouring zone. */
+  | { kind: 'SAIL'; ship: string; to: ZoneId }
+  /** Air sortie: bomb a region before the fighting. */
+  | { kind: 'STRIKE'; region: string }
+  /** Air sortie: close air support for whatever you fight at a region. */
+  | { kind: 'CAS'; region: string };
 
-/** RISK's escalating trade-in values: 4, 6, 8, 10, 12, 15, then +5 each. */
-export function tradeValue(tradesDone: number): number {
-  const fixed = [4, 6, 8, 10, 12, 15];
-  return tradesDone < fixed.length ? fixed[tradesDone] : 15 + 5 * (tradesDone - fixed.length + 1);
+// ---------------------------------------------------------------------------
+// What one player is allowed to see
+// ---------------------------------------------------------------------------
+
+/** exact: a number · band: a range like 3–5 · hidden: nothing but the owner's colour */
+export type Intel = { kind: 'exact'; troops: number } | { kind: 'band'; min: number; max: number } | { kind: 'hidden' };
+
+export interface RegionView {
+  owner: FactionId;
+  intel: Intel;
+  /** The holding company — known for your own ground and wherever you have exact intel. */
+  unit: string | null;
 }
+
+export interface PlayerView {
+  me: FactionId;
+  round: number;
+  phase: Phase;
+  map: Record<string, RegionView>;
+  /** Ships are public: a fleet at sea can't hide. */
+  ships: Ship[];
+  players: { id: FactionId; alive: boolean; vp: number; regions: number; ready: boolean }[];
+  budget: Budget;
+  reconsLeft: number;
+  lastReport: RoundReport | null;
+  winner: FactionId | null;
+  winReason: string | null;
+}
+
+export interface Budget {
+  troops: number;
+  sorties: number;
+  recons: number;
+  /** How the troop figure is made up, for the HUD. */
+  troopParts: { label: string; n: number }[];
+}
+
+// ---------------------------------------------------------------------------
+// Round report — the resolution, step by step, for playback
+// ---------------------------------------------------------------------------
+
+export interface Side {
+  owner: FactionId;
+  /** The companies in the fight. */
+  units: string[];
+  troops: number;
+  /** Strength = troops + these bonuses. */
+  bonuses: { label: string; n: number }[];
+  strength: number;
+  /** Where an attacking force came from. */
+  from: string[];
+}
+
+export type ReportStep =
+  | { kind: 'NAVAL'; zone: ZoneId; sides: { owner: FactionId; ships: number }[]; winner: FactionId | null; sunk: Partial<Record<FactionId, number>> }
+  | { kind: 'STRIKE'; by: FactionId; region: string; killed: number }
+  | { kind: 'MOVES'; moves: { owner: FactionId; from: string; to: string; count: number; landing: boolean }[] }
+  | { kind: 'FAILED'; owner: FactionId; text: string }
+  | { kind: 'CLASH'; a: Side; b: Side; at: [string, string]; winner: FactionId | null }
+  | { kind: 'BATTLE'; region: string; defender: Side | null; attackers: Side[]; winner: FactionId; captured: boolean; survivors: number }
+  | { kind: 'RECOMMISSION'; owner: FactionId; zone: ZoneId }
+  | { kind: 'SCORE'; gains: Partial<Record<FactionId, number>> }
+  | { kind: 'ELIMINATED'; who: FactionId }
+  | { kind: 'VICTORY'; who: FactionId; reason: string };
+
+export interface RoundReport {
+  round: number;
+  steps: ReportStep[];
+}
+
+// ---------------------------------------------------------------------------
+// Tuning
+// ---------------------------------------------------------------------------
+
+export const START_TROOPS_PER_REGION = 2;
+export const HQ_TROOPS = 5;
+export const BASE_INCOME = 3;
+export const SINGA_BONUS = 1;
+export const START_SHIPS = 2;
+export const SHIP_CAPACITY = 3;
+export const JERUNG_CAPACITY_BONUS = 2;
+export const SHIP_REPAIR_ROUNDS = 2;
+export const BASE_SORTIES = 1;
+export const BASE_RECONS = 1;
+export const STRIKE_DAMAGE = 2;
+export const CAS_BONUS = 3;
+export const NAVAL_GUNFIRE_BONUS = 1;
+export const HARIMAU_AMBUSH_BONUS = 1;
+export const DEFENCE_BONUS = 1;
+export const STRONGHOLD_BONUS = 2;
+export const VP_TARGET = 30;
+export const MAX_ROUNDS = 15;
+
+export const INSTALLATION_INCOME: Partial<Record<InstallationKind, number>> = { CITY: 2, INDUSTRY: 2, CAUSEWAY: 1 };

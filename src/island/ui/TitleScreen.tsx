@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { BotLevel } from '../bot';
-import { FACTIONS, FACTION_IDS, FactionId } from '../types';
+import { FACTIONS, FACTION_IDS, FactionId, MAX_ROUNDS, VP_TARGET } from '../types';
 import { Emblem } from './Glyphs';
-import { MapView, demoHoldings } from './MapView';
+import { BOARD } from '../map';
+import { Badge, MapView } from './MapView';
 
 export interface Setup {
   faction: FactionId;
@@ -19,13 +20,17 @@ const LEVELS: { id: BotLevel; label: string; blurb: string }[] = [
 export function TitleScreen({ initial, onStart }: { initial: Setup; onStart: (s: Setup) => void }) {
   const [setup, setSetup] = useState(initial);
   const [howTo, setHowTo] = useState(false);
-  const backdrop = useMemo(() => demoHoldings(FACTION_IDS), []);
+  const backdrop = useMemo(() => {
+    const out: Record<string, Badge> = {};
+    BOARD.regions.forEach((r, i) => (out[r.id] = { owner: FACTION_IDS[(i * 7 + r.sector.length * 3) % FACTION_IDS.length], text: String(1 + ((i * 13) % 9)), fog: false }));
+    return out;
+  }, []);
   const chosen = FACTIONS[setup.faction];
 
   return (
     <div className="io-title" style={{ ['--c' as string]: chosen.color }}>
       <div className="io-title-map" aria-hidden="true">
-        <MapView holdings={backdrop} showLabels={false} />
+        <MapView badges={backdrop} showLabels={false} />
       </div>
       <div className="io-title-shade" />
 
@@ -36,11 +41,11 @@ export function TitleScreen({ initial, onStart }: { initial: Setup; onStart: (s:
             COMMAND
             <span className="io-logo-tag">ISLAND OPS</span>
           </h1>
-          <p className="io-tagline">Take the island. Sector by sector.</p>
+          <p className="io-tagline">Plan in secret. Strike together. Hold the island.</p>
         </header>
 
         <section className="io-setup">
-          <h2>Choose your service</h2>
+          <h2>Choose your Pasukan</h2>
           <div className="io-factions">
             {FACTION_IDS.map((id) => {
               const f = FACTIONS[id];
@@ -56,8 +61,9 @@ export function TitleScreen({ initial, onStart }: { initial: Setup; onStart: (s:
                     <Emblem faction={id} size={30} color="#fff" />
                   </span>
                   <span className="io-faction-name">{f.name}</span>
-                  <span className="io-faction-power">{f.power}</span>
-                  <span className="io-faction-text">{f.powerText}</span>
+                  <span className="io-faction-power">{f.doctrine}</span>
+                  <span className="io-faction-text">{f.doctrineText}</span>
+                  <span className="io-faction-orbat">{f.battalions.join(' · ')} · {f.squadron}</span>
                 </button>
               );
             })}
@@ -118,25 +124,33 @@ export function HowToPlay({ onClose }: { onClose: () => void }) {
             ✕
           </button>
         </div>
+        <p>
+          Every round, all Pasukan plan <b>at the same time and in secret</b>. When everyone is ready, all orders happen at once. No dice — the strongest force
+          wins, and ties go to whoever holds the ground. What you can't be sure of is what the others ordered, and exactly how strong they are.
+        </p>
         <ol className="io-howto-steps">
           <li>
-            <b>Mobilise.</b> Get troops: one for every three regions you hold (min 3), plus a bonus for every <b>whole sector</b> you hold. Tap your regions to
-            place them.
+            <b>Deploy</b> your new troops: 3 + one per three regions, plus extras from the City Centre, Energy Hub and Causeway.
           </li>
           <li>
-            <b>Assault.</b> Attack from a region with 2+ troops into a neighbour. You roll up to 3 dice, they roll up to 2; highest dice are compared and
-            ties go to the defender. Towns and hills (marked ▲) give the defender +1 on their best die. Wipe them out and you move in.
+            <b>Move.</b> Drag from your region onto a neighbour to march in (or reinforce). Every region keeps one troop. Columns that march straight at each
+            other clash on the road.
           </li>
           <li>
-            <b>Redeploy.</b> Move troops once between your connected regions, and your turn ends.
+            <b>Navy.</b> Ships sail one sea zone a round. Hold a zone alone and your ships carry landings between any two coasts on it, and add naval gunfire.
+            Rival fleets in one zone fight; the bigger fleet wins.
+          </li>
+          <li>
+            <b>Air.</b> Each sortie is a Strike (−2 troops on a region before anyone moves) or Air Support (+3 to your fight there). One sortie a round, plus
+            one per Air Base.
+          </li>
+          <li>
+            <b>Recon.</b> You only see rough numbers along your borders and nothing beyond. Recon shows a region and its neighbours exactly.
           </li>
         </ol>
         <p>
-          <b>Asset Cards.</b> Capture at least one region in a turn to earn a card. Trade three of a kind, or one of each, for troops; each trade in the game is
-          worth more than the last.
-        </p>
-        <p>
-          <b>Winning.</b> Complete your secret <b>Ops Order</b>, or be the last force on the island.
+          <b>Winning.</b> Each ★ Key Installation you hold at the end of a round scores 1 victory point. First to {VP_TARGET} wins — or hold the most when round{' '}
+          {MAX_ROUNDS} ends, or be the last Pasukan on the island.
         </p>
       </div>
     </div>

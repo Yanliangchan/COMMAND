@@ -1,409 +1,408 @@
 // ============================================================================
-// The match: map + HUD + turn flow. Bots play one visible step at a time.
+// The match. Each round: plan in secret (deploy, march, land, sail, fly,
+// recon) → Ready → every Pasukan's orders resolve together → watch the
+// playback, battle by battle → round report → plan again.
 // ============================================================================
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { sound } from '../../audio/sound';
-import { BOARD, SECTORS, SECTOR_IDS, SectorId, regionsInSector } from '../map';
+import { BOARD, INSTALLATIONS, INSTALLATION_INFO, REGION_IDS, SEA_ZONES, ZoneId } from '../map';
 import {
-  IllegalAction, apply, attackOptions, canStrike, connectedOwned, current, missionProgress, player, regionsOf, reinforcement, troopsOf,
+  IllegalAction, alive, defenceBonus, installationsOf, player, recon, regionsOf, resolveRound, sharedZones, shipCapacity, submitOrders, validateOrders, viewFor,
 } from '../engine';
-import { BotLevel, botAction } from '../bot';
-import { captureChance, oddsLabel } from '../odds';
-import { Action, AMPHIBIOUS_MAX_DICE, FACTIONS, FactionId, GameEvent, GameState, MAX_HAND } from '../types';
-import { DiceTray, trayDuration } from './Dice';
+import { BotLevel, planBot } from '../bot';
+import { FACTIONS, FactionId, GameState, MAX_ROUNDS, Order, PlayerView, ReportStep, RoundReport, Side, VP_TARGET } from '../types';
 import { Emblem } from './Glyphs';
-import { HandDrawer } from './Hand';
-import { Arrow, Fx, Highlight, MapView } from './MapView';
+import { Badge, Fx, Highlight, MapView, Marker, OrderArrow } from './MapView';
 
-type Battle = Extract<GameEvent, { kind: 'BATTLE' }>;
-
-interface Banner {
-  id: number;
-  title: string;
-  sub?: string;
-  color: string;
-}
-
-interface Selection {
-  from?: string;
-  to?: string;
-  striking?: boolean;
-}
-
+type Tool = 'deploy' | 'move' | 'strike' | 'cas' | 'recon';
 type Amount = 1 | 5 | 'all';
-type Speed = 1 | 2 | 4;
 
-const SPEED_KEY = 'island_ops_speed_v1';
-
-function loadSpeed(): Speed {
-  try {
-    const v = Number(localStorage.getItem(SPEED_KEY));
-    if (v === 1 || v === 2 || v === 4) return v;
-  } catch {
-    // Storage unavailable — use the default.
-  }
-  return 2;
+interface Picker {
+  from: string;
+  to: string;
+  zone: ZoneId | null;
+  max: number;
+  count: number;
 }
 
-/** The board as it stood when your turn ended — what the recap compares against. */
-interface Snapshot {
-  owners: Record<string, FactionId>;
-  troops: number;
-  alive: FactionId[];
-  sectors: Partial<Record<SectorId, FactionId>>;
+interface Playback {
+  report: RoundReport;
+  before: GameState;
+  after: GameState;
+  index: number;
+  overrides: Record<string, Badge>;
+  arrows: OrderArrow[];
+  card: ReportStep | null;
+  naval: ZoneId | null;
 }
 
-interface RecapLine {
+interface ReportLine {
   color: string;
   text: string;
 }
 
-interface Recap {
-  lines: RecapLine[];
-  lost: string[];
+const STEP_MS: Partial<Record<ReportStep['kind'], number>> = {
+  NAVAL: 1700, STRIKE: 650, MOVES: 1900, FAILED: 1200, CLASH: 1500, BATTLE: 1900, RECOMMISSION: 700, SCORE: 1900, ELIMINATED: 1600, VICTORY: 600,
+};
+
+function intelText(v: PlayerView['map'][string]): { text: string; fog: boolean } {
+  if (v.intel.kind === 'exact') return { text: String(v.intel.troops), fog: false };
+  if (v.intel.kind === 'band') return { text: v.intel.max >= 99 ? `${v.intel.min}+` : `${v.intel.min}–${v.intel.max}`, fog: true };
+  return { text: '?', fog: true };
 }
 
-function sectorHolders(game: GameState): Partial<Record<SectorId, FactionId>> {
-  const out: Partial<Record<SectorId, FactionId>> = {};
-  for (const sec of SECTOR_IDS) {
-    const regions = regionsInSector(sec);
-    const owner = game.map[regions[0]].owner;
-    if (regions.every((r) => game.map[r].owner === owner)) out[sec] = owner;
-  }
-  return out;
+function sideText(sd: Side) {
+  const bonus = sd.bonuses.reduce((n, b) => n + b.n, 0);
+  return `${sd.troops} troops${bonus ? ` +${bonus}` : ''}`;
 }
 
-function snapshot(game: GameState, human: FactionId): Snapshot {
-  return {
-    owners: Object.fromEntries(Object.entries(game.map).map(([r, h]) => [r, h.owner])),
-    troops: troopsOf(game, human),
-    alive: game.order.filter((f) => player(game, f).alive),
-    sectors: sectorHolders(game),
-  };
-}
-
-function buildRecap(before: Snapshot, game: GameState, human: FactionId): Recap {
-  const lines: RecapLine[] = [];
-  const lost: string[] = [];
-  const takenFromMe = new Map<FactionId, string[]>();
-  const gains = new Map<FactionId, number>();
-  for (const [r, was] of Object.entries(before.owners)) {
-    const now = game.map[r].owner;
-    if (now === was) continue;
-    gains.set(now, (gains.get(now) ?? 0) + 1);
-    if (was === human) {
-      lost.push(r);
-      takenFromMe.set(now, [...(takenFromMe.get(now) ?? []), BOARD.byId[r].name]);
-    }
+/** What the round meant for you, in a few lines. */
+function reportLines(report: RoundReport, me: FactionId): ReportLine[] {
+  const lines: ReportLine[] = [];
+  const name = (id: string) => BOARD.byId[id].name;
+  for (const st of report.steps) {
+    if (st.kind === 'BATTLE') {
+      const mineAttacking = st.attackers.some((a) => a.owner === me);
+      const mineDefending = st.defender?.owner === me;
+      if (!mineAttacking && !mineDefending) continue;
+      if (st.captured && st.winner === me)
+        lines.push({ color: FACTIONS[me].color, text: `Captured ${name(st.region)} — ${st.attackers.find((a) => a.owner === me)!.units[0]} moves in with ${st.survivors}.` });
+      else if (st.captured && mineDefending) lines.push({ color: '#ff5a4e', text: `Lost ${name(st.region)} to ${FACTIONS[st.winner].name}.` });
+      else if (mineDefending) lines.push({ color: FACTIONS[me].color, text: `Held ${name(st.region)} against ${st.attackers.map((a) => FACTIONS[a.owner].short).join(' & ')}.` });
+      else lines.push({ color: '#ffb35c', text: `Attack on ${name(st.region)} beaten back by ${FACTIONS[st.winner].name}.` });
+    } else if (st.kind === 'NAVAL' && st.sides.some((x) => x.owner === me)) {
+      lines.push({ color: '#8fd6ff', text: `Naval battle in the ${SEA_ZONES[st.zone].name}: ${st.winner === me ? 'your fleet wins' : st.winner ? `${FACTIONS[st.winner].name} wins` : 'both fleets mauled'}.` });
+    } else if (st.kind === 'FAILED' && st.owner === me) lines.push({ color: '#ffb35c', text: st.text });
+    else if (st.kind === 'CLASH' && (st.a.owner === me || st.b.owner === me))
+      lines.push({ color: '#ffb35c', text: `Columns clashed between ${name(st.at[0])} and ${name(st.at[1])}: ${st.winner === me ? 'yours pushed through' : st.winner ? 'yours were broken' : 'both shattered'}.` });
+    else if (st.kind === 'SCORE' && st.gains[me]) lines.push({ color: '#ffc83d', text: `+${st.gains[me]} victory points from installations held.` });
+    else if (st.kind === 'ELIMINATED') lines.push({ color: FACTIONS[st.who].color, text: `${FACTIONS[st.who].name} has been wiped off the island.` });
   }
-  for (const [f, names] of takenFromMe)
-    lines.push({ color: FACTIONS[f].color, text: `${FACTIONS[f].name} took ${names.join(', ')} from you.` });
-  for (const [f, n] of gains) {
-    if (f === human || takenFromMe.has(f)) continue;
-    lines.push({ color: FACTIONS[f].color, text: `${FACTIONS[f].name} captured ${n} region${n > 1 ? 's' : ''}.` });
-  }
-  const holders = sectorHolders(game);
-  for (const sec of SECTOR_IDS) {
-    const now = holders[sec];
-    if (now && now !== before.sectors[sec] && now !== human)
-      lines.push({ color: FACTIONS[now].color, text: `${FACTIONS[now].name} secured the ${SECTORS[sec].name} (+${SECTORS[sec].bonus}/turn).` });
-    if (before.sectors[sec] === human && now !== human)
-      lines.push({ color: '#ff5a4e', text: `You lost your hold on the ${SECTORS[sec].name}.` });
-  }
-  for (const f of before.alive) {
-    if (!player(game, f).alive) lines.push({ color: FACTIONS[f].color, text: `${FACTIONS[f].name} was eliminated.` });
-  }
-  const delta = troopsOf(game, human) - before.troops;
-  if (!lines.length) lines.push({ color: FACTIONS[human].color, text: 'Quiet front. Nobody touched your ground.' });
-  else if (delta < 0) lines.push({ color: '#ff5a4e', text: `You lost ${-delta} troops in all.` });
-  return { lines, lost };
-}
-
-/** Your regions where a single enemy neighbour has more troops than you do. */
-function threatenedRegions(game: GameState, human: FactionId): string[] {
-  return regionsOf(game, human).filter((r) => {
-    const mine = game.map[r].troops;
-    return BOARD.byId[r].neighbours.some((n) => game.map[n].owner !== human && game.map[n].troops > mine);
-  });
+  if (!lines.length) lines.push({ color: '#a8c0d6', text: 'A quiet round on your front.' });
+  return lines;
 }
 
 export function GameScreen({ initial, level, onExit, onRestart }: { initial: GameState; level: BotLevel; onExit: () => void; onRestart: () => void }) {
   const [game, setGame] = useState(initial);
-  const [sel, setSel] = useState<Selection>({});
+  const [draft, setDraft] = useState<Order[]>([]);
+  const [tool, setTool] = useState<Tool>('deploy');
   const [amount, setAmount] = useState<Amount>(1);
-  const [count, setCount] = useState(1);
-  const [handOpen, setHandOpen] = useState(false);
-  const [logOpen, setLogOpen] = useState(false);
-  const [speed, setSpeedState] = useState<Speed>(loadSpeed);
+  const [from, setFrom] = useState<string | null>(null);
+  const [selShip, setSelShip] = useState<string | null>(null);
+  const [picker, setPicker] = useState<Picker | null>(null);
+  const [playback, setPlayback] = useState<Playback | null>(null);
   const [fx, setFx] = useState<Fx[]>([]);
-  const [battle, setBattle] = useState<Battle | null>(null);
-  const [battleKey, setBattleKey] = useState(0);
-  const [banners, setBanners] = useState<Banner[]>([]);
+  const [report, setReport] = useState<{ round: number; lines: ReportLine[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [recap, setRecap] = useState<Recap | null>(null);
-  const lastTick = useRef(game.tick - 1);
-  const snap = useRef<Snapshot | null>(null);
-  const setSpeed = (v: Speed) => {
-    setSpeedState(v);
-    try {
-      localStorage.setItem(SPEED_KEY, String(v));
-    } catch {
-      // Not persisted; harmless.
-    }
-  };
-  const human = game.order.find((f) => player(game, f).human) ?? null;
-  const me = current(game);
-  const myTurn = me === human && game.phase !== 'GAME_OVER';
-  const over = game.phase === 'GAME_OVER';
-
-  // ---- effects director: turn new engine events into animation + sound ----
-  useEffect(() => {
-    const fresh = game.events.filter((e) => e.tick > lastTick.current);
-    lastTick.current = game.tick;
-    // Timers are deliberately not cancelled when the next event lands: a ripple
-    // or banner should finish even if a bot acts again before it does.
-    const later = (fn: () => void, ms: number) => window.setTimeout(fn, ms);
-    const banner = (b: Omit<Banner, 'id'>, delay = 0) =>
-      later(() => {
-        const id = Math.random();
-        setBanners((bs) => [...bs, { ...b, id }]);
-        window.setTimeout(() => setBanners((bs) => bs.filter((x) => x.id !== id)), 1900);
-      }, delay);
-    for (const { event: e } of fresh) {
-      switch (e.kind) {
-        case 'BATTLE':
-          setBattle(e);
-          setBattleKey(game.tick);
-          sound.play('attack');
-          break;
-        case 'CAPTURE': {
-          const id = `${game.tick}-${e.region}`;
-          later(() => {
-            setFx((f) => [...f, { id, kind: 'ripple', region: e.region, color: FACTIONS[e.by].color }]);
-            sound.play('kill');
-          }, 450);
-          later(() => setFx((f) => f.filter((x) => x.id !== id)), 1700);
-          break;
-        }
-        case 'STRIKE': {
-          const id = `${game.tick}-strike`;
-          setFx((f) => [...f, { id, kind: 'blast', region: e.region, color: '#fff' }]);
-          sound.play('attack');
-          later(() => setFx((f) => f.filter((x) => x.id !== id)), 1100);
-          break;
-        }
-        case 'SECTOR':
-          banner({ title: 'Sector Secured', sub: `${FACTIONS[e.by].name} · ${SECTORS[e.sector].name} · +${SECTORS[e.sector].bonus}/turn`, color: FACTIONS[e.by].color }, 600);
-          later(() => sound.play('objective'), 600);
-          break;
-        case 'ELIMINATED':
-          banner({ title: `${FACTIONS[e.who].name} Eliminated`, sub: `by the ${FACTIONS[e.by].name}`, color: FACTIONS[e.by].color }, 900);
-          break;
-        case 'TURN':
-          if (e.who === human) {
-            banner({ title: 'Your Turn', sub: `Round ${e.round}`, color: FACTIONS[e.who].color });
-            sound.play('turn');
-          }
-          break;
-        case 'TRADE':
-          banner({ title: `+${e.troops} Troops`, sub: `${FACTIONS[e.who].name} cashes in Asset Cards`, color: FACTIONS[e.who].color });
-          break;
-        case 'CARD':
-          if (e.who === human) setToast(`New Asset Card: ${e.card.asset}`);
-          break;
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game.tick]);
-
-  useEffect(() => {
-    if (!battle) return;
-    // Your own rolls always get time to read; bot rolls follow the speed setting.
-    const mine = battle.attacker === human;
-    const t = window.setTimeout(() => setBattle(null), mine ? trayDuration(battle, false) : trayDuration(battle, true) / speed);
-    return () => clearTimeout(t);
-  }, [battle, human, speed]);
+  const [logOpen, setLogOpen] = useState(false);
+  const me = game.factions.find((f) => player(game, f).human)!;
+  const view = useMemo(() => viewFor(game, me), [game, me]);
+  const over = game.phase === 'GAME_OVER' && !playback;
+  const planning = !playback && game.phase === 'PLANNING' && player(game, me).alive;
 
   useEffect(() => {
     if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), 2600);
+    const t = window.setTimeout(() => setToast(null), 2800);
     return () => clearTimeout(t);
   }, [toast]);
 
-  // ---- bot loop ----
-  useEffect(() => {
-    if (over || myTurn) return;
-    const action = botAction(game, level);
-    const lastEvent = game.events[game.events.length - 1];
-    const fight = game.events.find((e) => e.tick === game.tick && e.event.kind === 'BATTLE')?.event as Battle | undefined;
-    const justFought = lastEvent?.tick === game.tick && (fight || lastEvent.event.kind === 'ELIMINATED');
-    // After a fight, wait for its dice cascade to play out before the next move.
-    const base = justFought ? Math.max(1250, fight ? trayDuration(fight, true) : 0) : action.type === 'PLACE' ? 500 : action.type === 'ATTACK' || action.type === 'STRIKE' ? 450 : action.type === 'TRADE' ? 800 : 350;
-    const t = window.setTimeout(() => setGame((g) => (g === game ? apply(g, action) : g)), base / speed);
-    return () => clearTimeout(t);
-  }, [game, myTurn, over, level, speed]);
+  // ---- the plan so far ----
+  const deployed = useMemo(() => {
+    const d: Record<string, number> = {};
+    for (const o of draft) if (o.kind === 'DEPLOY') d[o.region] = (d[o.region] ?? 0) + o.count;
+    return d;
+  }, [draft]);
+  const deployLeft = view.budget.troops - Object.values(deployed).reduce((a, b) => a + b, 0);
+  const sortiesLeft = view.budget.sorties - draft.filter((o) => o.kind === 'STRIKE' || o.kind === 'CAS').length;
+  const committed = (r: string, except?: Order) =>
+    draft.reduce((n, o) => n + ((o.kind === 'MOVE' || o.kind === 'LAND') && o.from === r && o !== except ? o.count : 0), 0);
+  const available = (r: string, except?: Order) => (game.map[r].owner === me ? game.map[r].troops + (deployed[r] ?? 0) - committed(r, except) - 1 : 0);
+  const shipZoneAfter = (shipId: string) => {
+    const sail = draft.find((o) => o.kind === 'SAIL' && o.ship === shipId) as Extract<Order, { kind: 'SAIL' }> | undefined;
+    return sail ? sail.to : game.ships.find((sh) => sh.id === shipId)?.zone ?? null;
+  };
+  const myShipsIn = (z: ZoneId) => game.ships.filter((sh) => sh.owner === me && sh.zone && shipZoneAfter(sh.id) === z).length;
+  const lifted = (z: ZoneId, except?: Order) => draft.reduce((n, o) => n + (o.kind === 'LAND' && o.zone === z && o !== except ? o.count : 0), 0);
 
-  // Keep selections valid as the board changes under them; snapshot the board
-  // as your turn ends and show what changed when it comes round again.
-  useEffect(() => {
-    if (!human) return;
-    if (!myTurn) {
-      setSel({});
-      if (!over && player(game, human).alive) snap.current = snapshot(game, human);
-      return;
-    }
-    if (!snap.current) return;
-    const r = buildRecap(snap.current, game, human);
-    snap.current = null;
-    setRecap(r);
-    const ids = r.lost.map((region) => `alert-${game.tick}-${region}`);
-    setFx((f) => [...f, ...r.lost.map((region, i) => ({ id: ids[i], kind: 'alert' as const, region, color: '#ff5a4e' }))]);
-    window.setTimeout(() => setFx((f) => f.filter((x) => !ids.includes(x.id))), 6000);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myTurn]);
-
-  // Run the bots straight through to your next turn (or the end) with no animation.
-  const skipToMyTurn = () => {
-    let g = game;
-    for (let i = 0; i < 20000 && g.phase !== 'GAME_OVER' && current(g) !== human; i++) g = apply(g, botAction(g, level));
-    lastTick.current = g.tick;
-    setBattle(null);
-    if (g.phase !== 'GAME_OVER') sound.play('turn');
-    setGame(g);
+  // ---- planning actions ----
+  const addDeploy = (region: string) => {
+    if (deployLeft <= 0) return setToast('Every new troop is placed — Undo or Clear to change.');
+    const n = amount === 'all' ? deployLeft : Math.min(amount, deployLeft);
+    setDraft((d) => [...d, { kind: 'DEPLOY', region, count: n }]);
+    sound.play('ui');
   };
 
-  const dispatch = useCallback(
-    (action: Action) => {
-      try {
-        const next = apply(game, action);
-        setGame(next);
-        return next;
-      } catch (e) {
-        if (e instanceof IllegalAction) setToast(e.message);
-        else throw e;
-        return null;
-      }
-    },
-    [game],
-  );
-
-  // ---- derived view state ----
-  const options = useMemo(() => (myTurn && sel.from && game.phase === 'ASSAULT' ? attackOptions(game, sel.from) : []), [game, sel.from, myTurn]);
-  const redeployTargets = useMemo(
-    () => (myTurn && sel.from && game.phase === 'REDEPLOY' && game.map[sel.from].troops > 1 ? connectedOwned(game, sel.from) : []),
-    [game, sel.from, myTurn],
-  );
-  const placing = myTurn && !game.pendingMove && (game.phase === 'MOBILISE' || game.reserve > 0);
-
-  const highlights = useMemo(() => {
-    const h: Record<string, Highlight> = {};
-    if (!myTurn || game.pendingMove) return h;
-    if (placing) {
-      for (const r of regionsOf(game, me)) h[r] = 'place';
-      return h;
+  const openPicker = (a: string, b: string) => {
+    if (game.map[a].owner !== me) return;
+    const existing = draft.find((o): o is Extract<Order, { kind: 'MOVE' | 'LAND' }> => (o.kind === 'MOVE' || o.kind === 'LAND') && o.from === a && o.to === b);
+    if (BOARD.byId[a].neighbours.includes(b)) {
+      const max = available(a, existing);
+      if (max <= 0) return setToast(`${BOARD.byId[a].name} has no troops to spare — every region keeps one.`);
+      return setPicker({ from: a, to: b, zone: null, max, count: existing ? existing.count : max });
     }
-    if (sel.striking) {
-      for (const r of BOARD.regions) if (game.map[r.id].owner !== me && game.map[r.id].troops > 1) h[r.id] = 'strike';
-      return h;
+    const shared = sharedZones(a, b);
+    const zones = shared.filter((z) => myShipsIn(z) > 0);
+    if (!zones.length) {
+      return setToast(
+        shared.length
+          ? `To land at ${BOARD.byId[b].name}, get a ship into the ${SEA_ZONES[shared[0]].name} first.`
+          : `${BOARD.byId[b].name} isn't next to ${BOARD.byId[a].name}, and no sea zone links them.`,
+      );
     }
-    if (sel.from) h[sel.from] = 'source';
-    for (const o of options) h[o.to] = o.mode === 'LAND' ? 'attack' : 'amphibious';
-    for (const r of redeployTargets) h[r] = 'friendly';
-    return h;
-  }, [game, myTurn, placing, sel, options, redeployTargets, me]);
+    const zone = zones[0];
+    const capacity = myShipsIn(zone) * shipCapacity(me) - lifted(zone, existing);
+    const max = Math.min(available(a, existing), capacity);
+    if (max <= 0) return setToast(capacity <= 0 ? `Your ships in the ${SEA_ZONES[zone].name} are full.` : `${BOARD.byId[a].name} has no troops to spare.`);
+    setPicker({ from: a, to: b, zone, max, count: existing ? Math.min(existing.count, max) : max });
+  };
 
-  const tags = useMemo(() => {
-    const t: Record<string, string> = {};
-    if (!sel.from || sel.to || game.phase !== 'ASSAULT') return t;
-    const a = game.map[sel.from].troops;
-    for (const o of options) {
-      const p = captureChance(a, game.map[o.to].troops, BOARD.byId[o.to].stronghold, o.mode === 'AMPHIBIOUS' ? AMPHIBIOUS_MAX_DICE : 3);
-      t[o.to] = `${Math.round(p * 100)}%`;
+  const confirmPicker = () => {
+    if (!picker) return;
+    const { from: a, to: b, zone, count } = picker;
+    setDraft((d) => {
+      const rest = d.filter((o) => !((o.kind === 'MOVE' || o.kind === 'LAND') && o.from === a && o.to === b));
+      if (count <= 0) return rest;
+      const order: Order = zone ? { kind: 'LAND', from: a, to: b, zone, count } : { kind: 'MOVE', from: a, to: b, count };
+      return [...rest, order];
+    });
+    setPicker(null);
+    setFrom(null);
+    sound.play('ui');
+  };
+
+  const toggleAir = (kind: 'STRIKE' | 'CAS', region: string) => {
+    const existing = draft.find((o) => o.kind === kind && o.region === region);
+    if (existing) return setDraft((d) => d.filter((o) => o !== existing));
+    if (sortiesLeft <= 0) return setToast('No air sorties left this round.');
+    if (kind === 'STRIKE' && game.map[region].owner === me) return setToast("Don't bomb your own ground.");
+    setDraft((d) => [...d, { kind, region }]);
+    sound.play('ui');
+  };
+
+  const doRecon = (region: string) => {
+    if (game.map[region].owner === me) return setToast('Recon enemy ground — you know your own.');
+    try {
+      setGame(recon(game, me, region));
+      setToast(`Recon: ${BOARD.byId[region].name} and its neighbours revealed for this round.`);
+      sound.play('contact');
+    } catch (e) {
+      if (e instanceof IllegalAction) setToast(e.message);
+      else throw e;
     }
-    return t;
-  }, [game, sel.from, sel.to, options]);
-
-  const threats = useMemo(() => (human && player(game, human).alive ? threatenedRegions(game, human) : []), [game, human]);
-
-  const drag = useMemo(
-    () => ({
-      canStart: (id: string) =>
-        myTurn && !game.pendingMove && !placing && (game.phase === 'ASSAULT' || game.phase === 'REDEPLOY') && game.map[id].owner === me && game.map[id].troops >= 2,
-      drop: (from: string, to: string) => {
-        if (game.phase === 'ASSAULT') {
-          if (attackOptions(game, from).some((o) => o.to === to)) return setSel({ from, to });
-          return setToast(`${BOARD.byId[from].name} can't reach ${BOARD.byId[to].name}.`);
-        }
-        if (connectedOwned(game, from).includes(to)) return setSel({ from, to });
-        setToast('Redeploy between your own connected regions.');
-      },
-    }),
-    [game, myTurn, placing, me],
-  );
-
-  const arrow: Arrow | null = battle
-    ? { from: battle.from, to: battle.to, color: FACTIONS[battle.attacker].color }
-    : sel.from && sel.to
-      ? { from: sel.from, to: sel.to, color: game.phase === 'REDEPLOY' ? '#ffffff' : '#ffd23f' }
-      : game.pendingMove
-        ? { from: game.pendingMove.from, to: game.pendingMove.to, color: '#ffffff' }
-        : null;
-
-  // Seed the slider whenever a new move/redeploy opens.
-  useEffect(() => {
-    if (game.pendingMove) setCount(game.pendingMove.max);
-  }, [game.pendingMove?.from, game.pendingMove?.to]);
-  useEffect(() => {
-    if (game.phase === 'REDEPLOY' && sel.from && sel.to) setCount(game.map[sel.from].troops - 1);
-  }, [sel.from, sel.to]);
+  };
 
   const onRegion = (id: string) => {
-    if (!myTurn || game.pendingMove) return;
-    const h = game.map[id];
-    if (placing) {
-      if (h.owner !== me) return setToast('Place troops on your own regions.');
-      const n = amount === 'all' ? game.reserve : amount;
-      dispatch({ type: 'PLACE', region: id, count: n });
-      sound.play('ui');
-      return;
+    if (!planning) return;
+    if (tool === 'deploy') {
+      if (game.map[id].owner !== me) return setToast('Deploy on your own ground.');
+      return addDeploy(id);
     }
-    if (game.phase === 'ASSAULT') {
-      if (sel.striking) {
-        if (h.owner !== me && dispatch({ type: 'STRIKE', region: id })) setSel({});
-        return;
+    if (tool === 'strike' || tool === 'cas') return toggleAir(tool === 'strike' ? 'STRIKE' : 'CAS', id);
+    if (tool === 'recon') return doRecon(id);
+    if (from && from !== id) return openPicker(from, id);
+    if (game.map[id].owner === me) setFrom(from === id ? null : id);
+  };
+
+  const onShip = (id: string) => {
+    if (!planning) return;
+    const ship = game.ships.find((sh) => sh.id === id)!;
+    if (ship.owner !== me) return setToast(`${ship.name} — ${FACTIONS[ship.owner].name}.`);
+    setSelShip(selShip === id ? null : id);
+  };
+
+  const onZone = (z: ZoneId) => {
+    if (!planning || !selShip) return;
+    const ship = game.ships.find((sh) => sh.id === selShip)!;
+    if (z !== ship.zone && !(ship.zone && SEA_ZONES[ship.zone].neighbours.includes(z))) return setToast('Ships sail one zone at a time.');
+    setDraft((d) => {
+      const rest = d.filter((o) => !(o.kind === 'SAIL' && o.ship === selShip));
+      return z === ship.zone ? rest : [...rest, { kind: 'SAIL', ship: selShip, to: z }];
+    });
+    setSelShip(null);
+  };
+
+  const drag = {
+    canStart: (id: string) => planning && game.map[id].owner === me && available(id) > 0,
+    drop: (a: string, b: string) => {
+      setTool('move');
+      openPicker(a, b);
+    },
+  };
+
+  // ---- Ready: submit, let the bots plan, resolve, play it back ----
+  const ready = () => {
+    if (!planning) return;
+    const err = validateOrders(game, me, draft);
+    if (err) return setToast(err);
+    let s = submitOrders(game, me, draft);
+    for (const f of alive(s)) {
+      if (f === me) continue;
+      const orders = planBot(
+        () => viewFor(s, f),
+        (r) => (s = recon(s, f, r)),
+        level,
+      );
+      s = submitOrders(s, f, orders);
+    }
+    const { state, report: rep } = resolveRound(s);
+    setDraft([]);
+    setFrom(null);
+    setSelShip(null);
+    setReport(null);
+    sound.play('turn');
+    setPlayback({ report: rep, before: s, after: state, index: -1, overrides: {}, arrows: [], card: null, naval: null });
+  };
+
+  // ---- playback director ----
+  const finishPlayback = useCallback(
+    (pb: Playback) => {
+      const lost = REGION_IDS.filter((r) => pb.before.map[r].owner === me && pb.after.map[r].owner !== me);
+      setGame(pb.after);
+      setPlayback(null);
+      setReport({ round: pb.report.round, lines: reportLines(pb.report, me) });
+      setTool('deploy');
+      if (lost.length) {
+        const ids = lost.map((r) => `lost-${pb.report.round}-${r}`);
+        setFx((f) => [...f, ...lost.map((region, i) => ({ id: ids[i], kind: 'alert' as const, region, color: '#ff5a4e' }))]);
+        window.setTimeout(() => setFx((f) => f.filter((x) => !ids.includes(x.id))), 5000);
       }
-      if (sel.from && options.some((o) => o.to === id)) return setSel({ from: sel.from, to: id });
-      if (h.owner === me && h.troops >= 2) return setSel({ from: id });
-      if (h.owner === me) setToast('Need at least 2 troops to attack from there.');
-      return setSel({});
-    }
-    if (game.phase === 'REDEPLOY') {
-      if (sel.from && redeployTargets.includes(id)) return setSel({ from: sel.from, to: id });
-      if (h.owner === me && h.troops >= 2) return setSel({ from: id });
-      return setSel({});
-    }
-  };
+    },
+    [me],
+  );
 
-  const attack = (blitz: boolean) => {
-    if (!sel.from || !sel.to) return;
-    const next = dispatch({ type: 'ATTACK', from: sel.from, to: sel.to, blitz });
-    if (!next) return;
-    // Stay on the same target while it's still a fight; follow the advance after a capture.
-    if (next.map[sel.to].owner === me) setSel(next.pendingMove ? {} : { from: sel.to });
-    else if (next.map[sel.from].troops < 2) setSel({});
-  };
+  useEffect(() => {
+    if (!playback) return;
+    const steps = playback.report.steps;
+    const next = playback.index + 1;
+    if (next >= steps.length) {
+      const t = window.setTimeout(() => finishPlayback(playback), 400);
+      return () => clearTimeout(t);
+    }
+    const step = steps[next];
+    const delay = playback.index < 0 ? 500 : STEP_MS[steps[playback.index].kind] ?? 800;
+    const t = window.setTimeout(() => {
+      let arrows = playback.arrows;
+      let naval: ZoneId | null = null;
+      let card: ReportStep | null = null;
+      switch (step.kind) {
+        case 'NAVAL':
+          naval = step.zone;
+          card = step;
+          sound.play('attack');
+          break;
+        case 'STRIKE': {
+          const id = `strike-${next}`;
+          setFx((f) => [...f, { id, kind: 'blast', region: step.region, color: '#fff' }]);
+          window.setTimeout(() => setFx((f) => f.filter((x) => x.id !== id)), 1000);
+          sound.play('attack');
+          break;
+        }
+        case 'MOVES':
+          arrows = step.moves.map((m, i) => ({
+            id: `mv-${i}`,
+            from: m.from,
+            to: m.to,
+            color: FACTIONS[m.owner].color,
+            label: String(m.count),
+            via: m.landing ? sharedZones(m.from, m.to)[0] : undefined,
+          }));
+          sound.play('move');
+          break;
+        case 'BATTLE':
+          card = step;
+          // Reveal the result on the map once the card has had a moment.
+          window.setTimeout(() => {
+            setPlayback((p2) => (p2 ? { ...p2, overrides: { ...p2.overrides, [step.region]: { owner: step.winner, text: String(step.survivors), fog: false } } } : p2));
+            if (step.captured) {
+              const id = `cap-${next}`;
+              setFx((f) => [...f, { id, kind: 'ripple', region: step.region, color: FACTIONS[step.winner].color }]);
+              window.setTimeout(() => setFx((f) => f.filter((x) => x.id !== id)), 1300);
+              sound.play('kill');
+            }
+          }, 850);
+          sound.play('attack');
+          break;
+        default:
+          card = step;
+          if (step.kind === 'SCORE') sound.play('objective');
+      }
+      setPlayback((pb) => (pb ? { ...pb, index: next, arrows, card, naval } : pb));
+    }, delay);
+    return () => clearTimeout(t);
+  }, [playback, finishPlayback]);
 
-  // Keyboard: Enter/Space = the primary action of the moment, Esc = clear selection.
-  const primaryRef = useRef<() => void>(() => {});
+  // ---- what the map shows ----
+  const shownView = useMemo(() => (playback ? viewFor(playback.before, me) : view), [playback?.before, view, me]);
+  const badges = useMemo(() => {
+    const out: Record<string, Badge> = {};
+    for (const r of REGION_IDS) {
+      const rv = shownView.map[r];
+      const t = intelText(rv);
+      out[r] = { owner: rv.owner, text: t.text, fog: t.fog };
+      if (!playback && rv.owner === me && deployed[r]) out[r] = { ...out[r], text: String(game.map[r].troops + deployed[r]), extra: `+${deployed[r]}` };
+    }
+    if (playback) Object.assign(out, playback.overrides);
+    return out;
+  }, [shownView, playback, deployed, game, me]);
+
+  const myColor = FACTIONS[me].color;
+  const arrows: OrderArrow[] = playback
+    ? playback.arrows
+    : draft.flatMap((o, i): OrderArrow[] => {
+        if (o.kind === 'MOVE' || o.kind === 'LAND')
+          return [{ id: `o-${i}`, from: o.from, to: o.to, color: myColor, label: String(o.count), via: o.kind === 'LAND' ? o.zone : undefined, onClick: () => openPicker(o.from, o.to) }];
+        if (o.kind === 'SAIL') {
+          const zone = game.ships.find((sh) => sh.id === o.ship)?.zone;
+          return zone ? [{ id: `o-${i}`, from: zone, to: o.to, color: myColor, sail: true }] : [];
+        }
+        return [];
+      });
+
+  const markers: Marker[] = playback
+    ? []
+    : draft
+        .filter((o): o is Extract<Order, { kind: 'STRIKE' | 'CAS' }> => o.kind === 'STRIKE' || o.kind === 'CAS')
+        .map((o) => ({ region: o.region, kind: o.kind, color: o.kind === 'STRIKE' ? '#d9452f' : '#2f8fd0' }));
+
+  const highlights: Record<string, Highlight> = {};
+  if (planning && !picker) {
+    if (tool === 'deploy') for (const r of regionsOf(game, me)) highlights[r] = 'place';
+    if (tool === 'strike') for (const r of REGION_IDS) if (game.map[r].owner !== me) highlights[r] = 'strike';
+    if (tool === 'recon' && view.reconsLeft > 0) for (const r of REGION_IDS) if (game.map[r].owner !== me) highlights[r] = 'recon';
+    if (tool === 'move' && from) {
+      highlights[from] = 'source';
+      for (const n of BOARD.byId[from].neighbours) highlights[n] = 'target';
+      for (const r of REGION_IDS) if (!highlights[r] && r !== from && sharedZones(from, r).some((z) => myShipsIn(z) > 0)) highlights[r] = 'landing';
+    }
+  }
+
+  const threats =
+    playback || !player(game, me).alive
+      ? []
+      : regionsOf(game, me).filter((r) => {
+          const mine = game.map[r].troops + (deployed[r] ?? 0) + defenceBonus(r);
+          return BOARD.byId[r].neighbours.some((n) => {
+            const iv = view.map[n];
+            if (iv.owner === me) return false;
+            const est = iv.intel.kind === 'exact' ? iv.intel.troops : iv.intel.kind === 'band' ? iv.intel.max : 0;
+            return est > mine;
+          });
+        });
+
+  // Keyboard: Enter = Ready (or confirm the picker), Esc = cancel.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSel({});
-      // A focused button handles its own Enter; don't fire twice.
-      if (e.key === 'Enter' && myTurn && !(e.target as HTMLElement).closest?.('button')) primaryRef.current();
+      if (e.key === 'Escape') {
+        setPicker(null);
+        setFrom(null);
+        setSelShip(null);
+      }
+      if (e.key !== 'Enter' || (e.target as HTMLElement).closest?.('button')) return;
+      if (picker) confirmPicker();
+      else if (deployLeft === 0) ready();
     };
-    // Mouse clicks shouldn't leave a button holding focus, or Enter would press
-    // it again instead of the main action. Keyboard clicks (detail 0) keep focus.
+    // Mouse clicks shouldn't leave a button holding focus, or Enter would press it again.
     const onClick = (e: MouseEvent) => {
       if (e.detail > 0) (e.target as HTMLElement).closest?.('button')?.blur();
     };
@@ -413,133 +412,174 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('click', onClick);
     };
-  }, [myTurn]);
+  });
 
-  const meP = human ? player(game, human) : null;
+  // Fleets move as soon as the naval phase has played.
+  const ships = playback
+    ? playback.report.steps.slice(0, playback.index + 1).some((st) => st.kind !== 'NAVAL')
+      ? playback.after.ships
+      : playback.before.ships
+    : game.ships;
+  const selZone = selShip ? game.ships.find((s) => s.id === selShip)?.zone : null;
 
   return (
     <div className="io-game">
       <div className="io-map-wrap">
         <MapView
-          holdings={game.map}
+          badges={badges}
           highlights={highlights}
           dimOthers={Object.keys(highlights).length > 0}
           fx={fx}
-          arrow={arrow}
-          onRegion={onRegion}
+          arrows={arrows}
+          markers={markers}
+          ships={ships}
+          selectedShip={selShip}
+          zoneHighlights={playback?.naval ? { [playback.naval]: 'battle' } : selZone ? Object.fromEntries(SEA_ZONES[selZone].neighbours.map((z) => [z, 'sail'])) : {}}
+          onRegion={planning ? onRegion : undefined}
+          onZone={planning ? onZone : undefined}
+          onShip={planning ? onShip : undefined}
           threats={threats}
-          tags={tags}
-          drag={drag}
+          drag={planning ? drag : undefined}
         />
       </div>
 
-      <TopBar game={game} human={human} speed={speed} setSpeed={setSpeed} onExit={onExit} onLog={() => setLogOpen((v) => !v)} />
+      <TopBar game={game} me={me} playing={!!playback} onExit={onExit} onLog={() => setLogOpen((v) => !v)} />
 
-      {meP && (
-        <div className="io-side">
-          <OpsOrder game={game} human={human!} />
-          {meP.alive && <SectorPanel game={game} human={human!} />}
-        </div>
+      <div className="io-side">
+        <Installations game={game} me={me} />
+      </div>
+
+      {planning && (
+        <OrdersPanel
+          draft={draft}
+          game={game}
+          me={me}
+          onRemove={(o) => setDraft((d) => d.filter((x) => x !== o))}
+          onEdit={(o) => (o.kind === 'MOVE' || o.kind === 'LAND' ? openPicker(o.from, o.to) : undefined)}
+        />
       )}
-
-      {recap && myTurn && <RecapCard recap={recap} onClose={() => setRecap(null)} />}
 
       {logOpen && <LogPanel game={game} onClose={() => setLogOpen(false)} />}
 
-      {battle && (
-        <div className="io-dice-anchor">
-          <DiceTray key={battleKey} battle={battle} compact={battle.attacker !== human} />
-        </div>
-      )}
+      {playback?.card && <StepCard step={playback.card} me={me} />}
 
-      <div className="io-banners">
-        {banners.map((b) => (
-          <div key={b.id} className="io-banner" style={{ ['--c' as string]: b.color }}>
-            <div className="io-banner-title">{b.title}</div>
-            {b.sub && <div className="io-banner-sub">{b.sub}</div>}
-          </div>
-        ))}
-      </div>
+      {report && planning && <ReportCard report={report} onClose={() => setReport(null)} />}
 
       {toast && <div className="io-toast">{toast}</div>}
 
-      {!over && (
-        <CommandPanel
-          game={game}
-          human={human}
-          myTurn={myTurn}
-          sel={sel}
-          setSel={setSel}
+      {playback && (
+        <div className="io-panel io-panel-wait" style={{ ['--c' as string]: myColor }}>
+          <span>
+            <b>Round {playback.report.round}</b> — all orders executing…
+          </span>
+          <button className="io-btn io-btn-ghost io-skip" onClick={() => finishPlayback(playback)} data-testid="skip">
+            Skip ⏭
+          </button>
+        </div>
+      )}
+
+      {planning && (
+        <PlanPanel
+          view={view}
+          tool={tool}
+          setTool={(t) => (setTool(t), setFrom(null), setSelShip(null))}
           amount={amount}
           setAmount={setAmount}
-          count={count}
-          setCount={setCount}
-          dispatch={dispatch}
-          attack={attack}
-          openHand={() => setHandOpen(true)}
-          primaryRef={primaryRef}
-          onSkip={skipToMyTurn}
+          deployLeft={deployLeft}
+          sortiesLeft={sortiesLeft}
+          from={from}
+          selShip={selShip}
+          onUndo={() => setDraft((d) => d.slice(0, -1))}
+          onClear={() => setDraft([])}
+          onReady={ready}
+          me={me}
         />
       )}
 
-      {handOpen && meP && (
-        <HandDrawer
-          cards={meP.cards}
-          faction={human!}
-          tradesDone={game.tradesDone}
-          canTrade={myTurn && (game.phase === 'MOBILISE' || meP.cards.length > MAX_HAND)}
-          onTrade={(ids) => {
-            if (dispatch({ type: 'TRADE', cardIds: ids }) && meP.cards.length - 3 < 3) setHandOpen(false);
-          }}
-          onClose={() => setHandOpen(false)}
-        />
+      {!planning && !playback && !over && (
+        <div className="io-panel io-panel-wait">
+          <span>
+            <b>You have been wiped off the island.</b>
+          </span>
+          <button className="io-btn io-btn-ghost io-skip" onClick={onExit}>
+            Main menu
+          </button>
+        </div>
       )}
 
-      {over && <Victory game={game} human={human} onRestart={onRestart} onExit={onExit} />}
+      {picker && (
+        <div className="io-modal-backdrop io-picker-backdrop" onClick={() => setPicker(null)}>
+          <div className="io-picker" onClick={(e) => e.stopPropagation()} data-testid="picker">
+            <div className="io-picker-head">
+              {picker.zone ? '⚓ Landing' : game.map[picker.to].owner === me ? 'Reinforce' : 'Attack'}: <b>{BOARD.byId[picker.from].name}</b> → <b>{BOARD.byId[picker.to].name}</b>
+            </div>
+            <div className="io-picker-sub">
+              {game.map[picker.from].unit}
+              {picker.zone ? ` · across the ${SEA_ZONES[picker.zone].name} by ship` : ''}
+            </div>
+            <div className="io-slider-row">
+              <input type="range" min={0} max={picker.max} value={picker.count} onChange={(e) => setPicker({ ...picker, count: Number(e.target.value) })} />
+              <span className="io-count">{picker.count}</span>
+            </div>
+            {game.map[picker.to].owner !== me && (
+              <div className="io-picker-sub">
+                Their defence: {intelText(view.map[picker.to]).text} troops +{defenceBonus(picker.to)} ({BOARD.byId[picker.to].stronghold ? 'stronghold' : 'dug in'}). Ties go to the
+                defender — and they may be moving too.
+              </div>
+            )}
+            <div className="io-hand-actions">
+              <button className="io-btn io-btn-ghost" onClick={() => setPicker({ ...picker, count: 0 })}>
+                None
+              </button>
+              <button className="io-btn io-btn-primary" onClick={confirmPicker} data-testid="picker-ok">
+                {picker.count ? `Send ${picker.count}` : 'Cancel order'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {over && <Victory game={game} me={me} onRestart={onRestart} onExit={onExit} />}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
 
-function TopBar({ game, human, speed, setSpeed, onExit, onLog }: { game: GameState; human: FactionId | null; speed: Speed; setSpeed: (s: Speed) => void; onExit: () => void; onLog: () => void }) {
-  const turn = current(game);
+function TopBar({ game, me, playing, onExit, onLog }: { game: GameState; me: FactionId; playing: boolean; onExit: () => void; onLog: () => void }) {
   return (
     <div className="io-topbar">
       <div className="io-logo-mini">
         COMMAND<span>ISLAND OPS</span>
       </div>
       <div className="io-players">
-        {game.order.map((f) => {
-          const p = player(game, f);
-          const fac = FACTIONS[f];
-          return (
-            <div
-              key={f}
-              className={`io-player${f === turn && !game.winner ? ' io-player-active' : ''}${!p.alive ? ' io-player-dead' : ''}`}
-              style={{ ['--c' as string]: fac.color, ['--d' as string]: fac.deep }}
-            >
-              <span className="io-player-emblem">
-                <Emblem faction={f} size={18} color="#fff" />
-              </span>
-              <span className="io-player-text">
-                <b>
-                  {fac.short}
-                  {f === human && <em> YOU</em>}
-                </b>
-                <small>
-                  {regionsOf(game, f).length} regions · {troopsOf(game, f)} troops · {p.cards.length} cards
-                </small>
-              </span>
-            </div>
-          );
-        })}
+        {[...game.factions]
+          .sort((a, b) => player(game, b).vp - player(game, a).vp)
+          .map((f) => {
+            const p = player(game, f);
+            const fac = FACTIONS[f];
+            return (
+              <div key={f} className={`io-player${f === me ? ' io-player-active' : ''}${!p.alive ? ' io-player-dead' : ''}`} style={{ ['--c' as string]: fac.color, ['--d' as string]: fac.deep }}>
+                <span className="io-player-emblem">
+                  <Emblem faction={f} size={18} color="#fff" />
+                </span>
+                <span className="io-player-text">
+                  <b>
+                    {fac.short}
+                    {f === me && <em> YOU</em>}
+                  </b>
+                  <small>
+                    <span className="io-vp">{p.vp} VP</span> · {regionsOf(game, f).length} regions · {installationsOf(game, f).length}★
+                  </small>
+                </span>
+              </div>
+            );
+          })}
       </div>
       <div className="io-top-right">
-        <span className="io-round">Round {game.round}</span>
-        <button className="io-chip-btn" onClick={() => setSpeed(speed === 1 ? 2 : speed === 2 ? 4 : 1)} title="Bot speed">
-          ⏩ {speed}×
-        </button>
+        <span className="io-round">
+          Round {game.round}/{MAX_ROUNDS} · first to {VP_TARGET} VP{playing ? ' · resolving' : ''}
+        </span>
         <button className="io-chip-btn" onClick={onLog}>
           Log
         </button>
@@ -551,45 +591,23 @@ function TopBar({ game, human, speed, setSpeed, onExit, onLog }: { game: GameSta
   );
 }
 
-function OpsOrder({ game, human }: { game: GameState; human: FactionId }) {
-  const p = player(game, human);
-  const prog = missionProgress(game, human);
-  return (
-    <div className="io-ops" style={{ ['--c' as string]: FACTIONS[human].color }}>
-      <div className="io-ops-kicker">Your Ops Order</div>
-      <div className="io-ops-text">{p.mission.text}</div>
-      <div className="io-ops-progress">{prog.text}</div>
-      <div className="io-ops-alt">…or be the last force standing.</div>
-    </div>
-  );
-}
-
-function SectorPanel({ game, human }: { game: GameState; human: FactionId }) {
-  const next = reinforcement(game, human).total;
+function Installations({ game, me }: { game: GameState; me: FactionId }) {
+  const held = installationsOf(game, me).length;
   return (
     <div className="io-sectors">
       <div className="io-sectors-head">
-        <span>Sectors</span>
+        <span>★ Key Installations</span>
         <span className="io-next">
-          Next Mobilise <b>+{next}</b>
+          yours <b>{held}</b> = +{held} VP/round
         </span>
       </div>
-      {SECTOR_IDS.map((sec) => {
-        const regions = regionsInSector(sec);
-        const mine = regions.filter((r) => game.map[r].owner === human).length;
-        const holder = regions.every((r) => game.map[r].owner === game.map[regions[0]].owner) ? game.map[regions[0]].owner : null;
+      {Object.entries(INSTALLATIONS).map(([r, kind]) => {
+        const owner = game.map[r].owner;
         return (
-          <div key={sec} className={`io-sector-row${holder === human ? ' io-sector-mine' : ''}`}>
-            <span className="io-sector-name">{SECTORS[sec].name.replace(' Sector', '')}</span>
-            <span className="io-sector-bar" aria-hidden="true">
-              {regions.map((r) => (
-                <i key={r} style={{ background: FACTIONS[game.map[r].owner].color, opacity: game.map[r].owner === human ? 1 : 0.35 }} />
-              ))}
-            </span>
-            <span className="io-sector-count">
-              {holder && holder !== human ? <b style={{ color: FACTIONS[holder].color }}>{FACTIONS[holder].short}</b> : `${mine}/${regions.length}`}
-            </span>
-            <span className="io-sector-bonus">+{SECTORS[sec].bonus}</span>
+          <div key={r} className={`io-ki-row${owner === me ? ' io-sector-mine' : ''}`} title={INSTALLATION_INFO[kind].perk}>
+            <i style={{ background: FACTIONS[owner].color }} />
+            <span className="io-sector-name">{BOARD.byId[r].name}</span>
+            <span className="io-ki-perk">{INSTALLATION_INFO[kind].label}</span>
           </div>
         );
       })}
@@ -597,29 +615,52 @@ function SectorPanel({ game, human }: { game: GameState; human: FactionId }) {
   );
 }
 
-function RecapCard({ recap, onClose }: { recap: Recap; onClose: () => void }) {
+function orderText(o: Order, game: GameState): string {
+  const n = (id: string) => BOARD.byId[id].name;
+  switch (o.kind) {
+    case 'DEPLOY':
+      return `Deploy ${o.count} → ${n(o.region)}`;
+    case 'MOVE':
+      return `${o.count} · ${n(o.from)} → ${n(o.to)}`;
+    case 'LAND':
+      return `⚓ ${o.count} · ${n(o.from)} → ${n(o.to)}`;
+    case 'SAIL':
+      return `${game.ships.find((s) => s.id === o.ship)?.name} → ${SEA_ZONES[o.to].name}`;
+    case 'STRIKE':
+      return `✈ Strike ${n(o.region)}`;
+    case 'CAS':
+      return `✈ Air support ${n(o.region)}`;
+  }
+}
+
+function OrdersPanel({ draft, game, me, onRemove, onEdit }: { draft: Order[]; game: GameState; me: FactionId; onRemove: (o: Order) => void; onEdit: (o: Order) => void }) {
+  const shown = draft.filter((o) => o.kind !== 'DEPLOY');
   return (
-    <div className="io-recap" role="status" data-testid="recap">
-      <div className="io-recap-head">
-        <b>While you were away</b>
-        <button className="io-icon-btn" onClick={onClose} aria-label="Dismiss">
-          ✕
-        </button>
+    <div className="io-orders" style={{ ['--c' as string]: FACTIONS[me].color }} data-testid="orders">
+      <div className="io-sectors-head">
+        <span>Your orders</span>
+        <span className="io-next">secret until all are in</span>
       </div>
-      <ul>
-        {recap.lines.map((l, i) => (
-          <li key={i}>
-            <i style={{ background: l.color }} />
-            {l.text}
-          </li>
-        ))}
-      </ul>
+      {shown.length ? (
+        shown.map((o, i) => (
+          <div key={i} className="io-order-row">
+            <button className="io-order-text" onClick={() => onEdit(o)}>
+              {orderText(o, game)}
+            </button>
+            <button className="io-order-x" onClick={() => onRemove(o)} aria-label="Remove order">
+              ✕
+            </button>
+          </div>
+        ))
+      ) : (
+        <p className="io-orders-empty">Drag from your region onto a neighbour to march, or onto a far coast to land by sea. Tap a ship, then a sea zone, to sail.</p>
+      )}
     </div>
   );
 }
 
 function LogPanel({ game, onClose }: { game: GameState; onClose: () => void }) {
-  const items = game.log.slice(-40).reverse();
+  const items = game.log.slice(-60).reverse();
   return (
     <div className="io-log">
       <div className="io-log-head">
@@ -639,211 +680,166 @@ function LogPanel({ game, onClose }: { game: GameState; onClose: () => void }) {
   );
 }
 
-/** Encik's advice for the moment — concrete where it can be. */
-function advice(game: GameState, me: FactionId): string {
-  if (game.phase === 'MOBILISE') {
-    for (const sec of SECTOR_IDS) {
-      const missing = regionsInSector(sec).filter((r) => game.map[r].owner !== me);
-      if (missing.length === 1)
-        return `One region from the ${SECTORS[sec].name}! Take ${BOARD.byId[missing[0]].name} and it pays +${SECTORS[sec].bonus} troops every turn. Stack troops next to it.`;
-    }
-    return 'Don’t spread thin, recruit. Pile your troops on one border and punch through — that’s how sectors fall.';
-  }
-  if (game.phase === 'ASSAULT') {
-    if (me === 'AIRFORCE' && canStrike(game)) return 'Soften them up first — your Precision Strike is ready. Then hit where they’re weakest.';
-    if (me === 'NAVY') return 'Blue targets across the water are Amphibious Assaults — any coast is your front line.';
-    return 'Attack with more troops than they have. Capture at least one region this turn to earn an Asset Card.';
-  }
-  return 'Pull idle troops off quiet regions and up to the front. One redeploy, then your turn ends.';
-}
-
-interface PanelProps {
-  game: GameState;
-  human: FactionId | null;
-  myTurn: boolean;
-  sel: Selection;
-  setSel: (s: Selection) => void;
-  amount: Amount;
-  setAmount: (a: Amount) => void;
-  count: number;
-  setCount: (n: number) => void;
-  dispatch: (a: Action) => GameState | null;
-  attack: (blitz: boolean) => void;
-  openHand: () => void;
-  primaryRef: React.MutableRefObject<() => void>;
-  onSkip: () => void;
-}
-
-function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, count, setCount, dispatch, attack, openHand, primaryRef, onSkip }: PanelProps) {
-  const me = current(game);
-  const fac = FACTIONS[me];
-
-  if (!myTurn) {
-    primaryRef.current = () => {};
-    if (human && !player(game, human).alive)
-      return (
-        <div className="io-panel io-panel-wait" style={{ ['--c' as string]: FACTIONS[human].color }}>
-          <span>
-            <b>You have been eliminated.</b> Watching the rest of the exercise…
-          </span>
-          <button className="io-btn io-btn-ghost io-skip" onClick={onSkip}>
-            Skip to the end ⏭
-          </button>
-        </div>
-      );
-    return (
-      <div className="io-panel io-panel-wait" style={{ ['--c' as string]: fac.color }}>
-        <span className="io-player-emblem">
-          <Emblem faction={me} size={20} color="#fff" />
-        </span>
-        <span>
-          <b>{fac.name}</b> is {game.phase === 'MOBILISE' ? 'mobilising' : game.phase === 'ASSAULT' ? 'on the attack' : 'redeploying'}…
-        </span>
-        {human && (
-          <button className="io-btn io-btn-ghost io-skip" onClick={onSkip} data-testid="skip">
-            Skip to my turn ⏭
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  const p = player(game, me);
-  const phases = ['MOBILISE', 'ASSAULT', 'REDEPLOY'] as const;
-  const stepper = (
-    <div className="io-steps">
-      {phases.map((ph, i) => (
-        <span key={ph} className={`io-step${game.phase === ph ? ' io-step-on' : ''}${phases.indexOf(game.phase as (typeof phases)[number]) > i ? ' io-step-done' : ''}`}>
-          {i + 1}. {ph[0] + ph.slice(1).toLowerCase()}
-        </span>
-      ))}
+function SideRow({ sd, win, role }: { sd: Side; win: boolean; role: string }) {
+  const f = FACTIONS[sd.owner];
+  return (
+    <div className={`io-bside${win ? ' io-bside-win' : ''}`} style={{ ['--c' as string]: f.color }}>
+      <span className="io-player-emblem">
+        <Emblem faction={sd.owner} size={16} color="#fff" />
+      </span>
+      <span className="io-bside-who">
+        <b>
+          {f.short} <small>{role}</small>
+        </b>
+        <small>{sd.units.join(' · ')}</small>
+        {sd.bonuses.length > 0 && <small className="io-bside-bonus">{sd.bonuses.map((b) => `${b.label} +${b.n}`).join(' · ')}</small>}
+      </span>
+      <span className="io-bside-str">
+        <b>{sd.strength}</b>
+        <small>{sideText(sd)}</small>
+      </span>
     </div>
   );
-  const cardsBtn = (
-    <button className={`io-btn io-btn-cards${p.cards.length >= 3 ? ' io-pulse' : ''}`} onClick={openHand}>
-      Cards <b>{p.cards.length}</b>
-    </button>
-  );
+}
 
-  let body: React.ReactNode;
-  let primary: { label: string; run: () => void; disabled?: boolean } | null = null;
-
-  if (game.pendingMove) {
-    const pm = game.pendingMove;
-    primary = { label: `Move ${count} in`, run: () => dispatch({ type: 'MOVE_IN', count }) };
+function StepCard({ step, me }: { step: ReportStep; me: FactionId }) {
+  let body: React.ReactNode = null;
+  if (step.kind === 'BATTLE') {
     body = (
-      <div className="io-slider-row">
-        <span>
-          Advance into <b>{BOARD.byId[pm.to].name}</b>
-        </span>
-        <input type="range" min={pm.min} max={pm.max} value={count} onChange={(e) => setCount(Number(e.target.value))} />
-        <span className="io-count">{count}</span>
-      </div>
+      <>
+        <div className="io-card-title">
+          {INSTALLATIONS[step.region] && <span className="io-star">★</span>} Battle for {BOARD.byId[step.region].name}
+        </div>
+        {step.defender && <SideRow sd={step.defender} win={!step.captured} role="defending" />}
+        {step.attackers.map((a) => (
+          <SideRow key={a.owner} sd={a} win={step.captured && a.owner === step.winner} role="attacking" />
+        ))}
+        <div className={`io-card-verdict${step.captured ? ' io-captured' : ''}`}>
+          {step.captured ? `CAPTURED by ${FACTIONS[step.winner].short}` : `HELD by ${FACTIONS[step.winner].short}`} · {step.survivors} left
+        </div>
+      </>
     );
-  } else if (game.phase === 'MOBILISE' || game.reserve > 0) {
-    const rf = reinforcement(game, me);
-    const mustTrade = p.cards.length >= MAX_HAND;
-    primary = {
-      label: game.reserve > 0 ? `Place ${game.reserve} more` : mustTrade ? 'Trade cards first' : 'Begin Assault →',
-      run: () => (mustTrade ? openHand() : dispatch({ type: 'END_MOBILISE' })),
-      disabled: game.reserve > 0,
-    };
+  } else if (step.kind === 'NAVAL') {
     body = (
-      <div className="io-mob">
-        <div className="io-reserve">
-          <span className="io-reserve-num">{game.reserve}</span>
-          <span className="io-reserve-label">
-            troops to place
-            <small>
-              base {rf.base}
-              {rf.sectors.map((x) => ` · ${SECTORS[x.sector].name.replace(' Sector', '')} +${x.bonus}`)}
-              {rf.faction ? ` · Call-Up +${rf.faction}` : ''}
-            </small>
-          </span>
-        </div>
-        <div className="io-seg" role="group" aria-label="Troops per tap">
-          {([1, 5, 'all'] as Amount[]).map((a) => (
-            <button key={a} className={amount === a ? 'on' : ''} onClick={() => setAmount(a)}>
-              {a === 'all' ? 'All' : `+${a}`}
-            </button>
-          ))}
-        </div>
-        {cardsBtn}
-      </div>
-    );
-  } else if (game.phase === 'ASSAULT') {
-    primary = { label: 'End Assault →', run: () => (setSel({}), dispatch({ type: 'END_ASSAULT' })) };
-    if (sel.from && sel.to) {
-      const a = game.map[sel.from].troops, d = game.map[sel.to].troops;
-      const mode = attackOptions(game, sel.from).find((o) => o.to === sel.to)?.mode;
-      const maxDice = mode === 'AMPHIBIOUS' ? AMPHIBIOUS_MAX_DICE : 3;
-      const dice = Math.min(maxDice, a - 1);
-      const p = captureChance(a, d, BOARD.byId[sel.to].stronghold, maxDice);
-      const tone = p >= 0.7 ? 'good' : p >= 0.4 ? 'mid' : 'bad';
-      primary = { label: 'Roll Dice', run: () => attack(false) };
-      body = (
-        <div className="io-attack">
-          <div className="io-attack-matchup">
-            <b>{BOARD.byId[sel.from].name}</b> <span className="io-n">{a}</span>
-            <span className="io-vs">{mode === 'AMPHIBIOUS' ? '⚓' : '⚔'}</span>
-            <span className="io-n io-n-enemy" style={{ background: FACTIONS[game.map[sel.to].owner].color }}>
-              {d}
-            </span>{' '}
-            <b>{BOARD.byId[sel.to].name}</b>
-          </div>
-          <div className={`io-odds io-odds-${tone}`} title="Chance a Blitz from here ends with the region captured" data-testid="odds">
-            <span className="io-odds-pct">{Math.round(p * 100)}%</span>
-            <span className="io-odds-text">
-              <b>{oddsLabel(p)}</b>
-              <span className="io-odds-bar">
-                <i style={{ width: `${p * 100}%` }} />
-              </span>
+      <>
+        <div className="io-card-title">⚓ Naval battle · {SEA_ZONES[step.zone].name}</div>
+        {step.sides.map((sd) => (
+          <div key={sd.owner} className={`io-bside${sd.owner === step.winner ? ' io-bside-win' : ''}`} style={{ ['--c' as string]: FACTIONS[sd.owner].color }}>
+            <span className="io-player-emblem">
+              <Emblem faction={sd.owner} size={16} color="#fff" />
+            </span>
+            <span className="io-bside-who">
+              <b>{FACTIONS[sd.owner].short}</b>
+              <small>{FACTIONS[sd.owner].squadron}</small>
+            </span>
+            <span className="io-bside-str">
+              <b>{sd.ships}</b>
+              <small>{step.sunk[sd.owner] ? `${step.sunk[sd.owner]} sunk` : 'ships'}</small>
             </span>
           </div>
-          <small>
-            Blitz capture chance · you roll {dice} · they roll {Math.min(2, d)}
-            {BOARD.byId[sel.to].stronghold ? ' · stronghold: +1 on their best die' : ''}
-          </small>
-          <button className="io-btn io-btn-blitz" onClick={() => attack(true)}>
-            ⚡ Blitz
-          </button>
-          <button className="io-btn io-btn-ghost" onClick={() => setSel({})}>
-            Cancel
-          </button>
+        ))}
+        <div className="io-card-verdict">{step.winner ? `${FACTIONS[step.winner].short} controls the ${SEA_ZONES[step.zone].name}` : 'Both fleets mauled — the sea is contested'}</div>
+      </>
+    );
+  } else if (step.kind === 'CLASH') {
+    body = (
+      <>
+        <div className="io-card-title">
+          Columns clash · {BOARD.byId[step.at[0]].name} ↔ {BOARD.byId[step.at[1]].name}
         </div>
-      );
-    } else {
-      body = (
-        <div className="io-hint-row">
-          <span className="io-hint">{sel.striking ? 'Pick an enemy region to strike.' : sel.from ? 'Pick a highlighted target.' : 'Pick one of your regions (2+ troops) to attack from.'}</span>
-          {me === 'AIRFORCE' && (
-            <button className={`io-btn io-btn-power${sel.striking ? ' on' : ''}`} disabled={!canStrike(game)} onClick={() => setSel(sel.striking ? {} : { striking: true })}>
-              ✈ Precision Strike{p.powerUsed ? ' (used)' : ''}
-            </button>
-          )}
-          {cardsBtn}
+        <SideRow sd={step.a} win={step.winner === step.a.owner} role="marching" />
+        <SideRow sd={step.b} win={step.winner === step.b.owner} role="marching" />
+        <div className="io-card-verdict">{step.winner ? `${FACTIONS[step.winner].short} pushes through` : 'Both columns shattered'}</div>
+      </>
+    );
+  } else if (step.kind === 'SCORE') {
+    const gains = Object.entries(step.gains) as [FactionId, number][];
+    body = (
+      <>
+        <div className="io-card-title">★ Installations score</div>
+        <div className="io-score-row">
+          {gains.map(([f, n]) => (
+            <span key={f} className="io-score" style={{ background: FACTIONS[f].color }}>
+              {FACTIONS[f].short} +{n}
+            </span>
+          ))}
         </div>
-      );
-    }
-  } else {
-    primary = { label: 'End Turn', run: () => (setSel({}), dispatch({ type: 'END_TURN' })) };
-    if (sel.from && sel.to) {
-      const max = game.map[sel.from].troops - 1;
-      primary = { label: `Redeploy ${count} & End Turn`, run: () => (setSel({}), dispatch({ type: 'REDEPLOY', from: sel.from!, to: sel.to!, count })) };
-      body = (
-        <div className="io-slider-row">
-          <span>
-            {BOARD.byId[sel.from].name} → <b>{BOARD.byId[sel.to].name}</b>
-          </span>
-          <input type="range" min={1} max={max} value={Math.min(count, max)} onChange={(e) => setCount(Number(e.target.value))} />
-          <span className="io-count">{Math.min(count, max)}</span>
-        </div>
-      );
-    } else body = <span className="io-hint">{sel.from ? 'Pick a connected region of yours.' : 'Pick a region to move troops from — or just end your turn.'}</span>;
-  }
+      </>
+    );
+  } else if (step.kind === 'FAILED') body = <div className="io-card-title">{step.text}</div>;
+  else if (step.kind === 'ELIMINATED') body = <div className="io-card-title">{FACTIONS[step.who].name} has been wiped off the island.</div>;
+  else if (step.kind === 'RECOMMISSION') body = <div className="io-card-title">{FACTIONS[step.owner].short} recommissions a ship in the {SEA_ZONES[step.zone].name}.</div>;
+  if (!body) return null;
+  const involved =
+    (step.kind === 'BATTLE' && (step.defender?.owner === me || step.attackers.some((a) => a.owner === me))) ||
+    (step.kind === 'NAVAL' && step.sides.some((x) => x.owner === me)) ||
+    (step.kind === 'CLASH' && (step.a.owner === me || step.b.owner === me));
+  return (
+    <div className={`io-step-card${involved ? ' io-step-mine' : ''}`} data-testid="step-card">
+      {body}
+    </div>
+  );
+}
 
-  primaryRef.current = () => primary && !primary.disabled && primary.run();
+function ReportCard({ report, onClose }: { report: { round: number; lines: ReportLine[] }; onClose: () => void }) {
+  return (
+    <div className="io-recap" role="status" data-testid="report">
+      <div className="io-recap-head">
+        <b>Round {report.round} report</b>
+        <button className="io-icon-btn" onClick={onClose} aria-label="Dismiss">
+          ✕
+        </button>
+      </div>
+      <ul>
+        {report.lines.map((l, i) => (
+          <li key={i}>
+            <i style={{ background: l.color }} />
+            {l.text}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
+const TOOL_TIPS: Record<Tool, string> = {
+  deploy: 'Tap your regions to put new troops down. Mass them where you mean to strike — or where they will hit you.',
+  move: 'Drag from your region onto a neighbour to march, or onto a far coast to land by sea. Every region keeps one troop. Nobody sees your orders until all are in.',
+  strike: 'Air strike: knock 2 troops off an enemy region before anyone moves. Soften a target, or break up a stack about to hit you.',
+  cas: 'Close air support: +3 strength to whatever you fight at that region this round, attacking or defending.',
+  recon: 'Recon reveals a region and its neighbours exactly, right now. Look before you commit.',
+};
+
+interface PlanPanelProps {
+  view: PlayerView;
+  tool: Tool;
+  setTool: (t: Tool) => void;
+  amount: Amount;
+  setAmount: (a: Amount) => void;
+  deployLeft: number;
+  sortiesLeft: number;
+  from: string | null;
+  selShip: string | null;
+  onUndo: () => void;
+  onClear: () => void;
+  onReady: () => void;
+  me: FactionId;
+}
+
+function PlanPanel({ view, tool, setTool, amount, setAmount, deployLeft, sortiesLeft, from, selShip, onUndo, onClear, onReady, me }: PlanPanelProps) {
+  const fac = FACTIONS[me];
+  const tip = selShip
+    ? 'Tap a lit sea zone to sail there (or its own zone to stay). Ships in a zone you alone hold carry landings and add naval gunfire.'
+    : tool === 'move' && from
+      ? `From ${BOARD.byId[from].name}: tap a neighbour to march, or a lit coast to land — or just drag.`
+      : TOOL_TIPS[tool];
+  const tools: { id: Tool; label: string; badge?: string }[] = [
+    { id: 'deploy', label: 'Deploy', badge: deployLeft > 0 ? String(deployLeft) : '✓' },
+    { id: 'move', label: 'Move' },
+    { id: 'strike', label: '✈ Strike', badge: String(sortiesLeft) },
+    { id: 'cas', label: '✈ Air Support', badge: String(sortiesLeft) },
+    { id: 'recon', label: '◉ Recon', badge: String(view.reconsLeft) },
+  ];
   return (
     <div className="io-panel-wrap">
       <div className="io-encik">
@@ -859,29 +855,55 @@ function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, cou
         </div>
         <div className="io-encik-text">
           <b>Encik says</b>
-          {advice(game, me)}
+          {tip}
         </div>
       </div>
       <div className="io-panel" style={{ ['--c' as string]: fac.color }}>
-        {stepper}
+        <div className="io-steps">
+          <span className="io-step io-step-on">Round {view.round} · plan your orders</span>
+          <span className="io-step io-step-plain">
+            +{view.budget.troops} troops: {view.budget.troopParts.map((p) => `${p.label} ${p.n}`).join(' · ')}
+          </span>
+        </div>
         <div className="io-panel-body">
-          {body}
-          {primary && (
-            <button className="io-btn io-btn-primary io-btn-main" disabled={primary.disabled} onClick={primary.run}>
-              {primary.label}
-              <kbd>Enter</kbd>
+          <div className="io-tools">
+            {tools.map((t) => (
+              <button key={t.id} className={`io-tool${tool === t.id ? ' on' : ''}`} onClick={() => setTool(t.id)} data-testid={`tool-${t.id}`}>
+                {t.label}
+                {t.badge && <b>{t.badge}</b>}
+              </button>
+            ))}
+            {tool === 'deploy' && (
+              <div className="io-seg" role="group" aria-label="Troops per tap">
+                {([1, 5, 'all'] as Amount[]).map((a) => (
+                  <button key={a} className={amount === a ? 'on' : ''} onClick={() => setAmount(a)}>
+                    {a === 'all' ? 'All' : `+${a}`}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button className="io-btn io-btn-ghost io-small" onClick={onUndo}>
+              Undo
             </button>
-          )}
+            <button className="io-btn io-btn-ghost io-small" onClick={onClear}>
+              Clear
+            </button>
+          </div>
+          <button className="io-btn io-btn-primary io-btn-main" onClick={onReady} disabled={deployLeft > 0} data-testid="ready">
+            {deployLeft > 0 ? `Deploy ${deployLeft} more` : 'Ready — Execute'}
+            <kbd>Enter</kbd>
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function Victory({ game, human, onRestart, onExit }: { game: GameState; human: FactionId | null; onRestart: () => void; onExit: () => void }) {
+function Victory({ game, me, onRestart, onExit }: { game: GameState; me: FactionId; onRestart: () => void; onExit: () => void }) {
   const w = game.winner!;
-  const won = w === human;
+  const won = w === me;
   const fac = FACTIONS[w];
+  const table = [...game.factions].sort((a, b) => player(game, b).vp - player(game, a).vp);
   return (
     <div className="io-modal-backdrop">
       <div className="io-victory" style={{ ['--c' as string]: fac.color, ['--d' as string]: fac.deep }}>
@@ -889,19 +911,26 @@ function Victory({ game, human, onRestart, onExit }: { game: GameState; human: F
           <Emblem faction={w} size={64} color="#fff" />
         </div>
         <h1>{won ? 'Victory!' : 'Defeat'}</h1>
-        <p className="io-victory-who">
-          {won ? 'The island is yours, Commander.' : `The ${fac.name} takes the exercise.`}
-        </p>
+        <p className="io-victory-who">{won ? 'The island is yours, Commander.' : `${fac.name} takes the exercise.`}</p>
         <p className="io-victory-reason">{game.winReason}</p>
+        <div className="io-victory-table">
+          {table.map((f) => (
+            <div key={f} style={{ ['--c' as string]: FACTIONS[f].color }}>
+              <i />
+              <span>{FACTIONS[f].name}</span>
+              <b>{player(game, f).vp} VP</b>
+            </div>
+          ))}
+        </div>
         <div className="io-victory-stats">
           <span>
             <b>{game.round}</b> rounds
           </span>
           <span>
-            <b>{game.stats.captures}</b> captures
+            <b>{game.stats.battles}</b> battles
           </span>
           <span>
-            <b>{game.stats.attacks}</b> dice rolls
+            <b>{game.stats.captures}</b> captures
           </span>
         </div>
         <div className="io-victory-actions">

@@ -5,9 +5,9 @@ import { FACTIONS, FACTION_IDS, GameState } from './types';
 import { GameScreen } from './ui/GameScreen';
 import { Setup, TitleScreen } from './ui/TitleScreen';
 
-const SETUP_KEY = 'island_ops_setup_v1';
+const SETUP_KEY = 'island_ops_setup_v2';
 
-const DEFAULT_SETUP: Setup = { faction: 'ARMY', opponents: 3, level: 'REGULAR' };
+const DEFAULT_SETUP: Setup = { faction: 'SINGA', opponents: 3, level: 'REGULAR' };
 
 function loadSetup(): Setup {
   try {
