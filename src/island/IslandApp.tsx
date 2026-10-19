@@ -1,20 +1,28 @@
 import { useState } from 'react';
 import { sound } from '../audio/sound';
 import { newGame } from './engine';
-import { FACTION_IDS, GameState } from './types';
+import { FACTIONS, FACTION_IDS, GameState } from './types';
 import { GameScreen } from './ui/GameScreen';
 import { Setup, TitleScreen } from './ui/TitleScreen';
 
 const SETUP_KEY = 'island_ops_setup_v1';
 
+const DEFAULT_SETUP: Setup = { faction: 'ARMY', opponents: 3, level: 'REGULAR' };
+
 function loadSetup(): Setup {
   try {
     const raw = localStorage.getItem(SETUP_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const saved = { ...DEFAULT_SETUP, ...JSON.parse(raw) } as Setup;
+      // A setup saved before the roster changed may name a retired service or too many seats.
+      if (!FACTIONS[saved.faction]) saved.faction = DEFAULT_SETUP.faction;
+      saved.opponents = Math.min(Math.max(saved.opponents, 2), FACTION_IDS.length - 1);
+      return saved;
+    }
   } catch {
     // Storage unavailable — fall through to defaults.
   }
-  return { faction: 'ARMY', opponents: 3, level: 'REGULAR' };
+  return DEFAULT_SETUP;
 }
 
 function start(setup: Setup): GameState {

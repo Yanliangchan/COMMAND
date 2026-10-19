@@ -53,7 +53,7 @@ export function DiceTray({ battle, compact }: { battle: Battle; compact?: boolea
     <div className={`io-dice-tray${compact ? ' io-dice-compact' : ''}`}>
       <div className="io-dice-head">
         <span style={{ color: atk.color }}>{BOARD.byId[battle.from].name}</span>
-        <span className="io-dice-vs">{battle.mode === 'AMPHIBIOUS' ? '⚓ landing on' : battle.mode === 'INSERTION' ? '🪂 inserting into' : 'attacks'}</span>
+        <span className="io-dice-vs">{battle.mode === 'AMPHIBIOUS' ? '⚓ landing on' : 'attacks'}</span>
         <span style={{ color: def.color }}>{BOARD.byId[battle.to].name}</span>
       </div>
       <div className="io-dice-rows">

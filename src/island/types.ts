@@ -4,7 +4,7 @@
 
 import type { SectorId } from './map';
 
-export type FactionId = 'ARMY' | 'NAVY' | 'AIRFORCE' | 'COMMANDO' | 'DIS';
+export type FactionId = 'ARMY' | 'NAVY' | 'AIRFORCE' | 'DIS';
 
 export interface FactionDef {
   id: FactionId;
@@ -34,11 +34,6 @@ export const FACTIONS: Record<FactionId, FactionDef> = {
     motto: 'Above All',
     power: 'Precision Strike', powerText: 'Once a turn, knock a troop off any enemy region on the island.',
   },
-  COMMANDO: {
-    id: 'COMMANDO', name: 'Commandos', short: 'CDO', color: '#d2412f', deep: '#6e1a10',
-    motto: 'For Honour and Glory',
-    power: 'Heliborne Insertion', powerText: 'Once a turn, attack a region two steps away, leaping over whatever is between.',
-  },
   DIS: {
     id: 'DIS', name: 'Digital & Intelligence', short: 'DIS', color: '#9150c8', deep: '#45206a',
     motto: 'Stronger Together',
@@ -65,7 +60,7 @@ export const ASSETS: Record<Exclude<CardKind, 'WILD'>, string[]> = {
   AIR: ['F-15SG', 'F-35B', 'AH-64D Apache', 'CH-47 Chinook', 'Hermes UAV'],
 };
 
-export type AttackMode = 'LAND' | 'AMPHIBIOUS' | 'INSERTION';
+export type AttackMode = 'LAND' | 'AMPHIBIOUS';
 
 export type Phase = 'MOBILISE' | 'ASSAULT' | 'REDEPLOY' | 'GAME_OVER';
 

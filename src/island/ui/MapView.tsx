@@ -8,7 +8,7 @@ import { BOARD, SECTORS, SECTOR_IDS, polyPath } from '../map';
 import { FACTIONS, FactionId, Holding } from '../types';
 import { LandmarkGlyph } from './Glyphs';
 
-export type Highlight = 'source' | 'attack' | 'amphibious' | 'insertion' | 'strike' | 'friendly' | 'place';
+export type Highlight = 'source' | 'attack' | 'amphibious' | 'strike' | 'friendly' | 'place';
 
 export interface Fx {
   id: string;

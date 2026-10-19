@@ -81,7 +81,7 @@ export function newGame(opts: NewGameOptions): GameState {
     round: 1,
     turnIndex: 0,
     order: [],
-    players: { ARMY: undefined, NAVY: undefined, AIRFORCE: undefined, COMMANDO: undefined, DIS: undefined },
+    players: { ARMY: undefined, NAVY: undefined, AIRFORCE: undefined, DIS: undefined },
     map: {},
     phase: 'MOBILISE',
     reserve: 0,
@@ -179,13 +179,6 @@ export function attackOptions(s: GameState, from: string): AttackOption[] {
   if (me === 'NAVY' && BOARD.byId[from].coastal) {
     for (const r of BOARD.regions) {
       if (r.coastal && s.map[r.id].owner !== me && !out.has(r.id) && distance(from, r.id) <= AMPHIBIOUS_REACH) out.set(r.id, 'AMPHIBIOUS');
-    }
-  }
-  if (me === 'COMMANDO' && !player(s, me).powerUsed && h.troops >= 3) {
-    for (const n of BOARD.byId[from].neighbours) {
-      for (const m of BOARD.byId[n].neighbours) {
-        if (m !== from && s.map[m].owner !== me && !out.has(m)) out.set(m, 'INSERTION');
-      }
     }
   }
   return [...out].map(([to, mode]) => ({ to, mode }));
@@ -348,7 +341,7 @@ function resolveBattle(s: GameState, from: string, to: string, blitz: boolean, m
 
   const captured = s.map[to].troops <= 0;
   emit(s, { kind: 'BATTLE', from, to, attacker: me, defender, rolls, atkLoss, defLoss, captured, mode });
-  const verb = mode === 'AMPHIBIOUS' ? 'storms ashore at' : mode === 'INSERTION' ? 'inserts into' : 'attacks';
+  const verb = mode === 'AMPHIBIOUS' ? 'storms ashore at' : 'attacks';
   log(s, me, `${FACTIONS[me].name} ${verb} ${BOARD.byId[to].name}: lost ${atkLoss}, killed ${defLoss}${captured ? ' — captured!' : '.'}`);
   if (!captured) return;
 
@@ -457,8 +450,7 @@ export function apply(prev: GameState, action: Action): GameState {
     case 'ATTACK': {
       const opt = attackOptions(s, action.from).find((o) => o.to === action.to);
       must(opt, 'That attack is not possible.');
-      if (opt.mode === 'INSERTION') p.powerUsed = true;
-      resolveBattle(s, action.from, action.to, action.blitz || opt.mode === 'INSERTION', opt.mode);
+      resolveBattle(s, action.from, action.to, action.blitz, opt.mode);
       break;
     }
     case 'MOVE_IN': {

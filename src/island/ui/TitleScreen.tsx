@@ -67,7 +67,7 @@ export function TitleScreen({ initial, onStart }: { initial: Setup; onStart: (s:
             <div className="io-field">
               <span className="io-field-label">Opponents</span>
               <div className="io-seg">
-                {[2, 3, 4].map((n) => (
+                {[2, 3].map((n) => (
                   <button key={n} className={setup.opponents === n ? 'on' : ''} onClick={() => setSetup({ ...setup, opponents: n })}>
                     {n} bots
                   </button>

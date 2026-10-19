@@ -174,7 +174,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
       return h;
     }
     if (sel.from) h[sel.from] = 'source';
-    for (const o of options) h[o.to] = o.mode === 'LAND' ? 'attack' : o.mode === 'AMPHIBIOUS' ? 'amphibious' : 'insertion';
+    for (const o of options) h[o.to] = o.mode === 'LAND' ? 'attack' : 'amphibious';
     for (const r of redeployTargets) h[r] = 'friendly';
     return h;
   }, [game, myTurn, placing, sel, options, redeployTargets, me]);
@@ -407,7 +407,6 @@ function advice(game: GameState, me: FactionId): string {
   }
   if (game.phase === 'ASSAULT') {
     if (me === 'AIRFORCE' && canStrike(game)) return 'Soften them up first — your Precision Strike is ready. Then hit where they’re weakest.';
-    if (me === 'COMMANDO' && !player(game, me).powerUsed) return 'Pick a region with 3+ troops: purple targets two steps away are Heliborne Insertion targets.';
     if (me === 'NAVY') return 'Blue targets across the water are Amphibious Assaults — any coast is your front line.';
     return 'Attack with more troops than they have. Capture at least one region this turn to earn an Asset Card.';
   }
@@ -530,7 +529,7 @@ function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, cou
         <div className="io-attack">
           <div className="io-attack-matchup">
             <b>{BOARD.byId[sel.from].name}</b> <span className="io-n">{a}</span>
-            <span className="io-vs">{mode === 'AMPHIBIOUS' ? '⚓' : mode === 'INSERTION' ? '🪂' : '⚔'}</span>
+            <span className="io-vs">{mode === 'AMPHIBIOUS' ? '⚓' : '⚔'}</span>
             <span className="io-n io-n-enemy" style={{ background: FACTIONS[game.map[sel.to].owner].color }}>
               {d}
             </span>{' '}
@@ -539,13 +538,10 @@ function CommandPanel({ game, human, myTurn, sel, setSel, amount, setAmount, cou
           <small>
             You roll {dice} · they roll {Math.min(2, d)}
             {BOARD.byId[sel.to].stronghold ? ' · stronghold: +1 on their best die' : ''}
-            {mode === 'INSERTION' ? ' · insertion fights to the finish' : ''}
           </small>
-          {mode !== 'INSERTION' && (
-            <button className="io-btn io-btn-blitz" onClick={() => attack(true)}>
-              ⚡ Blitz
-            </button>
-          )}
+          <button className="io-btn io-btn-blitz" onClick={() => attack(true)}>
+            ⚡ Blitz
+          </button>
           <button className="io-btn io-btn-ghost" onClick={() => setSel({})}>
             Cancel
           </button>

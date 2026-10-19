@@ -1,7 +1,7 @@
 # COMMAND: Island Ops
 
 **Take the island. Sector by sector.** A fast, bright, RISK-style strategy
-game in Total Defence colours: 3–5 SAF services fight an exercise for a
+game in Total Defence colours: 3–4 SAF services fight an exercise for a
 stylised Singapore. Matches run about 8 rounds; every turn has dice on the
 table and regions changing hands.
 
@@ -42,19 +42,18 @@ npm run islandcheck  # board checks + bot-vs-bot balance and pacing sim
 | **Army** | NS Call-Up: +1 troop every Mobilise. |
 | **Navy** | Amphibious Assault: attack any enemy coastal region within reach of your coastal regions. |
 | **Air Force** | Precision Strike: once a turn, remove a troop from any enemy region. |
-| **Commandos** | Heliborne Insertion: once a turn, attack a region two steps away. |
 | **Digital & Intelligence** | Signals Intelligence: an Asset Card every turn, and +2 troops per traded set. |
 
-### Measured (bot-vs-bot, `npm run islandcheck`, 600 games of 3–5 players)
+### Measured (bot-vs-bot, `npm run islandcheck`, 600 games of 3–4 players)
 
 | | Island Ops | Classic COMMAND |
 | --- | --- | --- |
-| Dice rolls per turn | **6.8** | under 1 engagement per round |
+| Dice rolls per turn | **7.0** | under 1 engagement per round |
 | Regions captured per turn | **3.3** | — |
-| Rounds per game | **8.6** | 13–24 |
+| Rounds per game | **8.4** | 13–24 |
 | Games that finish | **100%** | — |
 
-Faction win rates are within 0.83–1.15× of an even share; the sim fails if
+Faction win rates are within 0.88–1.10× of an even share; the sim fails if
 any faction leaves the 0.75–1.3× band.
 
 ## Code layout (Island Ops)

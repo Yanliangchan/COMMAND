@@ -203,7 +203,6 @@ a:focus-visible {
 
 .io-hl-attack,
 .io-hl-amphibious,
-.io-hl-insertion,
 .io-hl-strike {
   stroke-width: 4.5;
   animation: io-pulse-stroke 1s ease-in-out infinite;
@@ -216,11 +215,6 @@ a:focus-visible {
 .io-hl-amphibious {
   stroke: #8fd6ff;
   stroke-dasharray: 8 5;
-}
-
-.io-hl-insertion {
-  stroke: #e4b3ff;
-  stroke-dasharray: 3 5;
 }
 
 .io-hl-strike {
@@ -511,7 +505,7 @@ a:focus-visible {
 
 .io-factions {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
 }
 
@@ -1532,7 +1526,7 @@ a:focus-visible {
 
 @media (max-width: 1100px) {
   .io-factions {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
   .io-encik {
     display: none;

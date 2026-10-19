@@ -50,7 +50,7 @@ const reasons: Record<string, number> = {};
 const turnsPerGame: number[] = [];
 
 for (let g = 0; g < GAMES; g++) {
-  const n = 3 + (g % 3);
+  const n = 3 + (g % 2);
   const pool = [...FACTION_IDS];
   const factions: FactionId[] = [];
   for (let i = 0; i < n; i++) factions.push(pool.splice((g * 7 + i * 3) % pool.length, 1)[0]);
@@ -88,7 +88,7 @@ function player0(r: string) {
 }
 
 turnsPerGame.sort((a, b) => a - b);
-console.log(`\n${GAMES} games (3–5 bots each)`);
+console.log(`\n${GAMES} games (3–4 bots each)`);
 console.log(`finished ${finished}, illegal actions ${illegal}, decided on the clock ${timeouts}`);
 console.log(`dice rolls per turn ${(attacks / turns).toFixed(2)}, captures per turn ${(captures / turns).toFixed(2)}`);
 console.log(`rounds per game ${(rounds / GAMES).toFixed(1)}, turns per game median ${turnsPerGame[GAMES >> 1]} (p90 ${turnsPerGame[Math.floor(GAMES * 0.9)]})`);
