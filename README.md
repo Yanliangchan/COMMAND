@@ -1,4 +1,94 @@
-# COMMAND — Lead the force. Shape the battlefield.
+# COMMAND: Island Ops
+
+**Plan in secret. Strike together. Hold the island.** A fast, bright strategy
+game in Total Defence colours. Three or four **Pasukan** (task forces) fight an
+exercise for a stylised Singapore — and every round, everyone plans at the same
+time and in secret, then every order happens at once.
+
+Island Ops is the relaunch. It replaces the original operational simulation as
+the front door; the original game is still playable at `/#classic` (and
+documented below, unchanged).
+
+## Play
+
+```bash
+npm install
+npm run dev          # http://localhost:5173 — Island Ops, single player vs bots
+npm run islandcheck  # rules checks + bot-vs-bot balance and pacing sim
+```
+
+## How it plays
+
+- **Simultaneous, secret orders.** Each round every Pasukan deploys, marches,
+  lands, sails, flies and scouts — then presses Ready. When all are in, the
+  round resolves at once and plays back battle by battle. No waiting for other
+  players' turns.
+- **No dice.** A fight is decided by strength: troops + defence (+1 dug in, +2
+  in a stronghold) + air support (+3) + naval gunfire (+1). Ties go to whoever
+  holds the ground. The uncertainty comes from what the others ordered and how
+  strong they really are.
+- **Fog of war.** You see exact numbers only on your own ground. Along your
+  borders you see a range (1–2, 3–5, 6–9, 10+); beyond, only colours. **Recon**
+  reveals a region and its neighbours exactly for the round.
+- **One SAF, every service doing its own job:**
+  - **Army** — troops hold and take ground. Columns marching straight at each
+    other clash on the road.
+  - **Navy** — ships hold the four sea zones (Johor Strait, Western Approaches,
+    Singapore Strait, Changi Waters). Hold a zone alone and your ships carry
+    landings between any two coasts on it, and add naval gunfire. Rival fleets
+    in one zone fight; the bigger wins. Sunk ships recommission at a Naval Base.
+  - **Air Force** — sorties: a Strike (−2 troops before anyone moves) or Close
+    Air Support (+3 to a fight). One a round plus one per Air Base held.
+  - **DIS** — recon, one a round plus the Radar Station.
+- **Victory points from Key Installations** — 4 Air Bases, 3 Naval Bases,
+  Marina Bay, Jurong Island, the Bukit Timah radar and the Woodlands Causeway.
+  Each one held at the end of a round scores 1 VP and gives a perk. First to 30
+  VP wins, or the most VP after round 15, or the last Pasukan standing.
+
+### The Pasukan
+
+| Pasukan | Doctrine | Battalions (real SAF designations) | Navy |
+| --- | --- | --- | --- |
+| **Singa** (lion) | Total Mobilisation: +1 troop a round | 1 SIR, 2 SIR, 40 SAR, 21 SA, 10 C4I Bn | 185 SQN |
+| **Harimau** (tiger) | Ambush: +1 when defending; +1 recon; exact border intel | 3 SIR, 5 SIR, 41 SAR, 35 SCE, 11 C4I Bn | 188 SQN |
+| **Helang** (eagle) | Air Superiority: +1 sortie a round | 8 SIR, 1 GDS, 42 SAR, 20 SA, 12 C4I Bn | 189 SQN |
+| **Jerung** (shark) | Sea Control: extra ship, +2 lift per ship, double gunfire | 9 SIR, 1 CDO BN, 48 SAR, 30 SCE, 16 C4I Bn | 191 SQN |
+
+Ground is held by the companies of those battalions — "Charlie Coy, 40 SAR" —
+so every battle report names real units. The designations are the ones
+verified for the classic game (see "Formation naming — what was checked"
+below); which battalion goes to which Pasukan is a fictional exercise
+arrangement.
+
+### Measured (bot-vs-bot, `npm run islandcheck`, 300 games of 3–4 players)
+
+Bots plan from the same fogged view a player gets.
+
+| | |
+| --- | --- |
+| Rounds per game | 7.4 |
+| Battles per round | 6.2 (plus 0.7 road clashes and 4.2 air strikes) |
+| Games that finish | 100%, all by reaching the VP target |
+| Win share per Pasukan | 0.78–1.14× of an even share |
+
+## Code layout (Island Ops)
+
+```
+src/island/
+  map.ts          Board: island, regions (Voronoi), sea zones, Key Installations.
+  types.ts        Pasukan, ORBAT, orders, fog view, round report, tuning constants.
+  engine.ts       Pure rules: newGame, viewFor (fog), recon, validate/submitOrders,
+                  resolveRound → { state, report }. RNG only for setup.
+  bot.ts          planBot(view): recon, then orders — from the fogged view only.
+  IslandApp.tsx   Title screen → match.
+  ui/             MapView (SVG diorama), GameScreen (planning, playback, report), Glyphs.
+  island.css      The Island Ops look.
+scripts/islandcheck.ts   Rules checks + balance/pacing sim.
+```
+
+---
+
+# Classic COMMAND — Lead the force. Shape the battlefield.
 
 **COMMAND** is a multiplayer turn-based military strategy game inspired by the
 Singapore Armed Forces (SAF). Built with **Vite + React +
