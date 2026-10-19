@@ -96,6 +96,13 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   const [report, setReport] = useState<{ round: number; lines: ReportLine[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [logOpen, setLogOpen] = useState(false);
+  const [banners, setBanners] = useState<{ id: number; title: string; sub?: string; color: string }[]>([]);
+  const [shake, setShake] = useState(0);
+  const banner = useCallback((title: string, color: string, sub?: string) => {
+    const id = Math.random();
+    setBanners((bs) => [...bs, { id, title, sub, color }]);
+    window.setTimeout(() => setBanners((bs) => bs.filter((b) => b.id !== id)), 1900);
+  }, []);
   const me = game.factions.find((f) => player(game, f).human)!;
   const view = useMemo(() => viewFor(game, me), [game, me]);
   const over = game.phase === 'GAME_OVER' && !playback;
@@ -251,6 +258,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
     setSelShip(null);
     setReport(null);
     sound.play('turn');
+    banner('Orders in — Execute!', FACTIONS[me].color, `Round ${rep.round}: every Pasukan moves at once`);
     setPlayback({ report: rep, before: s, after: state, index: -1, overrides: {}, arrows: [], card: null, naval: null });
   };
 
@@ -262,6 +270,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
       setPlayback(null);
       setReport({ round: pb.report.round, lines: reportLines(pb.report, me) });
       setTool('deploy');
+      if (pb.after.phase !== 'GAME_OVER') window.setTimeout(() => banner(`Round ${pb.after.round}`, FACTIONS[me].color, 'Plan your orders'), 200);
       if (lost.length) {
         const ids = lost.map((r) => `lost-${pb.report.round}-${r}`);
         setFx((f) => [...f, ...lost.map((region, i) => ({ id: ids[i], kind: 'alert' as const, region, color: '#ff5a4e' }))]);
@@ -292,10 +301,14 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
           sound.play('attack');
           break;
         case 'STRIKE': {
-          const id = `strike-${next}`;
-          setFx((f) => [...f, { id, kind: 'blast', region: step.region, color: '#fff' }]);
-          window.setTimeout(() => setFx((f) => f.filter((x) => x.id !== id)), 1000);
-          sound.play('attack');
+          // The jet comes in first; the bombs land as it passes over.
+          const jet = `jet-${next}`, id = `strike-${next}`;
+          setFx((f) => [...f, { id: jet, kind: 'jet', region: step.region, color: FACTIONS[step.by].color }]);
+          window.setTimeout(() => {
+            setFx((f) => [...f.filter((x) => x.id !== jet), { id, kind: 'blast', region: step.region, color: '#fff' }]);
+            sound.play('attack');
+          }, 480);
+          window.setTimeout(() => setFx((f) => f.filter((x) => x.id !== id)), 1500);
           break;
         }
         case 'MOVES':
@@ -306,6 +319,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
             color: FACTIONS[m.owner].color,
             label: String(m.count),
             via: m.landing ? sharedZones(m.from, m.to)[0] : undefined,
+            travel: true,
           }));
           sound.play('move');
           break;
@@ -314,11 +328,19 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
           // Reveal the result on the map once the card has had a moment.
           window.setTimeout(() => {
             setPlayback((p2) => (p2 ? { ...p2, overrides: { ...p2.overrides, [step.region]: { owner: step.winner, text: String(step.survivors), fog: false } } } : p2));
+            const boom = `boom-${next}`;
+            setFx((f) => [...f, { id: boom, kind: 'blast', region: step.region, color: '#fff' }]);
+            window.setTimeout(() => setFx((f) => f.filter((x) => x.id !== boom)), 900);
+            const mine = step.defender?.owner === me || step.attackers.some((a) => a.owner === me);
+            if (mine) setShake((n) => n + 1);
             if (step.captured) {
               const id = `cap-${next}`;
               setFx((f) => [...f, { id, kind: 'ripple', region: step.region, color: FACTIONS[step.winner].color }]);
               window.setTimeout(() => setFx((f) => f.filter((x) => x.id !== id)), 1300);
               sound.play('kill');
+              const ki = INSTALLATIONS[step.region];
+              if (ki && step.winner === me) banner(`★ ${BOARD.byId[step.region].name} secured`, FACTIONS[me].color, INSTALLATION_INFO[ki].label);
+              else if (ki && step.defender?.owner === me) banner(`${BOARD.byId[step.region].name} lost`, '#d9452f', `to ${FACTIONS[step.winner].name}`);
             }
           }, 850);
           sound.play('attack');
@@ -326,6 +348,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
         default:
           card = step;
           if (step.kind === 'SCORE') sound.play('objective');
+          if (step.kind === 'ELIMINATED') banner(`${FACTIONS[step.who].short} wiped out`, FACTIONS[step.who].color);
       }
       setPlayback((pb) => (pb ? { ...pb, index: next, arrows, card, naval } : pb));
     }, delay);
@@ -423,7 +446,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   const selZone = selShip ? game.ships.find((s) => s.id === selShip)?.zone : null;
 
   return (
-    <div className="io-game">
+    <div className={`io-game${shake % 2 ? ' io-shake-a' : shake ? ' io-shake-b' : ''}`}>
       <div className="io-map-wrap">
         <MapView
           badges={badges}
@@ -466,6 +489,15 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
       {report && planning && <ReportCard report={report} onClose={() => setReport(null)} />}
 
       {toast && <div className="io-toast">{toast}</div>}
+
+      <div className="io-banners">
+        {banners.map((b) => (
+          <div key={b.id} className="io-banner" style={{ ['--c' as string]: b.color }}>
+            <div className="io-banner-title">{b.title}</div>
+            {b.sub && <div className="io-banner-sub">{b.sub}</div>}
+          </div>
+        ))}
+      </div>
 
       {playback && (
         <div className="io-panel io-panel-wait" style={{ ['--c' as string]: myColor }}>
@@ -569,7 +601,9 @@ function TopBar({ game, me, playing, onExit, onLog }: { game: GameState; me: Fac
                     {f === me && <em> YOU</em>}
                   </b>
                   <small>
-                    <span className="io-vp">{p.vp} VP</span> · {regionsOf(game, f).length} regions · {installationsOf(game, f).length}★
+                    <span className="io-vp" key={p.vp}>
+                      {p.vp} VP
+                    </span> · {regionsOf(game, f).length} regions · {installationsOf(game, f).length}★
                   </small>
                 </span>
               </div>

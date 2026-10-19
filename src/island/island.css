@@ -2040,3 +2040,127 @@ a:focus-visible {
     padding-bottom: 16px;
   }
 }
+
+/* --- v0.3 life: drifting sea, clouds, travelling columns, jets, shake ----- */
+
+.io-waves-layer {
+  animation: io-wave-drift 9s linear infinite;
+}
+
+@keyframes io-wave-drift {
+  to {
+    transform: translateX(40px);
+  }
+}
+
+.io-clouds ellipse {
+  fill: rgba(10, 30, 50, 0.13);
+  filter: blur(6px);
+  animation: io-cloud 72s linear infinite;
+}
+
+@keyframes io-cloud {
+  from {
+    transform: translateX(-300px);
+  }
+  to {
+    transform: translateX(1100px);
+  }
+}
+
+.io-ship {
+  transition: transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.io-ship-bob {
+  animation: io-bob 2.6s ease-in-out infinite;
+}
+
+@keyframes io-bob {
+  50% {
+    transform: translateY(-2.5px) rotate(-3deg);
+  }
+}
+
+.io-ki-star {
+  animation: io-twinkle 2.8s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes io-twinkle {
+  50% {
+    transform: scale(1.25) rotate(12deg);
+  }
+}
+
+.io-order-faint {
+  opacity: 0.45;
+}
+
+.io-token {
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.55));
+}
+
+.io-token-text {
+  font-family: var(--display);
+  font-size: 11px;
+  text-anchor: middle;
+  fill: #fff;
+  pointer-events: none;
+}
+
+.io-jet path {
+  fill: #fff;
+  stroke: #1d2a36;
+  stroke-width: 1;
+  filter: drop-shadow(0 6px 3px rgba(0, 0, 0, 0.45));
+}
+
+.io-vp {
+  display: inline-block;
+  animation: io-pop 0.5s ease-out;
+}
+
+.io-shake-a {
+  animation: io-shake-a 0.35s ease-in-out;
+}
+
+.io-shake-b {
+  animation: io-shake-b 0.35s ease-in-out;
+}
+
+@keyframes io-shake-a {
+  25% { transform: translate(-4px, 2px); }
+  50% { transform: translate(4px, -2px); }
+  75% { transform: translate(-2px, 1px); }
+}
+
+@keyframes io-shake-b {
+  25% { transform: translate(4px, -2px); }
+  50% { transform: translate(-4px, 2px); }
+  75% { transform: translate(2px, -1px); }
+}
+
+.io-btn-main:not(:disabled) {
+  animation: io-ready-glow 2s ease-in-out infinite;
+}
+
+@keyframes io-ready-glow {
+  50% {
+    box-shadow: 0 4px 0 var(--gold-deep), 0 0 0 6px rgba(255, 200, 61, 0.28), 0 8px 18px rgba(0, 0, 0, 0.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .io-waves-layer,
+  .io-clouds ellipse,
+  .io-ship-bob,
+  .io-ki-star,
+  .io-btn-main,
+  .io-shake-a,
+  .io-shake-b,
+  .io-surf path {
+    animation: none !important;
+  }
+}

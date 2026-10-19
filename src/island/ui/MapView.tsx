@@ -23,8 +23,8 @@ export interface Badge {
 
 export interface Fx {
   id: string;
-  /** ripple: a capture · blast: a strike · alert: one of yours was lost */
-  kind: 'ripple' | 'blast' | 'alert';
+  /** ripple: a capture · blast: an explosion · alert: one of yours was lost · jet: a strike run */
+  kind: 'ripple' | 'blast' | 'alert' | 'jet';
   region: string;
   color: string;
 }
@@ -39,7 +39,30 @@ export interface OrderArrow {
   via?: ZoneId;
   /** Ship movement: zone to zone. */
   sail?: boolean;
+  /** Send a token carrying the label down the route (playback). */
+  travel?: boolean;
   onClick?: () => void;
+}
+
+/**
+ * A token that runs along an SVG path once, from when it mounts. SMIL's
+ * default begin is the document's start, long past by now — so start it by hand.
+ */
+function Traveller({ d, dur, children }: { d: string; dur: number; children: React.ReactNode }) {
+  const ref = useRef<SVGAnimateMotionElement>(null);
+  useEffect(() => {
+    try {
+      ref.current?.beginElement();
+    } catch {
+      // No SMIL support: the token just sits at the start of the route.
+    }
+  }, [d]);
+  return (
+    <g>
+      {children}
+      <animateMotion ref={ref} dur={`${dur}ms`} begin="indefinite" fill="freeze" path={d} rotate="0" calcMode="spline" keyTimes="0;1" keySplines="0.4 0 0.2 1" />
+    </g>
+  );
 }
 
 export interface Marker {
@@ -124,7 +147,7 @@ function SeaAndBase() {
   return (
     <>
       <rect x={-200} y={-200} width={1400} height={1020} fill="url(#io-sea)" />
-      <rect x={-200} y={-200} width={1400} height={1020} fill="url(#io-waves)" opacity={0.5} />
+      <rect x={-240} y={-200} width={1480} height={1020} fill="url(#io-waves)" opacity={0.5} className="io-waves-layer" />
       {BOARD.crossings.map(([a, b]) => {
         const p = BOARD.byId[a].site, q = BOARD.byId[b].site;
         return <line key={a + b} x1={p[0]} y1={p[1]} x2={q[0]} y2={q[1]} className="io-crossing" />;
@@ -317,15 +340,17 @@ function MapViewInner({
             return (
               <g
                 key={sh.id}
-                transform={`translate(${x + dx} ${y + 6})`}
+                style={{ transform: `translate(${x + dx}px, ${y + 6}px)` }}
                 className={`io-ship${sh.id === selectedShip ? ' io-ship-on' : ''}${onShip ? ' io-clickable' : ''}`}
                 onClick={onShip ? (e) => (e.stopPropagation(), onShip(sh.id)) : undefined}
                 data-ship={sh.id}
               >
                 <title>{`${sh.name} — ${f.name}`}</title>
-                <circle r={12} fill={f.deep} stroke="#fff" strokeWidth={2} />
-                <g fill="#fff" transform="scale(0.8)">
-                  <ShipGlyph />
+                <g className="io-ship-bob" style={{ animationDelay: `${(i * 0.7) % 2}s` }}>
+                  <circle r={12} fill={f.deep} stroke="#fff" strokeWidth={2} />
+                  <g fill="#fff" transform="scale(0.8)">
+                    <ShipGlyph />
+                  </g>
                 </g>
               </g>
             );
@@ -339,8 +364,16 @@ function MapViewInner({
           const g = arrowGeometry(a);
           return (
             <g key={a.id} className={a.onClick ? 'io-clickable' : undefined} onClick={a.onClick}>
-              <path d={g.d} className={`io-order${a.via ? ' io-order-landing' : ''}${a.sail ? ' io-order-sail' : ''}`} stroke={a.color} markerEnd="url(#io-arrowhead)" />
-              {a.label && (
+              <path d={g.d} className={`io-order${a.via ? ' io-order-landing' : ''}${a.sail ? ' io-order-sail' : ''}${a.travel ? ' io-order-faint' : ''}`} stroke={a.color} markerEnd="url(#io-arrowhead)" />
+              {a.travel && a.label && (
+                <Traveller d={g.d} dur={1500}>
+                  <circle r={11} fill={a.color} stroke="#fff" strokeWidth={2.5} className="io-token" />
+                  <text y={4} className="io-token-text">
+                    {a.label}
+                  </text>
+                </Traveller>
+              )}
+              {!a.travel && a.label && (
                 <g transform={`translate(${g.mid[0]} ${g.mid[1]})`} className="io-order-chip">
                   <rect x={-13} y={-9} width={26} height={18} rx={9} fill={a.color} />
                   <text y={4.5}>{a.label}</text>
@@ -365,6 +398,18 @@ function MapViewInner({
 
       {fx.map((f) => {
         const [x, y] = BOARD.byId[f.region].site;
+        if (f.kind === 'jet') {
+          const d = `M${x - 190},${y - 120} Q${x - 40},${y - 50} ${x},${y} T${x + 170},${y + 40}`;
+          return (
+            <g key={f.id} pointerEvents="none">
+              <Traveller d={d} dur={900}>
+                <g className="io-jet">
+                  <path d="M12 2l1.6 6.2 8 4v2.2l-8-2-.8 5 3 2v2L12 20.5l-3.8.9v-2l3-2-.8-5-8 2v-2.2l8-4z" transform="rotate(118) translate(-12 -12)" />
+                </g>
+              </Traveller>
+            </g>
+          );
+        }
         if (f.kind === 'alert')
           return (
             <g key={f.id} pointerEvents="none">
@@ -383,6 +428,13 @@ function MapViewInner({
           </g>
         );
       })}
+
+      {/* Cloud shadows drifting over the island. */}
+      <g className="io-clouds" pointerEvents="none">
+        <ellipse cx={200} cy={180} rx={120} ry={46} />
+        <ellipse cx={560} cy={330} rx={150} ry={52} style={{ animationDelay: '-24s' }} />
+        <ellipse cx={820} cy={150} rx={100} ry={38} style={{ animationDelay: '-48s' }} />
+      </g>
 
       {showBadges && (
         <g>
