@@ -1464,7 +1464,45 @@ export function validateMap(map: GeneratedMap): ValidationResult {
 
 export const MAX_MAP_ATTEMPTS = 24;
 
+// ---------------------------------------------------------------------------
+// Memoize by seed. Generation (full procedural pass plus validateMap, see
+// above) runs ~100-160ms of synchronous CPU per call — fine once, but the
+// server calls this on EVERY room creation (Create Room, Quick Match, vs-Bot)
+// and in production almost every call lands on one of the 10 curated
+// SCENARIOS seeds (scenarios.ts), so repeat calls are not just slow, they
+// also mean the full generator's temporary working set (the retry loop's
+// candidate grids/arrays) gets allocated and discarded over and over, which
+// is exactly the kind of repeated transient allocation that ratchets up a
+// V8 process's resident set without the heap ever truly needing to be that
+// big at once. Caching the finished result per seed turns every repeat call
+// into a cheap, bounded clone instead.
+//
+// Only `tiles` and `objectives` are ever mutated after a room starts (bridge
+// building/clearing, and objective control flipping) — see initGame below,
+// which assigns both directly onto GameState — so those two are the only
+// parts that need a fresh, independent copy per call; everything else
+// (depots/ports/settlements/diagnostics, and startZones/navalSpawns, which
+// initGame already spreads into a fresh array before consuming via shift())
+// is read-only after generation and safe to share by reference.
+//
+// Bounded (not just "10 scenarios will ever hit this in prod") so a test
+// harness or sandbox calling this with arbitrary seeds can't grow it
+// unboundedly either — oldest entry is evicted once the cap is reached.
+const MAP_CACHE_MAX = 32;
+const mapCache = new Map<number, GeneratedMap>();
+
+function cloneGeneratedMap(m: GeneratedMap): GeneratedMap {
+  return {
+    ...m,
+    tiles: m.tiles.map((row) => row.map((t) => ({ ...t }))),
+    objectives: m.objectives.map((o) => ({ ...o })),
+  };
+}
+
 export function generateBattlefield(seed = 1337): GeneratedMap {
+  const cached = mapCache.get(seed);
+  if (cached) return cloneGeneratedMap(cached);
+
   const failures: string[] = [];
   for (let attempt = 0; attempt < MAX_MAP_ATTEMPTS; attempt++) {
     // Decorrelate successive attempts rather than walking seed+1.
@@ -1476,7 +1514,14 @@ export function generateBattlefield(seed = 1337): GeneratedMap {
       continue;
     }
     const v = validateMap(res.map);
-    if (v.ok) return res.map;
+    if (v.ok) {
+      if (mapCache.size >= MAP_CACHE_MAX) {
+        const oldestKey = mapCache.keys().next().value;
+        if (oldestKey !== undefined) mapCache.delete(oldestKey);
+      }
+      mapCache.set(seed, res.map);
+      return cloneGeneratedMap(res.map);
+    }
     failures.push(`attempt ${attempt + 1} (seed ${s}) failed validation: ${v.errors.join('; ')}`);
     if (process.env.MAPGEN_DEBUG) console.log(`[mapgen] ${failures[failures.length - 1]}`);
   }

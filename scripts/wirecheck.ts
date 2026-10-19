@@ -15,7 +15,14 @@
 // ============================================================================
 
 import * as engine from '../src/game/engine';
-import { filterStateForPlayer, GENERIC_BLOCKED_TILE_MESSAGE, REDACTED_NUMBER, safeMoveRefusalMessage } from '../src/game/fog';
+import {
+  filterStateForPlayer,
+  GENERIC_BLOCKED_LANDING_MESSAGE,
+  GENERIC_BLOCKED_TILE_MESSAGE,
+  REDACTED_NUMBER,
+  safeMoveRefusalMessage,
+  safeOccupantRefusalMessage,
+} from '../src/game/fog';
 import { decideBotAction } from '../server/bot';
 import { ServerMsg } from '../src/net/protocol';
 import { DetectionLevel, Formation, GameState, PlayerId, otherPlayer } from '../src/game/types';
@@ -388,6 +395,68 @@ function auditMoveRefusalWire() {
   ok(kMessage === kRes.reason, 'a CONFIRMED occupant gets the engine\'s own detailed refusal message, unchanged');
 }
 auditMoveRefusalWire();
+
+/**
+ * Fog-blocked VERTICAL_INSERT refusal — the same bug shape as MOVE's
+ * ENEMY_HELD, found while auditing every other action handler for it (Task
+ * 1 of the follow-up pass): verticalInsertLandingLegal's "already occupied"
+ * check reads `formationAt`, the TRUE board, not a fog-filtered one, so a
+ * landing zone that happens to sit exactly on an enemy formation this side
+ * has never detected must be refused with a message that reveals nothing
+ * more than "something is different about that tile" — same as MOVE.
+ */
+function auditVerticalInsertRefusalWire() {
+  const state = engine.initGame(20260904);
+  const mover = Object.values(state.formations).find((f) => f.owner === 'SABRE' && f.type === 'COMMANDO')!;
+  const hidden = Object.values(state.formations).find((f) => f.owner === 'VANGUARD' && f.type !== 'FRIGATE' && f.type !== 'CORVETTE')!;
+  mover.x = 20; mover.y = 20;
+  hidden.x = 22; hidden.y = 20; // within VERTICAL_INSERT_RADIUS, not adjacent (so only the occupancy check trips)
+  state.tiles[mover.y][mover.x] = { ...state.tiles[mover.y][mover.x], terrain: 'GRASS', road: false, bridge: false, elevation: 1 };
+  state.tiles[hidden.y][hidden.x] = { ...state.tiles[hidden.y][hidden.x], terrain: 'GRASS', road: false, bridge: false, elevation: 1 };
+  state.players.SABRE.contacts = {};
+  state.activePlayer = 'SABRE';
+  state.players.SABRE.ap = 60;
+
+  const legal = engine.verticalInsertLandingLegal(state, mover, hidden.x, hidden.y);
+  ok(!legal.ok && legal.occupantId === hidden.id, 'fog-blocked VERTICAL_INSERT setup: refused with the true occupant id');
+
+  const res = engine.verticalInsertAction(state, mover.id, hidden.x, hidden.y);
+  ok(!res.ok && res.occupantId === hidden.id, 'verticalInsertAction propagates the ground-truth occupantId on refusal');
+
+  // This is exactly what server/index.ts's `case 'VERTICAL_INSERT'` branch of
+  // applyAction computes and sends back.
+  const message = safeOccupantRefusalMessage(state, 'SABRE', res.occupantId, res.reason);
+  const wireMsg: ServerMsg = { t: 'error', message };
+  const wireBytes = JSON.stringify(wireMsg);
+
+  ok(message === GENERIC_BLOCKED_LANDING_MESSAGE, `fog-blocked VERTICAL_INSERT refusal uses the generic string (got "${message}")`);
+  ok(!wireBytes.includes(hidden.id), 'wire bytes do not contain the hidden occupant\'s formation id');
+  ok(!wireBytes.includes(hidden.shortName), 'wire bytes do not contain the hidden occupant\'s callsign');
+  ok(!wireBytes.includes(hidden.name), 'wire bytes do not contain the hidden occupant\'s full name');
+  ok(!wireBytes.toLowerCase().includes(hidden.type.toLowerCase()), 'wire bytes do not contain the hidden occupant\'s arm/type');
+  ok(!/vanguard/i.test(wireBytes), 'wire bytes do not name the opposing side');
+  ok(mover.x === 20 && mover.y === 20, 'a refused vertical insertion does not relocate the formation');
+  ok(mover.verticalInsertsUsed === 0, 'a refused vertical insertion does not spend a use');
+
+  // Regression: a KNOWN (IDENTIFIED+) occupant still gets the real message.
+  const known = engine.initGame(20260904);
+  const kMover = Object.values(known.formations).find((f) => f.owner === 'SABRE' && f.type === 'COMMANDO')!;
+  const kEnemy = Object.values(known.formations).find((f) => f.owner === 'VANGUARD' && f.type !== 'FRIGATE' && f.type !== 'CORVETTE')!;
+  kMover.x = 30; kMover.y = 30;
+  kEnemy.x = 32; kEnemy.y = 30;
+  known.activePlayer = 'SABRE';
+  known.players.SABRE.ap = 60;
+  known.players.SABRE.contacts[kEnemy.id] = {
+    formationId: kEnemy.id, owner: 'VANGUARD', level: 'CONFIRMED', confidence: 100, x: kEnemy.x, y: kEnemy.y,
+    live: true, lastSeenTurn: known.round, decayAnchorRound: known.round, lastRiseRound: known.round, ceiling: 100, decayPerRound: 20, source: 'test',
+  };
+  const kRes = engine.verticalInsertAction(known, kMover.id, kEnemy.x, kEnemy.y);
+  const kMessage = safeOccupantRefusalMessage(known, 'SABRE', kRes.occupantId, kRes.reason);
+  ok(!kRes.ok && kRes.occupantId === kEnemy.id, 'known-occupant setup: refused with the true occupant id');
+  ok(kMessage !== GENERIC_BLOCKED_LANDING_MESSAGE, `a CONFIRMED occupant's refusal is NOT downgraded to the generic string (got "${kMessage}")`);
+  ok(kMessage === kRes.reason, 'a CONFIRMED occupant gets the engine\'s own detailed refusal message, unchanged');
+}
+auditVerticalInsertRefusalWire();
 
 const GAMES = Number(process.argv[2] ?? 6);
 const ROUNDS = Number(process.argv[3] ?? 10);
