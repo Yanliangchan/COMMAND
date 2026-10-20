@@ -27,7 +27,7 @@ import {
   planMove,
   planWithdraw,
 } from './movement';
-import { deepProbe, detectionRange, lineOfSight, reconSweep, refreshAllSpotting, refreshSpotting, sightDistance } from './detection';
+import { detectionRange, lineOfSight, reconSweep, refreshAllSpotting, refreshSpotting, sightDistance } from './detection';
 import {
   AMMO_REGEN_PER_ROUND,
   COHESION_RADIUS,
@@ -63,8 +63,6 @@ import {
   UAV_DECAY_PER_ROUND,
   UAV_SWEEP_CONFIDENCE,
   UAV_SWEEP_RADIUS,
-  VERTICAL_INSERT_MAX_USES,
-  VERTICAL_INSERT_RADIUS,
   ActionKind,
   BattleFactor,
   BattleReport,
@@ -75,9 +73,6 @@ import {
   KillEvent,
   PlayerId,
   ReplayRound,
-  SPECIAL_OP_RANGE,
-  SPECIAL_OP_RANGE_BY_TYPE,
-  SPECIAL_OP_TYPES,
   Tile,
   detectionLevelFor,
   otherPlayer,
@@ -158,7 +153,6 @@ function makeFormation(owner: PlayerId, profileIndex: number, x: number, y: numb
     lastReorganizedRound: 0,
     fortifyTier: 0,
     fortifiedThisRound: false,
-    verticalInsertsUsed: 0,
     lastStandTriggered: false,
     lastStandUntilRound: 0,
     roundsStationary: 0,
@@ -462,13 +456,10 @@ export interface MoveGroupActionResult {
 /**
  * Shared result shape for every other action handler below (Withdraw, Recon,
  * Fortify, Reorganize, the two Engineer orders, a fire mission, an air
- * strike, a special op, Vertical Insert, UAV Recon, and Attack) — the same
- * "the caller MUST check `ok` rather than assume any mutation happened"
- * contract moveFormation/moveGroup established. `reason` is always set when
- * `ok` is false and is safe to relay to the acting player VERBATIM UNLESS the
- * function's own doc comment says otherwise (only Vertical Insert's landing
- * check can name an undetected enemy occupant — see occupantId there and its
- * handling in server/index.ts, mirroring safeMoveRefusalMessage).
+ * strike, UAV Recon, and Attack) — the same "the caller MUST check `ok`
+ * rather than assume any mutation happened" contract moveFormation/moveGroup
+ * established. `reason` is always set when `ok` is false and is safe to
+ * relay to the acting player verbatim.
  */
 export interface SimpleActionResult {
   state: GameState;
@@ -1323,166 +1314,15 @@ export function airStrikeAction(state: GameState, x: number, y: number): SimpleA
   return { state, ok: true, reason: '' };
 }
 
-export function specialOpAction(state: GameState, formationId: string, x: number, y: number): SimpleActionResult {
-  const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
-  const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
-  if (!SPECIAL_OP_TYPES.includes(f.type)) return fail('Only Commandos or Guards can conduct a special operation.');
-  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
-  if (!canAfford(state, 'SPECIAL_OP')) return fail('Not enough AP for a special operation.');
-  const d = distance(f.x, f.y, x, y);
-  // Commandos insert deepest; the Guards go in by helicopter as a formed
-  // sub-unit and so land closer to the friendly line. This is purely a
-  // range-from-self check — fog-safe regardless of what is at (x, y): a raid
-  // and a deep-recon probe are both legal outcomes past this point (see
-  // below), so nothing about enemy presence is gated here.
-  if (d > (SPECIAL_OP_RANGE_BY_TYPE[f.type] ?? SPECIAL_OP_RANGE)) return fail(`Beyond this formation's special-operation range.`);
-  spendAP(state, 'SPECIAL_OP');
-  f.hasActedThisTurn = true;
-  const target = formationAt(state, x, y);
-  if (target && target.owner !== f.owner) {
-    const delta = -(18 + Math.random() * 15);
-    target.strength = Math.max(0, target.strength + delta);
-    checkLastStand(state, target);
-    target.lastEngagedRound = state.round;
-    applyMoraleShock(state, target, casualtyShock(delta, 0.5), 'raided behind the lines');
-    f.lastOrder = `Special op raid on grid ${gridRef(x, y)}`;
-    log(state, `${f.name} conducted a special-ops raid on ${target.name} — ${lossFromDelta(delta)} losses.`, 'ALL');
-    if (target.strength <= 0) {
-      mourn(state, target);
-      delete state.formations[target.id];
-    }
-  } else {
-    // A deep probe: the patrol is treated as observing from the target tile,
-    // so it confirms whatever is around the objective it was sent to look at.
-    const spotter: Formation = { ...f, x, y };
-    const res = deepProbe(state, spotter, 3);
-    f.lastOrder = `Deep recon at grid ${gridRef(x, y)} — ${res} contact${res === 1 ? '' : 's'}`;
-    log(state, `${f.name} conducted a deep-recon special operation near grid ${gridRef(x, y)}.`);
-  }
-  refreshAllSpotting(state);
-  return { state, ok: true, reason: '' };
-}
-
-// ---------------------------------------------------------------------------
-// Vertical / heli insertion (phase 9) — Commandos and Guards only.
-//
-// A genuine leap: any tile within VERTICAL_INSERT_RADIUS that is NOT
-// adjacent to any formation this SIDE has actually detected (its own
-// players[owner].contacts table — fog-of-war-correct, never the true enemy
-// positions) and is otherwise a legal deployment tile. Bypasses normal
-// movement range, road bonuses, and Zones of Control entirely — that is the
-// whole point of a vertical envelopment. Capped hard per formation per game.
-// ---------------------------------------------------------------------------
-
-function inMapBounds(x: number, y: number): boolean {
-  return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE;
-}
-
-/**
- * Is (x, y) a legal vertical-insertion landing tile for `f` right now?
- *
- * `occupantId` is set ONLY for the "already occupied" refusal, and ONLY to
- * ground truth — it is the id of whatever formation (friendly OR enemy,
- * detected or not) actually sits on that tile in the server's authoritative
- * state. This mirrors MovePlan.occupantId in movement.ts exactly, and for
- * the identical reason: `formationAt` below reads the TRUE board, so if the
- * blocking formation happens to be an enemy this side has never detected,
- * `reason` alone (naming nothing) is still safe, but the caller (engine.ts's
- * verticalInsertAction, then server/index.ts) MUST NOT upgrade that generic
- * reason to anything more specific without first checking, via fog.ts's
- * contactLevel, that the mover's own side has actually detected occupantId
- * at IDENTIFIED-or-better. `reason` here is deliberately already the
- * generic-safe text for every case — this doc comment exists so a future
- * edit that tries to "improve" it into naming the occupant does not
- * reintroduce the exact bug this file's MOVE fix closed.
- */
-export function verticalInsertLandingLegal(
-  state: GameState,
-  f: Formation,
-  x: number,
-  y: number
-): { ok: boolean; reason: string; occupantId: string | null } {
-  if (!inMapBounds(x, y)) return { ok: false, reason: 'Off the map sheet.', occupantId: null };
-  const tile = tileAt(state, x, y);
-  if (!tile) return { ok: false, reason: 'Off the map sheet.', occupantId: null };
-  if (!crossable(state, f, tile)) {
-    return { ok: false, reason: 'Not a landing zone this formation can occupy — impassable terrain.', occupantId: null };
-  }
-  const occupant = formationAt(state, x, y);
-  if (occupant) return { ok: false, reason: 'Landing zone is already occupied.', occupantId: occupant.id };
-  const d = distance(f.x, f.y, x, y);
-  if (d > VERTICAL_INSERT_RADIUS) return { ok: false, reason: `Beyond the ${VERTICAL_INSERT_RADIUS}-tile insertion radius.`, occupantId: null };
-  // Fog-of-war correct: this side's OWN contact table, not the true enemy
-  // positions — an enemy this side has never detected cannot be avoided by
-  // name, so it does not block a landing zone near it.
-  const contacts = state.players[f.owner].contacts;
-  for (const c of Object.values(contacts)) {
-    if (distance(c.x, c.y, x, y) <= 1) return { ok: false, reason: 'Landing zone is adjacent to a detected enemy formation.', occupantId: null };
-  }
-  return { ok: true, reason: '', occupantId: null };
-}
-
-/** True if ANY legal landing tile exists for `f` right now — for the disabled-reason UI. */
-export function hasVerticalInsertLandingZone(state: GameState, f: Formation): boolean {
-  const r = VERTICAL_INSERT_RADIUS;
-  for (let dy = -r; dy <= r; dy++) {
-    for (let dx = -r; dx <= r; dx++) {
-      if (Math.abs(dx) + Math.abs(dy) > r) continue;
-      const x = f.x + dx;
-      const y = f.y + dy;
-      if (x === f.x && y === f.y) continue;
-      if (verticalInsertLandingLegal(state, f, x, y).ok) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Result of an attempted Vertical Insert. Shaped exactly like
- * MoveActionResult (see moveFormation) for the same reason: `occupantId` is
- * ground truth and MUST be passed through fog.ts's safeOccupantRefusalMessage
- * (server/index.ts) before `reason` is ever relayed to the mover — see the
- * doc comment on verticalInsertLandingLegal above.
- */
-export interface VerticalInsertActionResult {
-  state: GameState;
-  ok: boolean;
-  reason: string;
-  occupantId: string | null;
-}
-
-export function verticalInsertAction(state: GameState, formationId: string, x: number, y: number): VerticalInsertActionResult {
-  const fail = (reason: string, occupantId: string | null = null): VerticalInsertActionResult => ({ state, ok: false, reason, occupantId });
-  const f = state.formations[formationId];
-  if (!f || f.owner !== state.activePlayer) return fail('No such formation, or not yours to order.');
-  if (f.hasActedThisTurn) return fail(`${f.shortName} has already used its major action this round.`);
-  if (!SPECIAL_OP_TYPES.includes(f.type)) return fail('Only Commandos or Guards can conduct a vertical insertion.'); // Commandos and Guards only
-  if ((f.verticalInsertsUsed ?? 0) >= VERTICAL_INSERT_MAX_USES) return fail('No vertical-insertion uses left for this formation.');
-  if (!canAfford(state, 'VERTICAL_INSERT')) return fail('Not enough AP for a vertical insertion.');
-  const legal = verticalInsertLandingLegal(state, f, x, y);
-  if (!legal.ok) return fail(legal.reason, legal.occupantId);
-
-  spendAP(state, 'VERTICAL_INSERT');
-  f.x = x;
-  f.y = y;
-  f.fortified = false;
-  f.fortifyTier = 0;
-  f.roundsStationary = 0;
-  f.hasActedThisTurn = true;
-  f.verticalInsertsUsed = (f.verticalInsertsUsed ?? 0) + 1;
-  const remaining = VERTICAL_INSERT_MAX_USES - f.verticalInsertsUsed;
-  f.lastOrder = `Vertical insertion to grid ${gridRef(x, y)} (${remaining} insertion${remaining === 1 ? '' : 's'} left)`;
-  log(state, `${f.name} conducted a vertical insertion to grid ${gridRef(x, y)} — ${remaining} left this operation.`, 'ALL');
-  refreshAllSpotting(state);
-  return { state, ok: true, reason: '', occupantId: null };
-}
-
 // ---------------------------------------------------------------------------
 // UAV recon (phase 9) — a capped, player-level consumable, not a formation
 // order. Reveals a radius anywhere on the map for the round, upgrading
 // detection directly regardless of any formation's own sight or LOS.
 // ---------------------------------------------------------------------------
+
+function inMapBounds(x: number, y: number): boolean {
+  return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE;
+}
 
 export function uavReconAction(state: GameState, x: number, y: number): SimpleActionResult {
   const fail = (reason: string): SimpleActionResult => ({ state, ok: false, reason });
@@ -1686,7 +1526,7 @@ export function endTurn(state: GameState): GameState {
   // — a formation that spent no movement action this round just held its
   // ground for another round, so the streak climbs; anything that moved (even
   // partially) had its streak already zeroed the instant it moved (see
-  // moveFormation / moveGroup / withdrawAction / verticalInsertAction).
+  // moveFormation / moveGroup / withdrawAction).
   Object.values(state.formations).forEach((f) => {
     if (f.owner !== finishing) return;
     if (f.movesUsed === 0) f.roundsStationary = (f.roundsStationary ?? 0) + 1;

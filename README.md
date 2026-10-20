@@ -494,35 +494,41 @@ hold, rather than asserting that blue always means friendly.
 
 ### Orders of battle
 
-| TASK FORCE SABRE | Designation | Echelon | Arm |
-| --- | --- | --- | --- |
-| 1st Battalion, Singapore Infantry Regiment | 1 SIR | Battalion | Infantry |
-| 2nd Battalion, Singapore Infantry Regiment | 2 SIR | Battalion | Infantry |
-| 5th Battalion, Singapore Infantry Regiment | 5 SIR | Battalion | Infantry |
-| 1st Commando Battalion | 1 CDO BN | Battalion | Commandos |
-| 40th Battalion, Singapore Armoured Regiment | 40 SAR | Battalion | Armour |
-| 48th Battalion, Singapore Armoured Regiment | 48 SAR | Battalion | Armour |
-| 21st Battalion, Singapore Artillery | 21 SA | Battalion | Artillery |
-| 35th Battalion, Singapore Combat Engineers | 35 SCE | Battalion | Combat Engineers |
-| 10th Command, Control, Communications, Computers and Intelligence Battalion | 10 C4I Bn | Battalion | C4I / Signals & ISR |
-| 12th Command, Control, Communications, Computers and Intelligence Battalion | 12 C4I Bn | Battalion | C4I / Signals & ISR |
-| 185 Squadron, Republic of Singapore Navy | 185 SQN | Squadron | RSN |
-| 188 Squadron, Republic of Singapore Navy | 188 SQN | Squadron | RSN |
+Each formation is identified **only by its short designation** — there is no
+separate long-form prose title ("40th Battalion, Singapore Armoured
+Regiment…") anywhere in the game. The short tag IS the formation's name,
+everywhere a player sees it: unit cards, roster, battle reports, tutorial,
+field manual, legend, briefing and end-game screens, replay viewer.
 
-| TASK FORCE VANGUARD | Designation | Echelon | Arm |
-| --- | --- | --- | --- |
-| 3rd Battalion, Singapore Infantry Regiment | 3 SIR | Battalion | Infantry |
-| 8th Battalion, Singapore Infantry Regiment | 8 SIR | Battalion | Infantry |
-| 9th Battalion, Singapore Infantry Regiment | 9 SIR | Battalion | Infantry |
-| 1st Battalion, Singapore Guards | 1 GDS | Battalion | Guards |
-| 41st Battalion, Singapore Armoured Regiment | 41 SAR | Battalion | Armour |
-| 42nd Battalion, Singapore Armoured Regiment | 42 SAR | Battalion | Armour |
-| 20th Battalion, Singapore Artillery | 20 SA | Battalion | Artillery |
-| 30th Battalion, Singapore Combat Engineers | 30 SCE | Battalion | Combat Engineers |
-| 11th Command, Control, Communications, Computers and Intelligence Battalion | 11 C4I Bn | Battalion | C4I / Signals & ISR |
-| 16th Command, Control, Communications, Computers and Intelligence Battalion | 16 C4I Bn | Battalion | C4I / Signals & ISR |
-| 191 Squadron, Republic of Singapore Navy | 191 SQN | Squadron | RSN |
-| 189 Squadron, Republic of Singapore Navy | 189 SQN | Squadron | RSN |
+| TASK FORCE SABRE | Echelon | Arm |
+| --- | --- | --- |
+| 1 SIR | Battalion | Infantry |
+| 2 SIR | Battalion | Infantry |
+| 5 SIR | Battalion | Infantry |
+| 1 CDO BN | Battalion | Commandos |
+| 40 SAR | Battalion | Armour |
+| 48 SAR | Battalion | Armour |
+| 21 SA | Battalion | Artillery |
+| 35 SCE | Battalion | Combat Engineers |
+| 10 C4I Bn | Battalion | C4I / Signals & ISR |
+| 12 C4I Bn | Battalion | C4I / Signals & ISR |
+| 185 SQN | Squadron | RSN |
+| 188 SQN | Squadron | RSN |
+
+| TASK FORCE VANGUARD | Echelon | Arm |
+| --- | --- | --- |
+| 3 SIR | Battalion | Infantry |
+| 8 SIR | Battalion | Infantry |
+| 9 SIR | Battalion | Infantry |
+| 1 GDS | Battalion | Guards |
+| 41 SAR | Battalion | Armour |
+| 42 SAR | Battalion | Armour |
+| 20 SA | Battalion | Artillery |
+| 30 SCE | Battalion | Combat Engineers |
+| 11 C4I Bn | Battalion | C4I / Signals & ISR |
+| 16 C4I Bn | Battalion | C4I / Signals & ISR |
+| 191 SQN | Squadron | RSN |
+| 189 SQN | Squadron | RSN |
 
 The two ORBATs are deliberately **equivalent in weight**: three rifle
 battalions, one elite manoeuvre battalion, two armoured battalions, one
@@ -610,9 +616,10 @@ below.
 > **Which battalion or squadron is assigned to which exercise task force is a
 > FICTIONAL gameplay arrangement**, as are all stats, costs, AP values, VP
 > values and morale numbers. The exercise ORBAT above is **not** a real SAF
-> organisation and must not be read as one. Only the formation names, their
-> designations, their arm of service and the general character of each arm are
-> drawn from public sources.
+> organisation and must not be read as one. Only the short designations,
+> their arm of service and the general character of each arm are drawn from
+> public sources — there is no separate fictional long-form prose name used
+> anywhere in the UI; the short tag is shown everywhere.
 
 ### The two elite manoeuvre battalions
 
@@ -623,20 +630,16 @@ comparably strong**, and neither is a strict upgrade of the other:
 | --- | --- | --- |
 | Attack / Defence | 7 / 4 | 7 / 6 |
 | Movement | 6 pts × 3 bounds | 6 pts × 3 bounds |
-| Passive / recon sight | 7 / 11 tiles | 5 / 8 tiles |
-| Identify factor | 1.20 (best on the board) | 1.00 |
-| Special Op reach | 6 tiles | 4 tiles |
-| Vertical insertion reach / uses (phase 9) | 14 tiles × 2 per game | 14 tiles × 2 per game |
+| Passive / recon sight | 8 / 12 tiles | 5 / 7 tiles |
+| Identify factor | 1.30 (shared with recon — best on the board) | 1.00 |
 | Character | raiding and deep reconnaissance; fragile in a stand-up fight | air-assault infantry that fights as formed infantry once on the ground |
 
-Both battalions can also mount a **Vertical Insertion** (phase 9, `I`, 4 AP) —
-redeploy up to 14 tiles in one leap, landing anywhere that is not adjacent to
-a formation this side has actually detected, bypassing normal movement range,
-road bonuses and Zones of Control entirely. It flavours the Commandos'
-insertion-behind-lines role and the Guards' real air-assault/heliborne
-character (their equipment line already reads "heli-rappelling and
-fast-roping"). Capped at 2 uses per formation for the whole operation — see
-"Phase 9" below for the full mechanic writeup and why that cap.
+A later simplification pass removed each one's unique arm-exclusive special
+action (a "Special Op" raid and a "Vertical Insertion" leap, both gated to
+these two formation types only) — see "Design simplification pass" below.
+Both now use the same general move/attack/recon/fortify order set as every
+other formation; what still sets them apart is their stat profile and sensor
+range above, not a bespoke ability only they can use.
 
 ### Equipment flavour
 
@@ -659,6 +662,45 @@ fast-roping"). Capped at 2 uses per formation for the whole operation — see
 - The map is a **fictional generated landmass**. It is not Singapore and does
   not depict any real terrain, base, installation or coastline.
 
+### Design simplification pass
+
+A later pass pulled back on two kinds of accumulated complexity, on direct
+player feedback ("make the names more normal sounding, and don't give
+[formations] unique buffs" / "I don't need to constantly know the names of
+all the key installations"):
+
+1. **Naming.** Every formation is now identified only by its short
+   designation (see "Orders of battle" above) — the separate long-form prose
+   title each formation used to carry in the roster, unit cards, battle
+   reports, tutorial, field manual, legend, briefing and end-game screens is
+   gone. `FormationProfile.name` is always identical to `.shortName`.
+2. **Arm-exclusive special abilities.** `SPECIAL_OP` (a raid/deep-probe order
+   gated to Commandos and Guards only) and `VERTICAL_INSERT` (a 14-tile leap
+   over Zones of Control, also gated to those two types, capped at 2 uses a
+   game) were removed outright rather than generalised — they were the
+   clearest case of a unique buff only one arm-pair could ever use, and
+   removing them cost the game nothing it couldn't already do with Move,
+   Attack and Recon. The detection-range table (`DETECTION` in
+   `src/game/types.ts`) was also collapsed from nine bespoke per-arm sensor
+   profiles down to four shared tiers — ground manoeuvre arms (infantry,
+   guards, armour, engineers) on one standard profile, the gun line on its
+   own short-sighted profile (it watches its own battery, not the enemy),
+   recon and the fast manoeuvre battalion sharing one long-range profile, and
+   the two naval arms sharing one surface-search profile — so there are four
+   numbers to remember instead of nine, while the detection ladder itself
+   (UNKNOWN → CONTACT → IDENTIFIED → CONFIRMED) is untouched. What stays
+   arm-specific: Artillery's fire mission, Engineers' bridge/clear orders,
+   and naval standoff range/no-occupy — these are role-defining, not bolt-on
+   buffs, and the brief explicitly asked to keep broadly-applicable systems
+   (move/attack/recon/fortify, the combat formula, overwatch, ZOC,
+   suppression, the detection ladder) intact.
+3. **Installation-name clutter.** Objective and settlement names used to be
+   permanently lettered on the map at almost any zoom. They now show as a
+   marker/dot by default; the full name only prints once the player is
+   zoomed in close or is pointing at that tile (`renderMap.ts`, the
+   objective- and settlement-label blocks) — the objective/VP mechanics
+   themselves are unchanged.
+
 ## Movement actions and the AP economy
 
 The old build gave every formation exactly one "major action" a round, which
@@ -673,10 +715,10 @@ replaced by a **two-budget** model:
   appetite so choices still matter, verified against the paired side-balance
   sim each time rather than assumed (see "Side balance re-verified at twelve
   formations a side (phase 9)" below). Action costs: Move 1, Attack 2,
-  Recon 1, Fortify 1, Artillery 2, Engineer bridge 2 / clear 1, Special Op 3,
-  Air strike 3, Reorganize 2, **Vertical Insertion 4** (phase 9 — a
-  deliberately weightier commitment than a normal order), **UAV Recon 3**
-  (phase 9 — the same tier as Air strike).
+  Recon 1, Fortify 1, Artillery 2, Engineer bridge 2 / clear 1,
+  Air strike 3, Reorganize 2, **UAV Recon 3**
+  (phase 9 — the same tier as Air strike). Special Op and Vertical Insertion
+  were removed in the "Design simplification pass" below.
 - **A per-unit, per-round movement-action allowance** (`MOBILITY` in
   `src/game/types.ts`), surfaced on every `Formation` as `movesUsed` /
   `movesMax` so the UI can show "Movement Actions: 1 / 2".
@@ -1602,6 +1644,15 @@ restore values and added a mutual bonus for adjacent formations reorganizing
 together — see "Phase 9" below.**
 
 ## Phase 9 — vertical insertion, fortify tiers, exploitation, UAV recon, mutual Reorganize, Reorganize buff, and the second C4I battalion
+
+> **Historical record.** Item 1 below (Vertical / heli insertion, and the
+> related Special Op order) was later **removed** in the "Design
+> simplification pass" (see "Real-World Reference vs. Fictional Game
+> Mechanics" above) — it was the clearest case of a unique buff gated to one
+> arm-pair only. The rest of this phase (fortify tiers, exploitation, UAV
+> recon, Reorganize changes, the second C4I battalion) is still current. This
+> section is kept as-written for the historical record of why each item was
+> built; it no longer describes current behaviour for item 1.
 
 This pass's eight items, in the order the brief gave them.
 

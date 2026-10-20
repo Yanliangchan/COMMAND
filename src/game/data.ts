@@ -188,25 +188,34 @@ export const MORALE_MULTIPLIER: Record<string, number> = {
 //
 // The scenario is a large-scale SAF FORCE-ON-FORCE EXERCISE: two task forces
 // drawn from the same armed forces fight each other over a fictional training
-// area. Both sides therefore use real, publicly documented SAF/RSN formation
-// names and naming conventions (see README, "Real-World Reference vs Fictional
-// Game Mechanics").
+// area. The formation each side fields is identified ONLY by its short
+// designation — "40 SAR", "1 SIR", "185 SQN", "10 C4I Bn" — drawn from real,
+// publicly documented SAF/RSN naming conventions. There is deliberately no
+// separate long-form prose title ("40th Battalion, Singapore Armoured
+// Regiment, …") shown anywhere in the UI: the short tag IS the formation's
+// name, everywhere a player sees it. See README, "Real-World Reference vs
+// Fictional Game Mechanics".
 //
-// WHAT IS REAL: the formation titles, their short designations, their arm of
-// service and the general character of each arm — all drawn from public
-// sources.
+// WHAT IS REAL: the short designations, their arm of service and the general
+// character of each arm — all drawn from public sources.
 //
-// WHAT IS FICTIONAL: which battalion is assigned to which exercise task force,
-// every stat, cost and AP value, and the equipment strings' pairing with a
-// specific battalion. Nothing here asserts a real SAF order of battle,
-// grouping, strength or capability.
+// WHAT IS FICTIONAL: which battalion is assigned to which exercise task
+// force, every stat, cost and AP value, and the equipment strings' pairing
+// with a specific battalion. Nothing here asserts a real SAF order of
+// battle, grouping, strength or capability.
 // ============================================================================
 
 export interface FormationProfile {
   type: FormationType;
-  /** Full title, e.g. "1st Battalion, Singapore Infantry Regiment". */
+  /**
+   * The formation's ONLY displayed name, everywhere — unit cards, roster,
+   * battle reports, tutorial, field manual, legend, briefing and end-game
+   * screens, replay viewer. Always identical to `shortName`; kept as its own
+   * field only because `Formation.name` elsewhere in the codebase expects a
+   * display name. There is no separate long-form title.
+   */
   name: string;
-  /** Short designation, e.g. "1 SIR". */
+  /** Short designation, e.g. "1 SIR". Same string as `name` — see above. */
   shortName: string;
   echelon: string;
   arm: string;
@@ -231,7 +240,7 @@ export const EXERCISE_NAME = 'Exercise Sabre Vanguard';
 const SABRE_OOB: FormationProfile[] = [
   {
     type: 'INFANTRY',
-    name: '1st Battalion, Singapore Infantry Regiment',
+    name: '1 SIR',
     shortName: '1 SIR',
     echelon: 'Battalion',
     arm: 'Infantry',
@@ -239,7 +248,7 @@ const SABRE_OOB: FormationProfile[] = [
   },
   {
     type: 'INFANTRY',
-    name: '2nd Battalion, Singapore Infantry Regiment',
+    name: '2 SIR',
     shortName: '2 SIR',
     echelon: 'Battalion',
     arm: 'Infantry',
@@ -247,7 +256,7 @@ const SABRE_OOB: FormationProfile[] = [
   },
   {
     type: 'INFANTRY',
-    name: '5th Battalion, Singapore Infantry Regiment',
+    name: '5 SIR',
     shortName: '5 SIR',
     echelon: 'Battalion',
     arm: 'Infantry',
@@ -255,7 +264,7 @@ const SABRE_OOB: FormationProfile[] = [
   },
   {
     type: 'COMMANDO',
-    name: '1st Commando Battalion',
+    name: '1 CDO BN',
     shortName: '1 CDO BN',
     echelon: 'Battalion',
     arm: 'Commandos',
@@ -263,7 +272,7 @@ const SABRE_OOB: FormationProfile[] = [
   },
   {
     type: 'ARMOUR',
-    name: '40th Battalion, Singapore Armoured Regiment',
+    name: '40 SAR',
     shortName: '40 SAR',
     echelon: 'Battalion',
     arm: 'Armour',
@@ -276,7 +285,7 @@ const SABRE_OOB: FormationProfile[] = [
     // formations' equipment line. Verified against public sources; see
     // README "Real-World Reference vs Fictional Game Mechanics".
     type: 'ARMOUR',
-    name: '48th Battalion, Singapore Armoured Regiment',
+    name: '48 SAR',
     shortName: '48 SAR',
     echelon: 'Battalion',
     arm: 'Armour',
@@ -284,7 +293,7 @@ const SABRE_OOB: FormationProfile[] = [
   },
   {
     type: 'ARTILLERY',
-    name: '21st Battalion, Singapore Artillery',
+    name: '21 SA',
     shortName: '21 SA',
     echelon: 'Battalion',
     arm: 'Artillery',
@@ -292,7 +301,7 @@ const SABRE_OOB: FormationProfile[] = [
   },
   {
     type: 'ENGINEER',
-    name: '35th Battalion, Singapore Combat Engineers',
+    name: '35 SCE',
     shortName: '35 SCE',
     echelon: 'Battalion',
     arm: 'Combat Engineers',
@@ -300,7 +309,7 @@ const SABRE_OOB: FormationProfile[] = [
   },
   {
     type: 'RECON',
-    name: '10th Command, Control, Communications, Computers and Intelligence Battalion',
+    name: '10 C4I Bn',
     shortName: '10 C4I Bn',
     echelon: 'Battalion',
     arm: 'C4I / Signals & ISR',
@@ -312,7 +321,7 @@ const SABRE_OOB: FormationProfile[] = [
     // HQ 4 SAB. Verified against public sources; see README "Real-World
     // Reference vs Fictional Game Mechanics".
     type: 'RECON',
-    name: '12th Command, Control, Communications, Computers and Intelligence Battalion',
+    name: '12 C4I Bn',
     shortName: '12 C4I Bn',
     echelon: 'Battalion',
     arm: 'C4I / Signals & ISR',
@@ -320,7 +329,7 @@ const SABRE_OOB: FormationProfile[] = [
   },
   {
     type: 'FRIGATE',
-    name: '185 Squadron, Republic of Singapore Navy',
+    name: '185 SQN',
     shortName: '185 SQN',
     echelon: 'Squadron',
     arm: 'Republic of Singapore Navy',
@@ -328,7 +337,7 @@ const SABRE_OOB: FormationProfile[] = [
   },
   {
     type: 'CORVETTE',
-    name: '188 Squadron, Republic of Singapore Navy',
+    name: '188 SQN',
     shortName: '188 SQN',
     echelon: 'Squadron',
     arm: 'Republic of Singapore Navy',
@@ -339,7 +348,7 @@ const SABRE_OOB: FormationProfile[] = [
 const VANGUARD_OOB: FormationProfile[] = [
   {
     type: 'INFANTRY',
-    name: '3rd Battalion, Singapore Infantry Regiment',
+    name: '3 SIR',
     shortName: '3 SIR',
     echelon: 'Battalion',
     arm: 'Infantry',
@@ -347,7 +356,7 @@ const VANGUARD_OOB: FormationProfile[] = [
   },
   {
     type: 'INFANTRY',
-    name: '8th Battalion, Singapore Infantry Regiment',
+    name: '8 SIR',
     shortName: '8 SIR',
     echelon: 'Battalion',
     arm: 'Infantry',
@@ -355,7 +364,7 @@ const VANGUARD_OOB: FormationProfile[] = [
   },
   {
     type: 'INFANTRY',
-    name: '9th Battalion, Singapore Infantry Regiment',
+    name: '9 SIR',
     shortName: '9 SIR',
     echelon: 'Battalion',
     arm: 'Infantry',
@@ -363,7 +372,7 @@ const VANGUARD_OOB: FormationProfile[] = [
   },
   {
     type: 'GUARDS',
-    name: '1st Battalion, Singapore Guards',
+    name: '1 GDS',
     shortName: '1 GDS',
     echelon: 'Battalion',
     arm: 'Guards',
@@ -371,7 +380,7 @@ const VANGUARD_OOB: FormationProfile[] = [
   },
   {
     type: 'ARMOUR',
-    name: '41st Battalion, Singapore Armoured Regiment',
+    name: '41 SAR',
     shortName: '41 SAR',
     echelon: 'Battalion',
     arm: 'Armour',
@@ -383,7 +392,7 @@ const VANGUARD_OOB: FormationProfile[] = [
     // 40/41/48 SAR. Verified against public sources; see README
     // "Real-World Reference vs Fictional Game Mechanics".
     type: 'ARMOUR',
-    name: '42nd Battalion, Singapore Armoured Regiment',
+    name: '42 SAR',
     shortName: '42 SAR',
     echelon: 'Battalion',
     arm: 'Armour',
@@ -391,7 +400,7 @@ const VANGUARD_OOB: FormationProfile[] = [
   },
   {
     type: 'ARTILLERY',
-    name: '20th Battalion, Singapore Artillery',
+    name: '20 SA',
     shortName: '20 SA',
     echelon: 'Battalion',
     arm: 'Artillery',
@@ -399,7 +408,7 @@ const VANGUARD_OOB: FormationProfile[] = [
   },
   {
     type: 'ENGINEER',
-    name: '30th Battalion, Singapore Combat Engineers',
+    name: '30 SCE',
     shortName: '30 SCE',
     echelon: 'Battalion',
     arm: 'Combat Engineers',
@@ -407,7 +416,7 @@ const VANGUARD_OOB: FormationProfile[] = [
   },
   {
     type: 'RECON',
-    name: '11th Command, Control, Communications, Computers and Intelligence Battalion',
+    name: '11 C4I Bn',
     shortName: '11 C4I Bn',
     echelon: 'Battalion',
     arm: 'C4I / Signals & ISR',
@@ -419,7 +428,7 @@ const VANGUARD_OOB: FormationProfile[] = [
     // Wallaby 2024 fact sheet as a supporting unit. Verified against public
     // sources; see README "Real-World Reference vs Fictional Game Mechanics".
     type: 'RECON',
-    name: '16th Command, Control, Communications, Computers and Intelligence Battalion',
+    name: '16 C4I Bn',
     shortName: '16 C4I Bn',
     echelon: 'Battalion',
     arm: 'C4I / Signals & ISR',
@@ -432,7 +441,7 @@ const VANGUARD_OOB: FormationProfile[] = [
     // is the comparable-weight major-surface-combatant squadron. That slotting
     // is an exercise arrangement, not a claim about the squadron's real task.
     type: 'FRIGATE',
-    name: '191 Squadron, Republic of Singapore Navy',
+    name: '191 SQN',
     shortName: '191 SQN',
     echelon: 'Squadron',
     arm: 'Republic of Singapore Navy',
@@ -443,7 +452,7 @@ const VANGUARD_OOB: FormationProfile[] = [
     // squadron, armed for anti-submarine work — the littoral counterpart to
     // 188 SQN for the purposes of this exercise.
     type: 'CORVETTE',
-    name: '189 Squadron, Republic of Singapore Navy',
+    name: '189 SQN',
     shortName: '189 SQN',
     echelon: 'Squadron',
     arm: 'Republic of Singapore Navy',

@@ -65,9 +65,7 @@ export type GameAction =
   | { type: 'ENGINEER_CLEAR'; formationId: string; x: number; y: number }
   | { type: 'ARTILLERY'; formationId: string; x: number; y: number }
   | { type: 'AIR'; x: number; y: number }
-  | { type: 'SPECIAL_OP'; formationId: string; x: number; y: number }
   | { type: 'REORGANIZE'; formationId: string }
-  | { type: 'VERTICAL_INSERT'; formationId: string; x: number; y: number }
   | { type: 'UAV_RECON'; x: number; y: number }
   | { type: 'WITHDRAW'; formationId: string }
   | { type: 'END_TURN' };

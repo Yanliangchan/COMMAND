@@ -17,11 +17,11 @@ const UNITS: Topic[] = [
   },
   {
     title: 'Commandos',
-    body: "Task Force Sabre's elite manoeuvre battalion. Light, fast, and able to raid far behind enemy lines with a Special Op. They hit hard, and only the C4I battalion sees further, but they do not survive a stand-up fight.",
+    body: "Task Force Sabre's elite manoeuvre battalion (1 CDO BN). Light, fast, and able to raid far behind enemy lines. They hit hard, and only the C4I battalion sees further, but they do not survive a stand-up fight.",
   },
   {
     title: 'Guards',
-    body: "Task Force Vanguard's elite manoeuvre battalion, and the commandos' counterpart. Air-assault infantry: just as mobile, and they can go in by helicopter with a Special Op, but at shorter reach and with ordinary sensors. In exchange they are markedly tougher once they are on the ground and fight as formed infantry.",
+    body: "Task Force Vanguard's elite manoeuvre battalion (1 GDS), and the commandos' counterpart. Air-assault infantry: just as mobile, but with ordinary sensors. In exchange they are markedly tougher once they are on the ground and fight as formed infantry.",
   },
   {
     title: 'Artillery',
@@ -33,7 +33,7 @@ const UNITS: Topic[] = [
   },
   {
     title: 'Recon',
-    body: 'The C4I / ISR battalion (10 C4I Bn and 12 C4I Bn for Sabre; 11 C4I Bn and 16 C4I Bn for Vanguard — each side fields two) is your sensor. It spots passively out to about 9 tiles where a rifle battalion manages 5 and a gun battalion 3, it identifies what it sees far faster, and it holds on to a contact for many rounds after everyone else has lost it. Its Recon order sweeps 14 tiles. It fights badly; its value is what it shows you.',
+    body: 'The C4I / ISR battalion (each side fields two) is your sensor. It spots passively much further than a rifle battalion, where a gun battalion manages least of all, it identifies what it sees far faster, and it holds on to a contact for many rounds after everyone else has lost it. It fights badly; its value is what it shows you.',
   },
   {
     title: 'Air support',
@@ -48,7 +48,7 @@ const UNITS: Topic[] = [
 const CONCEPTS: Topic[] = [
   {
     title: 'The exercise',
-    body: 'COMMAND is a fictional large-scale SAF force-on-force exercise. Two task forces drawn from the same armed forces fight each other over a fictional training area: TASK FORCE SABRE (1 SIR, 2 SIR, 5 SIR, 1 CDO BN, 40 SAR, 48 SAR, 21 SA, 35 SCE, 10 C4I Bn, 12 C4I Bn, 185 SQN, 188 SQN) and TASK FORCE VANGUARD (3 SIR, 8 SIR, 9 SIR, 1 GDS, 41 SAR, 42 SAR, 20 SA, 30 SCE, 11 C4I Bn, 16 C4I Bn, 191 SQN, 189 SQN). Both fight with the same weight of force: three rifle battalions, one elite manoeuvre battalion, two armoured battalions, guns, engineers, two C4I battalions and two RSN squadrons each — twelve formations a side. The formation names and their real-world character are drawn from public sources; which battalion is on which side, and every number in the game, are fictional.',
+    body: 'COMMAND is a fictional large-scale SAF force-on-force exercise. Two task forces drawn from the same armed forces fight each other over a fictional training area: TASK FORCE SABRE (1 SIR, 2 SIR, 5 SIR, 1 CDO BN, 40 SAR, 48 SAR, 21 SA, 35 SCE, 10 C4I Bn, 12 C4I Bn, 185 SQN, 188 SQN) and TASK FORCE VANGUARD (3 SIR, 8 SIR, 9 SIR, 1 GDS, 41 SAR, 42 SAR, 20 SA, 30 SCE, 11 C4I Bn, 16 C4I Bn, 191 SQN, 189 SQN). Both fight with the same weight of force: three rifle battalions, one elite manoeuvre battalion, two armoured battalions, guns, engineers, two C4I battalions and two RSN squadrons each — twelve formations a side. Every formation is identified only by its short designation, drawn from real public SAF/RSN naming conventions — there is no separate long-form name. Which battalion is on which side, and every number in the game, are fictional.',
   },
   {
     title: 'Initiative',
@@ -172,7 +172,7 @@ const CONCEPTS: Topic[] = [
   },
   {
     title: 'Recon vs normal spotting',
-    body: 'Ordinary troops detect nearby enemies. Recon sees further, sooner, and knows what it is looking at — and what that buys you is CERTAINTY, not firepower. Attacking an unconfirmed formation costs you nothing in combat power; it costs you the ability to know what you are walking into, because the preview has to guess at the target\u2019s strength, morale and defences and shows you a wide band instead of a number. Confirm it first and the prediction becomes reliable. The R order is worth its AP because it does five things passive spotting does not: it uses a much longer sensor range (14 tiles for C4I, 11 for commandos, against 9 and 7 passively), it pushes through forest and built-up ground instead of being stopped by it, it adds a flat confidence bonus that jumps contacts up the ladder in one go, it marks what it finds as recon-tracked so those contacts decay far more slowly, and it re-fixes stale contacts you are about to lose. A Special Op by the commandos (6 tiles) or the Guards (4 tiles) can also probe behind the lines and confirm whatever is around the objective it lands on.',
+    body: 'Ordinary troops detect nearby enemies. Recon sees further, sooner, and knows what it is looking at — and what that buys you is CERTAINTY, not firepower. Attacking an unconfirmed formation costs you nothing in combat power; it costs you the ability to know what you are walking into, because the preview has to guess at the target\u2019s strength, morale and defences and shows you a wide band instead of a number. Confirm it first and the prediction becomes reliable. The R order is worth its AP because it does five things passive spotting does not: it uses a much longer sensor range, it pushes through forest and built-up ground instead of being stopped by it, it adds a flat confidence bonus that jumps contacts up the ladder in one go, it marks what it finds as recon-tracked so those contacts decay far more slowly, and it re-fixes stale contacts you are about to lose.',
   },
   {
     title: 'Scenarios',
@@ -284,6 +284,12 @@ export const HelpPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             </div>
             <div>
               <kbd>+ / −</kbd> Zoom in / out
+            </div>
+            <div>
+              <kbd>Scroll</kbd> Zoom, centred on the cursor
+            </div>
+            <div>
+              <kbd>Click + drag</kbd> Pan the map (also: two-finger pinch to zoom on touch)
             </div>
           </div>
         )}

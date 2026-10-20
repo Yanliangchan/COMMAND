@@ -616,24 +616,9 @@ function applyAction(room: Room, playerId: PlayerId, action: GameAction): Action
       if (!res.ok) return { error: res.reason, mapChanged: false };
       break;
     }
-    case 'SPECIAL_OP': {
-      const res = engine.specialOpAction(state, action.formationId, action.x, action.y);
-      if (!res.ok) return { error: res.reason, mapChanged: false };
-      break;
-    }
     case 'REORGANIZE': {
       const res = engine.reorganizeAction(state, action.formationId);
       if (!res.ok) return { error: res.reason, mapChanged: false };
-      break;
-    }
-    case 'VERTICAL_INSERT': {
-      const res = engine.verticalInsertAction(state, action.formationId, action.x, action.y);
-      if (!res.ok) {
-        // Fog-sensitive exactly like MOVE's ENEMY_HELD: `reason` may point at
-        // a ground-truth occupant the mover's own side has never detected —
-        // see verticalInsertLandingLegal's doc comment in engine.ts.
-        return { error: safeOccupantRefusalMessage(state, playerId, res.occupantId, res.reason), mapChanged: false };
-      }
       break;
     }
     case 'UAV_RECON': {

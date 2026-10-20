@@ -253,9 +253,10 @@ const SECTIONS: Section[] = [
           />
           <ul className="tut-list">
             <li>
-              <b>Detection range depends on the formation.</b> Recon (C4I / ISR) about 9 tiles, commandos 7, warships 7–8,
-              infantry and armour 5, engineers 4, artillery 3. Move a battalion next to an enemy in the open and you will
-              always see it — no order required.
+              <b>Detection range depends on the formation.</b> Recon and the fast manoeuvre battalion see furthest, warships
+              a little less, line infantry and armour a standard range, and artillery least of all — its crews are watching
+              their own gun line, not the enemy. Move a battalion next to an enemy in the open and you will always see it —
+              no order required.
             </li>
             <li>
               <b>Terrain and height change that range in both directions.</b> Standing on a hill or in open ground extends

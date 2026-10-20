@@ -40,7 +40,7 @@ function mk(type: FormationType, x: number, y: number, owner: PlayerId): Formati
     readiness: 100, ammo: FORMATION_DEFS[type].maxAmmo ?? 0, lastFiredRound: 0, movesUsed: 0, movesMax: 2,
     hasActedThisTurn: false, fortified: false, lastOrder: '',
     onAlert: false, reactionFired: false, suppression: 0, lastSuppressedRound: 0, lastReorganizedRound: 0,
-    fortifyTier: 0, fortifiedThisRound: false, verticalInsertsUsed: 0,
+    fortifyTier: 0, fortifiedThisRound: false,
     lastStandTriggered: false, lastStandUntilRound: 0, roundsStationary: 0,
   };
 }
@@ -390,55 +390,6 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
 // mutual Reorganize, buffed Reorganize values
 // =============================================================================
 
-// --- Vertical / heli insertion ----------------------------------------------
-{
-  const cdo = mk('COMMANDO', 10, 10, 'SABRE');
-  const s = scenario([cdo], 'SABRE');
-  const before = { x: cdo.x, y: cdo.y };
-  engine.verticalInsertAction(s, cdo.id, 20, 10); // 10 tiles away, well within radius, no enemy nearby
-  const after = s.formations[cdo.id];
-  check(!!after && after.x === 20 && after.y === 10, `vertical insertion redeploys the formation (was ${before.x},${before.y}, now ${after?.x},${after?.y})`);
-  check(after!.verticalInsertsUsed === 1, 'vertical insertion increments its per-formation counter');
-  check(after!.hasActedThisTurn === true, "vertical insertion spends the formation's major action");
-}
-{
-  // Capped hard per formation per game.
-  const cdo = mk('COMMANDO', 10, 10, 'SABRE');
-  cdo.verticalInsertsUsed = 2; // already at VERTICAL_INSERT_MAX_USES
-  const s = scenario([cdo], 'SABRE');
-  engine.verticalInsertAction(s, cdo.id, 15, 10);
-  check(s.formations[cdo.id]!.x === 10, 'vertical insertion is refused once the per-formation cap is spent');
-}
-{
-  // May not land adjacent to a formation this SIDE has actually detected.
-  const cdo = mk('COMMANDO', 10, 10, 'SABRE');
-  const enemy = mk('INFANTRY', 20, 10, 'VANGUARD');
-  const s = scenario([cdo, enemy], 'SABRE');
-  s.players.SABRE.contacts[enemy.id] = {
-    formationId: enemy.id, owner: 'VANGUARD', level: 'CONTACT', confidence: 40, x: enemy.x, y: enemy.y,
-    live: true, lastSeenTurn: s.round, decayAnchorRound: s.round, lastRiseRound: s.round, ceiling: 60, decayPerRound: 20, source: 'test',
-  };
-  engine.verticalInsertAction(s, cdo.id, 19, 10); // adjacent to the detected enemy
-  check(s.formations[cdo.id]!.x === 10, 'vertical insertion refuses a landing zone adjacent to a detected enemy formation');
-  engine.verticalInsertAction(s, cdo.id, 15, 10); // clear of the enemy
-  check(s.formations[cdo.id]!.x === 15, 'the same formation may still land elsewhere, clear of the detected enemy');
-}
-{
-  // Bypasses Zones of Control entirely — a normal move to the same tile would be ZOC_BLOCKED.
-  const cdo = mk('COMMANDO', 5, 5, 'SABRE');
-  const enemy = mk('INFANTRY', 10, 5, 'VANGUARD');
-  const s = scenario([cdo, enemy], 'SABRE');
-  engine.verticalInsertAction(s, cdo.id, 12, 5); // beyond the enemy's ZOC, unreachable by an ordinary bound this round
-  check(s.formations[cdo.id]!.x === 12, 'vertical insertion lands past a Zone of Control that would block ordinary movement');
-}
-{
-  // Only Commandos and Guards.
-  const inf = mk('INFANTRY', 10, 10, 'SABRE');
-  const s = scenario([inf], 'SABRE');
-  engine.verticalInsertAction(s, inf.id, 20, 10);
-  check(s.formations[inf.id]!.x === 10, 'vertical insertion is refused for a formation type that cannot mount it');
-}
-
 // --- Prepared-defence tiers on Fortify ---------------------------------------
 {
   const f = mk('INFANTRY', 10, 10, 'SABRE');
@@ -599,21 +550,30 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
 }
 
 // ---------------------------------------------------------------------------
-// Phase 8: roster/AP-economy regression guard. 48 SAR / 42 SAR brought each
-// side from 10 to 11 formations (8 -> 9 land, 2 naval unchanged) and the AP
-// budget was bumped 26 -> 28 (cap 34 -> 36) to absorb the extra formation's
-// action appetite. This is not a combat-formula assertion like the rest of
-// the file, but it belongs here for the same reason as the ammunition and
-// destruction checks above: a future roster or AP edit that silently drifts
-// the two out of sync again should fail loudly rather than only be caught by
-// eyeballing the balance sim.
+// Roster/AP-economy regression guard: each side fields 12 formations — three
+// infantry, one elite manoeuvre battalion, two armoured, one artillery, one
+// engineer, two C4I, and two naval (one frigate, one corvette) — each
+// identified ONLY by its real, publicly documented short designation (see
+// data.ts / README "Real-World Reference vs Fictional Game Mechanics"; there
+// is no separate long-form name any more). This is not a combat-formula
+// assertion like the rest of the file, but it belongs here for the same
+// reason as the ammunition and destruction checks above: a future roster or
+// AP edit that silently drifts the roster size and the AP budget out of sync
+// should fail loudly rather than only be caught by eyeballing the balance sim.
 // ---------------------------------------------------------------------------
 {
   (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
-    const oob = ORDERS_OF_BATTLE[side] as { type: FormationType; shortName: string }[];
-    check(oob.length === 12, `${side} fields 12 formations, including the phase-8 additions (has ${oob.length})`);
+    const oob = ORDERS_OF_BATTLE[side] as { type: FormationType; shortName: string; name: string }[];
+    check(oob.length === 12, `${side} fields 12 formations (has ${oob.length})`);
     const armour = oob.filter((p) => p.type === 'ARMOUR');
     check(armour.length === 2, `${side} fields exactly two armoured battalions (has ${armour.length}: ${armour.map((p) => p.shortName).join(', ')})`);
+    const recon = oob.filter((p) => p.type === 'RECON');
+    check(recon.length === 2, `${side} fields exactly two C4I battalions (has ${recon.length}: ${recon.map((p) => p.shortName).join(', ')})`);
+    const infantry = oob.filter((p) => p.type === 'INFANTRY');
+    check(infantry.length === 3, `${side} fields exactly three infantry battalions (has ${infantry.length})`);
+    // Every formation's displayed name is identical to its short designation
+    // — no separate long-form title is ever carried on the profile.
+    oob.forEach((p) => check(p.name === p.shortName, `${side} formation ${p.shortName} has name === shortName (no long-form name)`));
   });
   check(
     ORDERS_OF_BATTLE.SABRE.some((p: { shortName: string }) => p.shortName === '48 SAR'),
@@ -623,23 +583,6 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
     ORDERS_OF_BATTLE.VANGUARD.some((p: { shortName: string }) => p.shortName === '42 SAR'),
     'VANGUARD roster includes 42 SAR'
   );
-}
-
-// ---------------------------------------------------------------------------
-// Phase 9: roster/AP-economy regression guard, superseding the phase-8 count
-// above (kept, since 11 was still true pre-phase-9 and the armour/48-SAR/
-// 42-SAR checks stay valid) — a second C4I battalion (12 C4I Bn / 16 C4I Bn)
-// brought each side from 11 to 12 formations (9 -> 10 land, 2 naval
-// unchanged), and the AP budget was bumped 28 -> 30 (cap 36 -> 38), the same
-// +2 margin phase 8 used, to absorb it.
-// ---------------------------------------------------------------------------
-{
-  (['SABRE', 'VANGUARD'] as PlayerId[]).forEach((side) => {
-    const oob = ORDERS_OF_BATTLE[side] as { type: FormationType; shortName: string }[];
-    check(oob.length === 12, `${side} fields 12 formations (has ${oob.length})`);
-    const c4i = oob.filter((p) => p.type === 'RECON');
-    check(c4i.length === 2, `${side} fields exactly two C4I battalions (has ${c4i.length}: ${c4i.map((p) => p.shortName).join(', ')})`);
-  });
   check(
     ORDERS_OF_BATTLE.SABRE.some((p: { shortName: string }) => p.shortName === '12 C4I Bn'),
     'SABRE roster includes 12 C4I Bn'
@@ -648,7 +591,7 @@ check(-lossesFromShare(0.8, false).attacker < -lossesFromShare(0.8, true).attack
     ORDERS_OF_BATTLE.VANGUARD.some((p: { shortName: string }) => p.shortName === '16 C4I Bn'),
     'VANGUARD roster includes 16 C4I Bn'
   );
-  check(AP_PER_TURN === 30 && AP_CAP === 38, `AP economy matches the phase-9 bump (AP_PER_TURN=${AP_PER_TURN}, AP_CAP=${AP_CAP})`);
+  check(AP_PER_TURN === 30 && AP_CAP === 38, `AP economy matches the current roster size (AP_PER_TURN=${AP_PER_TURN}, AP_CAP=${AP_CAP})`);
 }
 
 // ---------------------------------------------------------------------------

@@ -12,9 +12,7 @@ import {
   isLastStandActive,
   LAST_STAND_THRESHOLD,
   REORGANIZE_COOLDOWN_ROUNDS,
-  SPECIAL_OP_TYPES,
   STATIONARY_CONCEALMENT_MIN_ROUNDS,
-  VERTICAL_INSERT_MAX_USES,
   gridRef,
   stationaryConcealmentMultiplier,
 } from '../game/types';
@@ -94,11 +92,6 @@ export const UnitDetailPanel: React.FC<{
         {f.fortified && (
           <span className="mini-chip chip-amber" data-testid="fortify-tier-chip" title="Prepared-defence tier — climbs one step each further round spent holding, doing nothing else.">
             {FORTIFY_TIER_NAMES[Math.max(0, Math.min(FORTIFY_TIER_NAMES.length - 1, f.fortifyTier ?? 0))]}
-          </span>
-        )}
-        {SPECIAL_OP_TYPES.includes(f.type) && (
-          <span className="mini-chip" title="Vertical insertions used this operation." data-testid="vertical-insert-chip">
-            ✈ {f.verticalInsertsUsed ?? 0} / {VERTICAL_INSERT_MAX_USES} insertions
           </span>
         )}
         {f.onAlert && (

@@ -401,12 +401,6 @@ export interface Formation {
    */
   fortifiedThisRound: boolean;
   /**
-   * VERTICAL INSERTION (phase 9). How many times this formation has used the
-   * Vertical Insertion order this GAME (not per round) — capped at
-   * VERTICAL_INSERT_MAX_USES. Commandos and Guards only.
-   */
-  verticalInsertsUsed: number;
-  /**
    * LAST STAND (phase 11 §5). Fires ONCE per formation per game, the first
    * time its strength drops below LAST_STAND_THRESHOLD: a cornered unit
    * fights hardest, not just bleeds out. `lastStandTriggered` is the
@@ -432,8 +426,8 @@ export interface Formation {
    * CONCEALMENT FROM STASIS (phase 12 §3). Consecutive ROUNDS this formation
    * has ended without spending a movement action — ticked in engine.ts
    * `endTurn` for the side finishing its turn, reset to 0 the instant the
-   * formation actually moves (moveFormation / moveGroup / verticalInsert /
-   * withdraw). detection.ts turns this into a further concealment multiplier
+   * formation actually moves (moveFormation / moveGroup / withdraw).
+   * detection.ts turns this into a further concealment multiplier
    * on top of terrain (see STATIONARY_CONCEALMENT_*) — a unit that has held
    * still is meaningfully harder to spot, never invisible. Intelligence like
    * everything else on this interface: redacted on an enemy formation below
@@ -528,31 +522,28 @@ export interface DetectionProfile {
  * crews are looking at their own gun line rather than the enemy, sees least.
  * Warships have good sensors but only over water and coast.
  */
-export const DETECTION: Record<FormationType, DetectionProfile> = {
-  INFANTRY: { baseRange: 5, reconRange: 8, identifyFactor: 1.0, decayPerRound: 22, sensorLabel: 'Eyes-on / battalion scouts' },
-  COMMANDO: { baseRange: 7, reconRange: 11, identifyFactor: 1.2, decayPerRound: 16, sensorLabel: 'Deep recce patrols' },
-  GUARDS: { baseRange: 5, reconRange: 8, identifyFactor: 1.0, decayPerRound: 20, sensorLabel: 'Air-assault recce screen' },
-  ARMOUR: { baseRange: 5, reconRange: 7, identifyFactor: 0.95, decayPerRound: 24, sensorLabel: 'Vehicle optics / thermal' },
-  ARTILLERY: { baseRange: 3, reconRange: 5, identifyFactor: 0.8, decayPerRound: 26, sensorLabel: 'Gun-line observation only' },
-  ENGINEER: { baseRange: 4, reconRange: 6, identifyFactor: 0.85, decayPerRound: 25, sensorLabel: 'Route and obstacle recce' },
-  RECON: { baseRange: 9, reconRange: 14, identifyFactor: 1.4, decayPerRound: 10, sensorLabel: 'Ground sensors, EW and UAV feed' },
-  FRIGATE: { baseRange: 8, reconRange: 11, identifyFactor: 1.15, decayPerRound: 15, sensorLabel: 'Naval surveillance radar' },
-  CORVETTE: { baseRange: 7, reconRange: 9, identifyFactor: 1.05, decayPerRound: 18, sensorLabel: 'Littoral surface search' },
-};
+// Collapsed to four shared sensor tiers rather than a bespoke profile per
+// arm — ground maneuver units share one baseline, the gun line is the one
+// deliberate exception (its crews watch their own battery, not the enemy),
+// and the two long-sensor arms (recon and the fast manoeuvre battalion)
+// share a single "long-range" tier instead of each having its own unique
+// numbers to remember.
+const STANDARD_SENSOR: DetectionProfile = { baseRange: 5, reconRange: 7, identifyFactor: 1.0, decayPerRound: 22, sensorLabel: 'Eyes-on observation' };
+const SHORT_SENSOR: DetectionProfile = { baseRange: 3, reconRange: 5, identifyFactor: 0.85, decayPerRound: 26, sensorLabel: 'Gun-line observation only' };
+const LONG_SENSOR: DetectionProfile = { baseRange: 8, reconRange: 12, identifyFactor: 1.3, decayPerRound: 12, sensorLabel: 'Long-range sensors and recon screen' };
+const NAVAL_SENSOR: DetectionProfile = { baseRange: 7, reconRange: 10, identifyFactor: 1.1, decayPerRound: 16, sensorLabel: 'Surface-search radar' };
 
-/**
- * Reach of a SPECIAL_OP, in tiles, by formation. Both task forces field one
- * elite manoeuvre battalion that can mount one: SABRE's commandos insert
- * deepest (raid / deep probe), VANGUARD's Guards go in by helicopter as a
- * formed rifle sub-unit and so land closer to the friendly line.
- */
-export const SPECIAL_OP_RANGE = 6;
-export const SPECIAL_OP_RANGE_BY_TYPE: Partial<Record<FormationType, number>> = {
-  COMMANDO: 6,
-  GUARDS: 4,
+export const DETECTION: Record<FormationType, DetectionProfile> = {
+  INFANTRY: STANDARD_SENSOR,
+  COMMANDO: LONG_SENSOR,
+  GUARDS: STANDARD_SENSOR,
+  ARMOUR: STANDARD_SENSOR,
+  ARTILLERY: SHORT_SENSOR,
+  ENGINEER: STANDARD_SENSOR,
+  RECON: LONG_SENSOR,
+  FRIGATE: NAVAL_SENSOR,
+  CORVETTE: NAVAL_SENSOR,
 };
-/** Formation types that may mount a SPECIAL_OP at all. */
-export const SPECIAL_OP_TYPES: FormationType[] = ['COMMANDO', 'GUARDS'];
 
 /**
  * What a side knows about one enemy formation. Stored per player on the server.
@@ -681,9 +672,7 @@ export type ActionKind =
   | 'AIR'
   | 'ENGINEER_BRIDGE'
   | 'ENGINEER_CLEAR'
-  | 'SPECIAL_OP'
   | 'REORGANIZE'
-  | 'VERTICAL_INSERT'
   | 'UAV_RECON'
   | 'WITHDRAW';
 
@@ -696,14 +685,9 @@ export const AP_COSTS: Record<ActionKind, number> = {
   AIR: 3,
   ENGINEER_BRIDGE: 2,
   ENGINEER_CLEAR: 1,
-  SPECIAL_OP: 3,
   // Phase 7. Restores more than Fortify (dig in) and costs the same as a
   // committed Attack — it is a deliberate stand-down, not a free heal.
   REORGANIZE: 2,
-  // Phase 9. A genuine leap over the whole board and over Zones of Control —
-  // costed noticeably above SPECIAL_OP (3) so it reads as a rare, weighty
-  // commitment rather than a fancier move order.
-  VERTICAL_INSERT: 4,
   // Phase 9. Same tier as AIR (3) — a rare, player-level strategic asset in
   // the same weight class as calling in an air sortie, not a routine order
   // like RECON (1).
@@ -826,15 +810,6 @@ export const FORTIFY_TIER_SUPPRESSION_DECAY_MULT: readonly number[] = [1.0, 1.15
 // computeReachable to special-case.
 // ---------------------------------------------------------------------------
 export const EXPLOITATION_AP_REBATE = 1;
-
-// ---------------------------------------------------------------------------
-// VERTICAL / HELI INSERTION (phase 9) — Commandos and Guards only.
-// ---------------------------------------------------------------------------
-
-/** Manhattan-tile leap radius — deliberately wide: a genuine envelopment, not an extended move. */
-export const VERTICAL_INSERT_RADIUS = 14;
-/** Uses per formation, for the whole game (not per round). */
-export const VERTICAL_INSERT_MAX_USES = 2;
 
 // ---------------------------------------------------------------------------
 // UAV RECON (phase 9) — a capped, player-level consumable, not a formation

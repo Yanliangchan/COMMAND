@@ -26,7 +26,18 @@
 // never spam the console — it just stays silent.
 // ============================================================================
 
-export type SoundName = 'move' | 'attack' | 'contact' | 'objective' | 'turn' | 'kill' | 'ui';
+export type SoundName =
+  | 'move'
+  | 'attack'
+  | 'standoff'
+  | 'contact'
+  | 'objective'
+  | 'objectiveLost'
+  | 'recon'
+  | 'fortify'
+  | 'turn'
+  | 'kill'
+  | 'ui';
 
 interface AudioSettings {
   muted: boolean;
@@ -234,6 +245,17 @@ class SoundEngine {
     return buf;
   }
 
+  /**
+   * Bounded random multiplier, 1 ± pct. Used to give cues that repeat often
+   * (move, attack, standoff) a small amount of pitch/timbre variation so they
+   * don't sound robotically identical every time — never enough to change
+   * what the cue reads as, just enough that two in a row don't sound like a
+   * loop.
+   */
+  private jitter(pct: number): number {
+    return 1 + (Math.random() * 2 - 1) * pct;
+  }
+
   /** Play one of the small named tactical-UI sounds. Never throws. */
   play(name: SoundName) {
     if (this.settings.muted || this.settings.volume <= 0) return;
@@ -243,9 +265,19 @@ class SoundEngine {
       const t0 = ctx.currentTime;
       const vol = this.settings.volume;
       switch (name) {
-        case 'move':
-          this.tone(ctx, t0, { freq: 320, freqTo: 210, dur: 0.07, type: 'triangle', gain: 0.22 * vol });
+        case 'move': {
+          // ±6% pitch, ±15% gain, ±10% duration — a footfall/engine chirp
+          // that never sounds like the exact same sample twice.
+          const j = this.jitter(0.06);
+          this.tone(ctx, t0, {
+            freq: 320 * j,
+            freqTo: 210 * j,
+            dur: 0.07 * this.jitter(0.1),
+            type: 'triangle',
+            gain: 0.22 * vol * this.jitter(0.15),
+          });
           break;
+        }
         case 'ui':
           this.tone(ctx, t0, { freq: 980, dur: 0.035, type: 'sine', gain: 0.12 * vol });
           break;
@@ -256,15 +288,47 @@ class SoundEngine {
           this.tone(ctx, t0, { freq: 440, freqTo: 880, dur: 0.42, type: 'sine', gain: 0.24 * vol, attack: 0.02 });
           this.tone(ctx, t0 + 0.05, { freq: 660, freqTo: 1100, dur: 0.32, type: 'sine', gain: 0.14 * vol, attack: 0.02 });
           break;
+        case 'objectiveLost':
+          // The capture cue's mirror image: a falling two-note figure instead
+          // of a rising one, so a player can tell "gained" from "lost" with
+          // their eyes still on the map.
+          this.tone(ctx, t0, { freq: 660, freqTo: 420, dur: 0.3, type: 'sine', gain: 0.22 * vol, attack: 0.015 });
+          this.tone(ctx, t0 + 0.08, { freq: 440, freqTo: 260, dur: 0.36, type: 'sine', gain: 0.18 * vol, attack: 0.015 });
+          break;
+        case 'recon':
+          // A sweep: a slow upward sine glide under a soft high "ping",
+          // reading as a sensor pass rather than any kind of impact or move.
+          this.tone(ctx, t0, { freq: 260, freqTo: 520, dur: 0.38, type: 'sine', gain: 0.16 * vol, attack: 0.05 });
+          this.tone(ctx, t0 + 0.3, { freq: 1500, dur: 0.1, type: 'sine', gain: 0.1 * vol, attack: 0.004 });
+          break;
+        case 'fortify':
+          // A short, dry double-knock (digging in / standing down) — low,
+          // percussive, no pitch glide, distinct from every tonal cue above.
+          this.noiseBurst(ctx, t0, { dur: 0.05, gain: 0.18 * vol, filterFreq: 220, filterQ: 1.1 });
+          this.noiseBurst(ctx, t0 + 0.09, { dur: 0.08, gain: 0.22 * vol, filterFreq: 180, filterQ: 1.1 });
+          break;
         case 'contact': {
           this.tone(ctx, t0, { freq: 660, dur: 0.14, type: 'triangle', gain: 0.2 * vol, attack: 0.005 });
           this.tone(ctx, t0 + 0.13, { freq: 880, dur: 0.22, type: 'triangle', gain: 0.22 * vol, attack: 0.005 });
           break;
         }
-        case 'attack':
-          this.noiseBurst(ctx, t0, { dur: 0.16, gain: 0.32 * vol, filterFreq: 1400, filterQ: 0.7 });
-          this.tone(ctx, t0, { freq: 180, freqTo: 70, dur: 0.14, type: 'sawtooth', gain: 0.2 * vol, attack: 0.002 });
+        case 'attack': {
+          // ±5% pitch, ±12% gain — direct/close-range fire.
+          const j = this.jitter(0.05);
+          this.noiseBurst(ctx, t0, { dur: 0.16, gain: 0.32 * vol * this.jitter(0.12), filterFreq: 1400 * j, filterQ: 0.7 });
+          this.tone(ctx, t0, { freq: 180 * j, freqTo: 70 * j, dur: 0.14, type: 'sawtooth', gain: 0.2 * vol * this.jitter(0.12), attack: 0.002 });
           break;
+        }
+        case 'standoff': {
+          // Artillery fire mission / naval gunfire: lower, longer, more
+          // diffuse than direct fire — a distant report rather than a crack
+          // at close range, with the same small jitter so repeated salvoes
+          // don't sound identical.
+          const j = this.jitter(0.05);
+          this.noiseBurst(ctx, t0, { dur: 0.34 * this.jitter(0.1), gain: 0.3 * vol * this.jitter(0.12), filterFreq: 450 * j, filterQ: 0.5 });
+          this.tone(ctx, t0, { freq: 100 * j, freqTo: 40 * j, dur: 0.32, type: 'sine', gain: 0.24 * vol * this.jitter(0.12), attack: 0.004 });
+          break;
+        }
         case 'kill':
           this.noiseBurst(ctx, t0, { dur: 0.5, gain: 0.34 * vol, filterFreq: 700, filterQ: 0.5 });
           this.tone(ctx, t0, { freq: 90, freqTo: 42, dur: 0.5, type: 'sine', gain: 0.3 * vol, attack: 0.003 });

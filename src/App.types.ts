@@ -6,7 +6,5 @@ export type TargetMode =
   | 'AIR_TARGET'
   | 'ENGINEER_BRIDGE'
   | 'ENGINEER_CLEAR'
-  | 'SPECIAL_OP'
-  | 'VERTICAL_INSERT'
   | 'UAV_RECON'
   | null;

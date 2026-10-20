@@ -17,11 +17,9 @@
 import * as engine from '../src/game/engine';
 import {
   filterStateForPlayer,
-  GENERIC_BLOCKED_LANDING_MESSAGE,
   GENERIC_BLOCKED_TILE_MESSAGE,
   REDACTED_NUMBER,
   safeMoveRefusalMessage,
-  safeOccupantRefusalMessage,
 } from '../src/game/fog';
 import { decideBotAction } from '../server/bot';
 import { ServerMsg } from '../src/net/protocol';
@@ -67,7 +65,6 @@ const TRUE_AT: Record<keyof Formation, DetectionLevel> = {
   // Phase 9 additions — same tier as the rest of the battlefield-condition fields.
   fortifyTier: 'CONFIRMED',
   fortifiedThisRound: 'CONFIRMED',
-  verticalInsertsUsed: 'CONFIRMED',
   // Phase 11 §5 additions — last stand is intelligence too, same tier.
   lastStandTriggered: 'CONFIRMED',
   lastStandUntilRound: 'CONFIRMED',
@@ -82,8 +79,8 @@ const seen: Record<DetectionLevel, number> = { UNKNOWN: 0, CONTACT: 0, IDENTIFIE
 // all (asserted below via `contact.type === undefined`), or the client would
 // have the arm to draw an icon from at a rung the design deliberately
 // withholds it. This table confirms that rule is actually EXERCISED for
-// every arm — including the two new armour formations (48 SAR / 42 SAR) —
-// not just asserted for whichever arm happens to reach each rung first.
+// every arm — including both armoured battalions each side fields — not
+// just asserted for whichever arm happens to reach each rung first.
 const seenByTypeAndLevel: Record<string, Record<DetectionLevel, number>> = {};
 function trackTypeLevel(type: string, level: DetectionLevel) {
   seenByTypeAndLevel[type] ??= { UNKNOWN: 0, CONTACT: 0, IDENTIFIED: 0, CONFIRMED: 0 };
@@ -217,11 +214,9 @@ function apply(state: GameState, a: any) {
     case 'FORTIFY': engine.fortifyAction(state, a.formationId); break;
     case 'ARTILLERY': engine.artilleryAction(state, a.formationId, a.x, a.y); break;
     case 'AIR': engine.airStrikeAction(state, a.x, a.y); break;
-    case 'SPECIAL_OP': engine.specialOpAction(state, a.formationId, a.x, a.y); break;
     case 'ENGINEER_BRIDGE': engine.engineerBridgeAction(state, a.formationId, a.x, a.y); break;
     case 'ENGINEER_CLEAR': engine.engineerClearAction(state, a.formationId, a.x, a.y); break;
     case 'REORGANIZE': engine.reorganizeAction(state, a.formationId); break;
-    case 'VERTICAL_INSERT': engine.verticalInsertAction(state, a.formationId, a.x, a.y); break;
     case 'UAV_RECON': engine.uavReconAction(state, a.x, a.y); break;
     case 'WITHDRAW': engine.withdrawAction(state, a.formationId); break;
   }
@@ -396,68 +391,6 @@ function auditMoveRefusalWire() {
 }
 auditMoveRefusalWire();
 
-/**
- * Fog-blocked VERTICAL_INSERT refusal — the same bug shape as MOVE's
- * ENEMY_HELD, found while auditing every other action handler for it (Task
- * 1 of the follow-up pass): verticalInsertLandingLegal's "already occupied"
- * check reads `formationAt`, the TRUE board, not a fog-filtered one, so a
- * landing zone that happens to sit exactly on an enemy formation this side
- * has never detected must be refused with a message that reveals nothing
- * more than "something is different about that tile" — same as MOVE.
- */
-function auditVerticalInsertRefusalWire() {
-  const state = engine.initGame(20260904);
-  const mover = Object.values(state.formations).find((f) => f.owner === 'SABRE' && f.type === 'COMMANDO')!;
-  const hidden = Object.values(state.formations).find((f) => f.owner === 'VANGUARD' && f.type !== 'FRIGATE' && f.type !== 'CORVETTE')!;
-  mover.x = 20; mover.y = 20;
-  hidden.x = 22; hidden.y = 20; // within VERTICAL_INSERT_RADIUS, not adjacent (so only the occupancy check trips)
-  state.tiles[mover.y][mover.x] = { ...state.tiles[mover.y][mover.x], terrain: 'GRASS', road: false, bridge: false, elevation: 1 };
-  state.tiles[hidden.y][hidden.x] = { ...state.tiles[hidden.y][hidden.x], terrain: 'GRASS', road: false, bridge: false, elevation: 1 };
-  state.players.SABRE.contacts = {};
-  state.activePlayer = 'SABRE';
-  state.players.SABRE.ap = 60;
-
-  const legal = engine.verticalInsertLandingLegal(state, mover, hidden.x, hidden.y);
-  ok(!legal.ok && legal.occupantId === hidden.id, 'fog-blocked VERTICAL_INSERT setup: refused with the true occupant id');
-
-  const res = engine.verticalInsertAction(state, mover.id, hidden.x, hidden.y);
-  ok(!res.ok && res.occupantId === hidden.id, 'verticalInsertAction propagates the ground-truth occupantId on refusal');
-
-  // This is exactly what server/index.ts's `case 'VERTICAL_INSERT'` branch of
-  // applyAction computes and sends back.
-  const message = safeOccupantRefusalMessage(state, 'SABRE', res.occupantId, res.reason);
-  const wireMsg: ServerMsg = { t: 'error', message };
-  const wireBytes = JSON.stringify(wireMsg);
-
-  ok(message === GENERIC_BLOCKED_LANDING_MESSAGE, `fog-blocked VERTICAL_INSERT refusal uses the generic string (got "${message}")`);
-  ok(!wireBytes.includes(hidden.id), 'wire bytes do not contain the hidden occupant\'s formation id');
-  ok(!wireBytes.includes(hidden.shortName), 'wire bytes do not contain the hidden occupant\'s callsign');
-  ok(!wireBytes.includes(hidden.name), 'wire bytes do not contain the hidden occupant\'s full name');
-  ok(!wireBytes.toLowerCase().includes(hidden.type.toLowerCase()), 'wire bytes do not contain the hidden occupant\'s arm/type');
-  ok(!/vanguard/i.test(wireBytes), 'wire bytes do not name the opposing side');
-  ok(mover.x === 20 && mover.y === 20, 'a refused vertical insertion does not relocate the formation');
-  ok(mover.verticalInsertsUsed === 0, 'a refused vertical insertion does not spend a use');
-
-  // Regression: a KNOWN (IDENTIFIED+) occupant still gets the real message.
-  const known = engine.initGame(20260904);
-  const kMover = Object.values(known.formations).find((f) => f.owner === 'SABRE' && f.type === 'COMMANDO')!;
-  const kEnemy = Object.values(known.formations).find((f) => f.owner === 'VANGUARD' && f.type !== 'FRIGATE' && f.type !== 'CORVETTE')!;
-  kMover.x = 30; kMover.y = 30;
-  kEnemy.x = 32; kEnemy.y = 30;
-  known.activePlayer = 'SABRE';
-  known.players.SABRE.ap = 60;
-  known.players.SABRE.contacts[kEnemy.id] = {
-    formationId: kEnemy.id, owner: 'VANGUARD', level: 'CONFIRMED', confidence: 100, x: kEnemy.x, y: kEnemy.y,
-    live: true, lastSeenTurn: known.round, decayAnchorRound: known.round, lastRiseRound: known.round, ceiling: 100, decayPerRound: 20, source: 'test',
-  };
-  const kRes = engine.verticalInsertAction(known, kMover.id, kEnemy.x, kEnemy.y);
-  const kMessage = safeOccupantRefusalMessage(known, 'SABRE', kRes.occupantId, kRes.reason);
-  ok(!kRes.ok && kRes.occupantId === kEnemy.id, 'known-occupant setup: refused with the true occupant id');
-  ok(kMessage !== GENERIC_BLOCKED_LANDING_MESSAGE, `a CONFIRMED occupant's refusal is NOT downgraded to the generic string (got "${kMessage}")`);
-  ok(kMessage === kRes.reason, 'a CONFIRMED occupant gets the engine\'s own detailed refusal message, unchanged');
-}
-auditVerticalInsertRefusalWire();
-
 const GAMES = Number(process.argv[2] ?? 6);
 const ROUNDS = Number(process.argv[3] ?? 10);
 for (let g = 0; g < GAMES; g++) {
@@ -495,8 +428,8 @@ if (rungsMissing.length) {
   process.exit(1);
 }
 
-// Phase 8 icon-redaction coverage: every arm — ARMOUR included, now fielded
-// twice a side via 48 SAR / 42 SAR — must have actually been exercised at
+// Icon-redaction coverage: every arm — ARMOUR included, fielded twice a
+// side — must have actually been exercised at
 // both CONTACT (icon must NOT appear) and IDENTIFIED (icon MUST appear) at
 // least once, or the assertions above proved nothing about this arm.
 const armTypesMissingCoverage: string[] = [];

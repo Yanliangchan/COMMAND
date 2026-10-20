@@ -140,8 +140,12 @@ canvas { display: block; touch-action: none; }
   z-index: 20;
 }
 .chip-toggle {
+  /* Calmer by default (item 7): no visible box around every single toggle —
+     the shared .hud-tools container already supplies one frame for the
+     whole group, so each chip reads as a label until it actually matters
+     (hover, or the "on" state below). */
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   color: var(--text-dim);
   padding: 3px 9px;
   font-size: 11px;
@@ -150,8 +154,9 @@ canvas { display: block; touch-action: none; }
   letter-spacing: 0.05em;
   border-radius: 3px;
   cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
-.chip-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+.chip-toggle:hover { color: var(--text); border-color: var(--border); }
 .chip-toggle.on { background: rgba(147, 163, 95, 0.16); border-color: var(--olive); color: var(--olive-bright); }
 
 .reconnect-banner {

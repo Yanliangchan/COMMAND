@@ -50,8 +50,6 @@ const TARGET_HINTS: Record<string, string> = {
   AIR_TARGET: 'Click any spotted enemy formation to call the strike in.',
   ENGINEER_BRIDGE: 'Click an adjacent river tile to bridge it.',
   ENGINEER_CLEAR: 'Click an adjacent tile to clear its obstacles and dug-in defences.',
-  SPECIAL_OP: 'Click a tile within this battalion\u2019s insertion reach to raid or probe it.',
-  VERTICAL_INSERT: 'Click a landing zone within reach \u2014 not adjacent to any enemy formation you have detected.',
   UAV_RECON: 'Click anywhere on the map to sweep that area with a UAV sortie.',
 };
 
@@ -287,7 +285,10 @@ export default function App() {
       // attacker or defender (there is no third-party spectator report in a
       // 2-player game) — always something this side legitimately witnessed,
       // so the weapons-fire transient is safe regardless of fog.
-      sound.play('attack');
+      // closeAssault distinguishes a direct/adjacent engagement from a
+      // standoff one (artillery fire mission or naval gunfire) — a sound
+      // cue the player can already see on the report itself, not new intel.
+      sound.play(state.lastBattleReport.closeAssault ? 'attack' : 'standoff');
     }
   }, [state?.lastBattleReport]);
 
@@ -389,7 +390,10 @@ export default function App() {
     // Sound — one cue per category present in this push, never per event.
     if (freshContacts.length || upgradedContacts.length) sound.play('contact');
     if (freshKills.length) sound.play('kill');
+    // Captured vs lost get distinct cues — ownership is never fog-gated, so
+    // this is as safe as the capture-only check it replaces.
     if (objectiveChanges.some((o) => o.controlledBy === you)) sound.play('objective');
+    if (objectiveChanges.some((o) => o.controlledBy !== you && prevObjectives![o.id] === you)) sound.play('objectiveLost');
 
     if (!prevContacts) return; // first push (join / reconnect) — nothing is "new" yet
 
@@ -708,12 +712,15 @@ export default function App() {
       switch (a.id) {
         case 'RECON':
           net.sendAction({ type: 'RECON', formationId: selected.id });
+          sound.play('recon');
           break;
         case 'FORTIFY':
           net.sendAction({ type: 'FORTIFY', formationId: selected.id });
+          sound.play('fortify');
           break;
         case 'REORGANIZE':
           net.sendAction({ type: 'REORGANIZE', formationId: selected.id });
+          sound.play('fortify');
           break;
         case 'WITHDRAW':
           // Animated movement (phase 12 §4): same path-capture as Move, from
@@ -1011,14 +1018,6 @@ export default function App() {
         break;
       case 'ENGINEER_CLEAR':
         net.sendAction({ type: 'ENGINEER_CLEAR', formationId: selected.id, x, y });
-        clearMode();
-        break;
-      case 'SPECIAL_OP':
-        net.sendAction({ type: 'SPECIAL_OP', formationId: selected.id, x, y });
-        clearMode();
-        break;
-      case 'VERTICAL_INSERT':
-        net.sendAction({ type: 'VERTICAL_INSERT', formationId: selected.id, x, y });
         clearMode();
         break;
       default:

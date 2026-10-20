@@ -8,7 +8,7 @@
 // ============================================================================
 
 import { FORMATION_DEFS } from './data';
-import { canReorganize, distance, hasAmmo, hasVerticalInsertLandingZone, maxAmmo, movesRemaining, computeReachable } from './engine';
+import { canReorganize, distance, hasAmmo, maxAmmo, movesRemaining, computeReachable } from './engine';
 import { isThreatened, planWithdraw } from './movement';
 import { lineOfSight } from './detection';
 import {
@@ -18,8 +18,6 @@ import {
   GameState,
   PlayerId,
   REORGANIZE_COOLDOWN_ROUNDS,
-  SPECIAL_OP_TYPES,
-  VERTICAL_INSERT_MAX_USES,
 } from './types';
 import { TargetMode } from '../App.types';
 
@@ -103,22 +101,6 @@ export const ACTION_SPECS: ActionSpec[] = [
     apCost: AP_COSTS.ENGINEER_CLEAR,
     mode: 'ENGINEER_CLEAR',
     blurb: 'Engineers only. Strip an adjacent enemy position of its dug-in defences.',
-  },
-  {
-    id: 'SPECIAL_OP',
-    label: 'Special Op',
-    shortcut: 'X',
-    apCost: AP_COSTS.SPECIAL_OP,
-    mode: 'SPECIAL_OP',
-    blurb: 'Commandos and Guards only. Raid a distant enemy or probe deep behind their lines.',
-  },
-  {
-    id: 'VERTICAL_INSERT',
-    label: 'Vertical Insert',
-    shortcut: 'I',
-    apCost: AP_COSTS.VERTICAL_INSERT,
-    mode: 'VERTICAL_INSERT',
-    blurb: `Commandos and Guards only. Redeploy anywhere within reach in one leap — over rivers, over the enemy's Zones of Control, landing zone permitting. Cannot land adjacent to a formation this side has detected. Only ${VERTICAL_INSERT_MAX_USES} insertions per formation, for the whole operation.`,
   },
   {
     id: 'WITHDRAW',
@@ -210,12 +192,6 @@ export function actionAvailability(state: GameState, f: Formation, viewer: Playe
       case 'ENGINEER_CLEAR':
         applicable = f.type === 'ENGINEER';
         break;
-      case 'SPECIAL_OP':
-        applicable = SPECIAL_OP_TYPES.includes(f.type);
-        break;
-      case 'VERTICAL_INSERT':
-        applicable = SPECIAL_OP_TYPES.includes(f.type); // Commandos and Guards — same roster as Special Op
-        break;
       default:
         applicable = true;
     }
@@ -246,10 +222,6 @@ export function actionAvailability(state: GameState, f: Formation, viewer: Playe
     else if (spec.id === 'AIR' && state.players[viewer].airSorties < 1) reason = 'No air sorties left this turn.';
     else if (spec.id === 'AIR' && visibleEnemies(state, f.owner) === 0)
       reason = 'No identified enemy to strike — push a formation forward until it spots one, or Recon (R) an existing contact to identify it.';
-    else if (spec.id === 'VERTICAL_INSERT' && (f.verticalInsertsUsed ?? 0) >= VERTICAL_INSERT_MAX_USES)
-      reason = `No insertions left this operation (${f.verticalInsertsUsed ?? 0} / ${VERTICAL_INSERT_MAX_USES} used).`;
-    else if (spec.id === 'VERTICAL_INSERT' && !hasVerticalInsertLandingZone(state, f))
-      reason = 'No legal landing zone within reach — every tile in range is either impassable, occupied, or adjacent to a detected enemy formation.';
     else if (spec.id === 'REORGANIZE' && f.movesUsed > 0)
       reason = 'Reorganize requires the formation to stand fast — it has already used a movement action this round.';
     else if (spec.id === 'REORGANIZE' && !canReorganize(state, f))

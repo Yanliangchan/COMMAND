@@ -570,44 +570,6 @@ export function reconSweep(state: GameState, observer: Formation): ReconSweepRes
   return { found, identified, range: Math.round(maxRange * 10) / 10 };
 }
 
-/**
- * Commando deep probe (the SPECIAL_OP "look" variant). The patrol is treated
- * as observing from the tile it was sent to, out to a short radius, at
- * recon-grade quality — it walks onto the objective and reports what is there.
- * Returns the number of enemy formations it put on the board.
- */
-export function deepProbe(state: GameState, spotter: Formation, radius: number): number {
-  const ps = state.players[spotter.owner];
-  const enemy = otherPlayer(spotter.owner);
-  let found = 0;
-  for (const e of Object.values(state.formations)) {
-    if (e.owner !== enemy) continue;
-    if (sightDistance(spotter.x, spotter.y, e.x, e.y) > radius) continue;
-    const existing = ps.contacts[e.id];
-    const confidence = Math.max(existing?.confidence ?? 0, 95);
-    const level = detectionLevelFor(confidence);
-    ps.contacts[e.id] = {
-      formationId: e.id,
-      owner: e.owner,
-      level,
-      confidence,
-      x: e.x,
-      y: e.y,
-      live: true,
-      lastSeenTurn: state.round,
-      decayAnchorRound: state.round,
-      lastRiseRound: state.round,
-      ceiling: 100,
-      decayPerRound: Math.min(existing?.decayPerRound ?? 99, DETECTION[spotter.type].decayPerRound),
-      type: e.type,
-      spottedBy: spotter.shortName,
-      source: 'Commando deep-recon patrol',
-    };
-    found++;
-  }
-  return found;
-}
-
 // ---------------------------------------------------------------------------
 // Player-facing read-outs
 // ---------------------------------------------------------------------------

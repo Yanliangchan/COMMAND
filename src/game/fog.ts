@@ -88,7 +88,6 @@ function redactIdentified(f: Formation): Formation {
     // withheld until CONFIRMED.
     fortifyTier: REDACTED_NUMBER,
     fortifiedThisRound: false,
-    verticalInsertsUsed: REDACTED_NUMBER,
     // Last stand (phase 11 §5) — same tier as fortifyTier: withheld until CONFIRMED.
     lastStandTriggered: false,
     lastStandUntilRound: REDACTED_NUMBER,
@@ -179,10 +178,9 @@ export const GENERIC_BLOCKED_LANDING_MESSAGE = 'That landing zone cannot be used
 /**
  * The same discipline as safeMoveRefusalMessage, generalised for any other
  * order whose engine-level refusal can (like MOVE's ENEMY_HELD) point at a
- * specific ground-truth occupant — currently Vertical Insert's "landing zone
- * is already occupied" check (see verticalInsertLandingLegal in engine.ts,
- * which reads `formationAt`, the true board, not a fog-filtered one).
- * `occupantId` is null for every refusal that is NOT occupant-shaped (wrong
+ * specific ground-truth occupant (reads `formationAt`, the true board, not a
+ * fog-filtered one). Kept as shared infrastructure for any future order of
+ * this shape. `occupantId` is null for every refusal that is NOT occupant-shaped (wrong
  * terrain, out of radius, adjacent to a formation this side already
  * legitimately detected, …) — those are always safe to relay verbatim, so
  * this is a no-op for them. Only when an occupant id is present AND the

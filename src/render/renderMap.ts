@@ -1085,18 +1085,36 @@ export function render(rc: RenderContext) {
         ctx.fillStyle = color;
         ctx.fillText(objectiveGlyph(o.kind), sx, sy);
       }
-      if (s >= 13) {
+      // Declutter (item 2): the full name is noise at a glance — the glyph
+      // above already says what kind of objective this is. The name itself
+      // only earns its place once the player is close enough to be reading
+      // the map in detail, or once they are actually pointing at this tile
+      // (hover), rather than being permanently lettered across the sheet.
+      const hoveredHere = !!rc.hoverTile && rc.hoverTile.x === o.x && rc.hoverTile.y === o.y;
+      if (s >= 26 || hoveredHere) {
         drawLabel(rc, sx, sy + r + Math.max(7, s * 0.42), o.name.toUpperCase(), Math.max(8, s * 0.26), color, 0.06);
       }
     }
   }
 
   // ---- Settlement names ----
-  if (rc.labels && s >= 6) {
+  // Same declutter rule as objectives: a small dot marks the settlement at
+  // every zoom; its name only prints once the player has zoomed in close
+  // enough to read detail, or is pointing right at it.
+  if (rc.labels) {
     for (const l of rc.labels) {
       if (l.x < x0 - 2 || l.x > x1 + 2 || l.y < y0 - 2 || l.y > y1 + 2) continue;
       const { sx, sy } = worldToScreen(camera, width, height, l.x, l.y);
-      drawLabel(rc, sx, sy - Math.max(9, s * 0.75), l.name.toUpperCase(), Math.max(9, Math.min(20, s * 0.5)), 'rgba(244,238,222,0.92)', 0.22);
+      const hoveredHere = !!rc.hoverTile && rc.hoverTile.x === l.x && rc.hoverTile.y === l.y;
+      if (s >= 6) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(1.4, s * 0.06), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(244,238,222,0.55)';
+        ctx.fill();
+      }
+      if (s >= 20 || hoveredHere) {
+        drawLabel(rc, sx, sy - Math.max(9, s * 0.75), l.name.toUpperCase(), Math.max(9, Math.min(20, s * 0.5)), 'rgba(244,238,222,0.92)', 0.22);
+      }
     }
   }
 
