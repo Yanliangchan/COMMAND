@@ -72,15 +72,24 @@ function dealTerritories(s: GameState): { owner: Record<string, FactionId>; hqOf
   // Grow outward from each HQ — always the smallest territory next — so they
   // come out contiguous and close in size.
   const owner: Record<string, FactionId> = {};
-  for (const f of s.factions) owner[hqOf[f]] = f;
-  const size = (f: FactionId) => Object.values(owner).filter((o) => o === f).length;
-  const frontier = (f: FactionId) => REGION_IDS.filter((r) => !owner[r] && BOARD.byId[r].neighbours.some((n) => owner[n] === f));
-  while (Object.keys(owner).length < REGION_IDS.length) {
-    const growing = s.factions.filter((f) => frontier(f).length);
+  const sizes: Partial<Record<FactionId, number>> = {};
+  for (const f of s.factions) sizes[f] = 1;
+  // Each task force's frontier (unowned regions next to it), kept incrementally
+  // and read back in board order so the shuffle stays the same for a seed.
+  const front = new Map(s.factions.map((f) => [f, new Set<string>()]));
+  const claim = (r: string, f: FactionId) => {
+    owner[r] = f;
+    for (const fr of front.values()) fr.delete(r);
+    for (const n of BOARD.byId[r].neighbours) if (!owner[n]) front.get(f)!.add(n);
+  };
+  for (const f of s.factions) claim(hqOf[f], f);
+  for (let dealt = s.factions.length; dealt < REGION_IDS.length; dealt++) {
+    const growing = s.factions.filter((f) => front.get(f)!.size);
     if (!growing.length) break;
-    const f = growing.sort((a, b) => size(a) - size(b) || nextRandom(s) - 0.5)[0];
-    const next = frontier(f).sort((a, b) => dist[f][a] - dist[f][b] || nextRandom(s) - 0.5)[0];
-    owner[next] = f;
+    const f = growing.sort((a, b) => sizes[a]! - sizes[b]! || nextRandom(s) - 0.5)[0];
+    const next = REGION_IDS.filter((r) => front.get(f)!.has(r)).sort((a, b) => dist[f][a] - dist[f][b] || nextRandom(s) - 0.5)[0];
+    claim(next, f);
+    sizes[f]!++;
   }
   return { owner, hqOf };
 }
@@ -89,6 +98,8 @@ export interface NewGameOptions {
   human: FactionId | null;
   factions: FactionId[];
   seed?: number;
+  /** Extra new troops a round per task force (negative: fewer; fractions pay out every few rounds) — the difficulty setting. */
+  handicaps?: Partial<Record<FactionId, number>>;
 }
 
 export function newGame(opts: NewGameOptions): GameState {
@@ -123,12 +134,15 @@ export function newGame(opts: NewGameOptions): GameState {
   for (const r of REGION_IDS) s.map[r] = { owner: owner[r], troops: r === hqOf[owner[r]] ? HQ_TROOPS : START_TROOPS_PER_REGION, unit: '' };
   // Companies take up ground nearest the HQ first, so the battalions read as a coherent line.
   for (const f of s.factions) {
-    const home = REGION_IDS.filter((r) => owner[r] === f).sort((a, b) => graphDistances(hqOf[f])[a] - graphDistances(hqOf[f])[b]);
+    const d = graphDistances(hqOf[f]);
+    const home = REGION_IDS.filter((r) => owner[r] === f).sort((a, b) => d[a] - d[b]);
     home.forEach((r) => (s.map[r].unit = nextCompany(s, f)));
   }
 
   for (const f of s.factions) {
     s.players[f] = { id: f, human: f === opts.human, alive: true, vp: 0, revealed: [], reconsUsed: 0, orders: null };
+    const handicap = opts.handicaps?.[f];
+    if (handicap && Number.isFinite(handicap)) s.players[f]!.handicap = handicap;
     // The fleet starts in whichever sea zone borders most of home.
     const home = REGION_IDS.filter((r) => owner[r] === f);
     const zone = [...ZONE_IDS].sort((a, b) => SEA_ZONES[b].coast.filter((r) => home.includes(r)).length - SEA_ZONES[a].coast.filter((r) => home.includes(r)).length)[0];
@@ -171,13 +185,19 @@ export function budget(s: GameState, f: FactionId): Budget {
     if (n) parts.push({ label: BOARD.byId[r].name, n });
   }
   if (f === 'SINGA') parts.push({ label: 'Total Mobilisation', n: SINGA_BONUS });
+  // A fractional handicap pays out whole troops on a fixed rhythm: −0.5 is one
+  // troop fewer every other round.
+  const h = s.players[f]?.handicap ?? 0;
+  const handicap = Math.floor(s.round * h) - Math.floor((s.round - 1) * h);
+  if (handicap) parts.push({ label: handicap > 0 ? 'Reinforcements' : 'Exercise handicap', n: handicap });
   const airbases = held.filter((r) => INSTALLATIONS[r] === 'AIRBASE').length;
   const radars = held.filter((r) => INSTALLATIONS[r] === 'RADAR').length;
   return {
-    troops: parts.reduce((n, p) => n + p.n, 0),
+    // A handicap can thin the flow but never stop it.
+    troops: Math.max(1, parts.reduce((n, p) => n + p.n, 0)),
     sorties: BASE_SORTIES + airbases + (f === 'HELANG' ? 1 : 0),
     recons: BASE_RECONS + radars + (f === 'HARIMAU' ? 1 : 0),
-    troopParts: parts.filter((p) => p.n > 0),
+    troopParts: parts.filter((p) => p.n !== 0),
   };
 }
 
@@ -209,10 +229,47 @@ export function defenceBonus(region: string): number {
   return BOARD.byId[region].stronghold ? STRONGHOLD_BONUS : DEFENCE_BONUS;
 }
 
+/** Naval gunfire a task force adds to a fight on a coast whose sea it holds alone. */
+export function gunfireBonus(f: FactionId): number {
+  return NAVAL_GUNFIRE_BONUS * (f === 'JERUNG' ? 2 : 1);
+}
+
 /** The zones a landing from `from` to `to` could go through. */
 export function sharedZones(from: string, to: string): ZoneId[] {
   const a = zonesOf(from);
   return zonesOf(to).filter((z) => a.includes(z));
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// Orders arrive from a UI, a bot or (online) a client: nothing about their
+// shape is trusted. Lookups go through Sets so "__proto__" is just unknown.
+const REGION_SET = new Set(REGION_IDS);
+const ZONE_SET = new Set<string>(ZONE_IDS);
+const isRegion = (r: unknown): r is string => typeof r === 'string' && REGION_SET.has(r);
+const isZone = (z: unknown): z is ZoneId => typeof z === 'string' && ZONE_SET.has(z);
+const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0;
+type Loose = Record<string, unknown>;
+const isObject = (o: unknown): o is Loose => typeof o === 'object' && o !== null && !Array.isArray(o);
+
+/** An order the resolver can act on without tripping: right shape, real places, sane numbers. */
+function wellFormed(o: unknown): o is Order {
+  if (!isObject(o)) return false;
+  switch (o.kind) {
+    case 'DEPLOY':
+      return isRegion(o.region) && isCount(o.count);
+    case 'MOVE':
+      return isRegion(o.from) && isRegion(o.to) && isCount(o.count) && BOARD.byId[o.from].neighbours.includes(o.to);
+    case 'LAND':
+      return isRegion(o.from) && isRegion(o.to) && o.from !== o.to && isZone(o.zone) && isCount(o.count) && sharedZones(o.from, o.to).includes(o.zone);
+    case 'SAIL':
+      return typeof o.ship === 'string' && isZone(o.to);
+    case 'STRIKE':
+    case 'CAS':
+      return isRegion(o.region);
+    default:
+      return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -229,11 +286,14 @@ export function band(troops: number): Intel {
 export function viewFor(s: GameState, me: FactionId): PlayerView {
   const p = player(s, me);
   const mine = new Set(regionsOf(s, me));
+  // Once it's over — for everyone, or just for you — the fog lifts: a
+  // wiped-out commander watches the rest of the exercise as a spectator.
+  const spectator = s.phase === 'GAME_OVER' || !p.alive;
   const map: PlayerView['map'] = {};
   for (const r of REGION_IDS) {
     const h = s.map[r];
     let intel: Intel;
-    if (h.owner === me || p.revealed.includes(r) || s.phase === 'GAME_OVER') intel = { kind: 'exact', troops: h.troops };
+    if (spectator || h.owner === me || p.revealed.includes(r)) intel = { kind: 'exact', troops: h.troops };
     else if (BOARD.byId[r].neighbours.some((n) => mine.has(n))) intel = me === 'HARIMAU' ? { kind: 'exact', troops: h.troops } : band(h.troops);
     else intel = { kind: 'hidden' };
     map[r] = { owner: h.owner, intel, unit: intel.kind === 'exact' ? h.unit : null };
@@ -248,10 +308,79 @@ export function viewFor(s: GameState, me: FactionId): PlayerView {
     players: s.factions.map((f) => ({ id: f, alive: player(s, f).alive, vp: player(s, f).vp, regions: regionsOf(s, f).length, ready: player(s, f).orders !== null })),
     budget: b,
     reconsLeft: b.recons - p.reconsUsed,
-    lastReport: s.lastReport,
+    lastReport: s.lastReport && !spectator ? redactReport(s.lastReport, me) : s.lastReport,
     winner: s.winner,
     winReason: s.winReason,
   };
+}
+
+/**
+ * The round report as one task force is entitled to see it: fights it had no
+ * eyes on keep their place and outcome but lose every number and unit; marches
+ * it couldn't see and other task forces' failures drop out.
+ */
+export function redactReport(report: RoundReport, me: FactionId): RoundReport {
+  const blank = (sd: Side): Side => ({ owner: sd.owner, units: [], troops: 0, bonuses: [], strength: 0, from: [] });
+  const steps: ReportStep[] = [];
+  for (const st of report.steps) {
+    switch (st.kind) {
+      case 'STRIKE':
+        steps.push(st.seen.includes(me) ? st : { ...st, killed: 0, redacted: true });
+        break;
+      case 'CLASH':
+        steps.push(st.seen.includes(me) ? st : { ...st, a: blank(st.a), b: blank(st.b), redacted: true });
+        break;
+      case 'BATTLE':
+        steps.push(
+          st.seen.includes(me)
+            ? st
+            : {
+                ...st,
+                defender: st.defender && blank(st.defender),
+                attackers: st.attackers.map(blank),
+                survivors: 0,
+                ...(st.fallback ? { fallback: { to: st.fallback.to, count: 0 } } : {}),
+                redacted: true,
+              },
+        );
+        break;
+      case 'MOVES': {
+        const moves = st.moves.filter((m) => m.seen.includes(me));
+        if (moves.length) steps.push({ ...st, moves });
+        break;
+      }
+      case 'FAILED':
+        if (st.owner === me) steps.push(st);
+        break;
+      default:
+        steps.push(st);
+    }
+  }
+  return { round: report.round, steps: structuredClone(steps) };
+}
+
+export interface DefenceEstimate {
+  /** What you know of the garrison. */
+  troops: Intel;
+  /** Every bonus the defender will get that public information can show. */
+  bonuses: { label: string; n: number }[];
+  /** Close air support the defender could still fly in (secret until the round resolves). */
+  mayAddAir: number;
+}
+
+/**
+ * The defence you'd be attacking at `region`, from what this view shows. Naval
+ * gunfire is judged on the ships as they stand — fleets sail before the fight.
+ * Not counted: troops the defender marches in, and its air support (mayAddAir).
+ */
+export function defenceEstimate(view: PlayerView, region: string): DefenceEstimate {
+  const rv = view.map[region];
+  const owner = rv.owner;
+  const bonuses = [{ label: BOARD.byId[region].stronghold ? 'Stronghold' : 'Dug in', n: defenceBonus(region) }];
+  if (owner === 'HARIMAU') bonuses.push({ label: 'Ambush', n: HARIMAU_AMBUSH_BONUS });
+  if (zonesOf(region).some((z) => controller(view.ships, z) === owner)) bonuses.push({ label: 'Naval gunfire (if their ships stay)', n: gunfireBonus(owner) });
+  const ownerAlive = view.players.find((p) => p.id === owner)?.alive ?? false;
+  return { troops: rv.intel, bonuses, mayAddAir: ownerAlive ? CAS_BONUS : 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -266,84 +395,163 @@ function must(cond: unknown, msg: string): asserts cond {
 
 /** Recon is immediate: it changes what you know while you plan, not what happens. */
 export function recon(prev: GameState, me: FactionId, region: string): GameState {
+  const p = player(prev, me);
+  must(prev.phase === 'PLANNING' && p.alive && p.orders === null, 'You can only recon while planning.');
+  must(p.reconsUsed < budget(prev, me).recons, 'No recon left this round.');
+  must(isRegion(region), 'Unknown region.');
+  must(prev.map[region].owner !== me, 'Recon looks at enemy ground, not your own.');
   const s = structuredClone(prev);
-  const p = player(s, me);
-  must(s.phase === 'PLANNING' && p.alive && p.orders === null, 'You can only recon while planning.');
-  must(p.reconsUsed < budget(s, me).recons, 'No recon left this round.');
-  must(BOARD.byId[region], 'Unknown region.');
-  p.reconsUsed++;
+  const q = player(s, me);
+  q.reconsUsed++;
   const reveal = [region, ...BOARD.byId[region].neighbours];
-  p.revealed = [...new Set([...p.revealed, ...reveal])];
+  q.revealed = [...new Set([...q.revealed, ...reveal])];
   return s;
 }
 
-/** Why a set of orders can't be submitted, or null if it can. */
-export function validateOrders(s: GameState, me: FactionId, orders: Order[]): string | null {
+/**
+ * One pass over a plan, in the order written. Deployments and sails count
+ * wherever they sit in the list — they happen before anyone marches — so
+ * troops deployed later in the list may already march, and a landing is
+ * judged on where the fleet will be once it has sailed. An order with a
+ * problem uses up nothing, so the rest are judged as if it weren't there.
+ */
+function analyse(s: GameState, me: FactionId, raw: unknown) {
+  const list: unknown[] = Array.isArray(raw) ? raw : [];
   const b = budget(s, me);
-  const available: Record<string, number> = {};
-  for (const r of regionsOf(s, me)) available[r] = s.map[r].troops;
+  const own = (r: unknown): r is string => isRegion(r) && s.map[r].owner === me;
+  const myShip = (id: unknown) => s.ships.find((sh) => sh.id === id && sh.owner === me && sh.zone);
+
+  const pool: Record<string, number> = {};
+  for (const r of regionsOf(s, me)) pool[r] = s.map[r].troops;
+  let toDeploy = b.troops;
+  const sailTo = new Map<string, ZoneId>();
+  for (const o of list) {
+    if (!isObject(o)) continue;
+    if (o.kind === 'DEPLOY' && own(o.region) && isCount(o.count) && o.count <= toDeploy) {
+      pool[o.region] += o.count;
+      toDeploy -= o.count;
+    }
+    if (o.kind === 'SAIL') {
+      const ship = myShip(o.ship);
+      if (ship && isZone(o.to) && SEA_ZONES[ship.zone!].neighbours.includes(o.to) && !sailTo.has(ship.id)) sailTo.set(ship.id, o.to);
+    }
+  }
+  const shipsAfter = (zone: ZoneId) => s.ships.filter((sh) => sh.owner === me && sh.zone && (sailTo.get(sh.id) ?? sh.zone) === zone).length;
+  const capacity = shipCapacity(me);
+
   let deployed = 0, sorties = 0;
-  const sailing = new Set<string>();
-  for (const o of orders) {
+  const left = { ...pool };
+  const lift: Partial<Record<ZoneId, number>> = {};
+  const sailed = new Set<string>();
+  const issues = list.map((o): string | null => {
+    if (!isObject(o)) return 'Unknown order.';
     switch (o.kind) {
       case 'DEPLOY':
-        if (s.map[o.region]?.owner !== me) return 'Deploy troops in your own regions.';
-        if (!(o.count > 0) || !Number.isInteger(o.count)) return 'Deploy a whole number of troops.';
+        if (!own(o.region)) return 'Deploy troops in your own regions.';
+        if (!isCount(o.count)) return 'Deploy a whole number of troops.';
+        if (deployed + o.count > b.troops) return `Only ${plural(b.troops, 'new troop')} to deploy this round.`;
         deployed += o.count;
-        available[o.region] += o.count;
-        break;
+        return null;
       case 'STRIKE':
       case 'CAS':
-        if (!s.map[o.region]) return 'Unknown region.';
-        if (o.kind === 'STRIKE' && s.map[o.region].owner === me) return "Don't bomb your own ground.";
+        if (!isRegion(o.region)) return 'Unknown region.';
+        if (o.kind === 'STRIKE' && own(o.region)) return "Don't bomb your own ground.";
+        if (sorties >= b.sorties) return `You have ${plural(b.sorties, 'air sortie')}.`;
         sorties++;
-        break;
+        return null;
       case 'SAIL': {
-        const ship = s.ships.find((sh) => sh.id === o.ship);
-        if (!ship || ship.owner !== me || !ship.zone) return 'That ship is not yours to sail.';
-        if (!SEA_ZONES[ship.zone].neighbours.includes(o.to)) return 'Ships sail one zone at a time.';
-        if (sailing.has(o.ship)) return 'One order per ship.';
-        sailing.add(o.ship);
-        break;
+        const ship = myShip(o.ship);
+        if (!ship) return 'That ship is not yours to sail.';
+        if (!isZone(o.to) || !SEA_ZONES[ship.zone!].neighbours.includes(o.to)) return 'Ships sail one zone at a time.';
+        if (sailed.has(ship.id)) return 'One order per ship.';
+        sailed.add(ship.id);
+        return null;
+      }
+      case 'MOVE':
+      case 'LAND': {
+        if (!own(o.from)) return 'Send troops from your own regions.';
+        if (!isRegion(o.to)) return 'Unknown region.';
+        if (!isCount(o.count)) return 'Send a whole number of troops.';
+        const from = BOARD.byId[o.from].name, to = BOARD.byId[o.to].name;
+        if (o.kind === 'MOVE' && !BOARD.byId[o.from].neighbours.includes(o.to)) return `${to} isn't next to ${from}.`;
+        if (left[o.from] - o.count < 1) return `${from} must keep at least one troop.`;
+        if (o.kind === 'LAND') {
+          if (o.from === o.to || !isZone(o.zone) || !sharedZones(o.from, o.to).includes(o.zone)) return 'Land between two coasts on the same sea zone.';
+          const ships = shipsAfter(o.zone);
+          const sea = SEA_ZONES[o.zone].name;
+          if (!ships) return `You need a ship in the ${sea} to land troops.`;
+          if ((lift[o.zone] ?? 0) + o.count > ships * capacity) return `Your ships in the ${sea} can carry ${plural(ships * capacity, 'troop')}.`;
+          lift[o.zone] = (lift[o.zone] ?? 0) + o.count;
+        }
+        left[o.from] -= o.count;
+        return null;
       }
       default:
-        break;
+        return 'Unknown order.';
     }
-  }
-  if (deployed !== b.troops) return `Deploy all ${b.troops} new troops (${deployed} placed).`;
-  if (sorties > b.sorties) return `You have ${b.sorties} air sortie${b.sorties === 1 ? '' : 's'}.`;
+  });
+  return { issues, budget: b, deployed, sorties, left, lift, shipsAfter, capacity, isList: Array.isArray(raw) };
+}
 
-  const expectedShips = (zone: ZoneId) =>
-    s.ships.filter((sh) => {
-      if (sh.owner !== me || !sh.zone) return false;
-      const sail = orders.find((o) => o.kind === 'SAIL' && o.ship === sh.id) as Extract<Order, { kind: 'SAIL' }> | undefined;
-      return (sail ? sail.to : sh.zone) === zone;
-    }).length;
-  const lift: Partial<Record<ZoneId, number>> = {};
-  for (const o of orders) {
-    if (o.kind !== 'MOVE' && o.kind !== 'LAND') continue;
-    if (s.map[o.from]?.owner !== me) return 'Send troops from your own regions.';
-    if (!(o.count > 0) || !Number.isInteger(o.count)) return 'Send a whole number of troops.';
-    available[o.from] -= o.count;
-    if (available[o.from] < 1) return `${BOARD.byId[o.from].name} must keep at least one troop.`;
-    if (o.kind === 'MOVE' && !BOARD.byId[o.from].neighbours.includes(o.to)) return `${BOARD.byId[o.to].name} isn't next to ${BOARD.byId[o.from].name}.`;
-    if (o.kind === 'LAND') {
-      if (o.from === o.to || !sharedZones(o.from, o.to).includes(o.zone)) return 'Land between two coasts on the same sea zone.';
-      const ships = expectedShips(o.zone);
-      if (!ships) return `You need a ship in the ${SEA_ZONES[o.zone].name} to land troops.`;
-      lift[o.zone] = (lift[o.zone] ?? 0) + o.count;
-      if (lift[o.zone]! > ships * shipCapacity(me)) return `Your ships in the ${SEA_ZONES[o.zone].name} can carry ${ships * shipCapacity(me)} troops.`;
-    }
-  }
+/** Per order: what's wrong with it, or null if it's fine — for flagging a plan while it's drafted. */
+export function orderIssues(s: GameState, me: FactionId, orders: Order[]): (string | null)[] {
+  return analyse(s, me, orders).issues;
+}
+
+export interface PlanSummary {
+  /** New troops still to place. */
+  deployLeft: number;
+  sortiesLeft: number;
+  /**
+   * Troops that may still leave one of your regions (all but one stay),
+   * counting every deployment in the plan. `except` leaves one order out —
+   * the one being edited — given as the order itself or its index.
+   */
+  available: (region: string, except?: Order | number) => number;
+  /** Troops your fleet in a zone can still carry, after planned sails and landings. */
+  liftLeft: (zone: ZoneId, except?: Order | number) => number;
+  /** Your ships in a zone once planned sails are done. */
+  shipsIn: (zone: ZoneId) => number;
+}
+
+/** What a plan leaves to spend — the same arithmetic validateOrders uses. */
+export function planSummary(s: GameState, me: FactionId, orders: Order[]): PlanSummary {
+  const all = analyse(s, me, orders);
+  const without = (except?: Order | number) => {
+    const i = typeof except === 'number' ? except : except === undefined ? -1 : orders.indexOf(except);
+    return i < 0 ? all : analyse(s, me, orders.filter((_, j) => j !== i));
+  };
+  return {
+    deployLeft: all.budget.troops - all.deployed,
+    sortiesLeft: all.budget.sorties - all.sorties,
+    available: (region, except) => {
+      const a = without(except);
+      return isRegion(region) && region in a.left ? Math.max(0, a.left[region] - 1) : 0;
+    },
+    liftLeft: (zone, except) => {
+      const a = without(except);
+      return isZone(zone) ? Math.max(0, a.shipsAfter(zone) * a.capacity - (a.lift[zone] ?? 0)) : 0;
+    },
+    shipsIn: (zone) => (isZone(zone) ? all.shipsAfter(zone) : 0),
+  };
+}
+
+/** Why a set of orders can't be submitted, or null if it can. Null exactly when every order is fine and every new troop is placed. */
+export function validateOrders(s: GameState, me: FactionId, orders: Order[]): string | null {
+  const a = analyse(s, me, orders);
+  if (!a.isList) return 'Orders must be a list.';
+  const issue = a.issues.find((x) => x !== null);
+  if (issue) return issue;
+  if (a.deployed !== a.budget.troops) return `Deploy all ${plural(a.budget.troops, 'new troop')} (${a.deployed} placed).`;
   return null;
 }
 
 export function submitOrders(prev: GameState, me: FactionId, orders: Order[]): GameState {
+  must(prev.phase === 'PLANNING' && player(prev, me)?.alive, 'Not planning.');
   const err = validateOrders(prev, me, orders);
   if (err) throw new IllegalAction(err);
   const s = structuredClone(prev);
-  must(s.phase === 'PLANNING' && player(s, me).alive, 'Not planning.');
-  player(s, me).orders = orders;
+  player(s, me).orders = structuredClone(orders);
   return s;
 }
 
@@ -364,6 +572,7 @@ interface Part {
   to: string;
   count: number;
   landing: boolean;
+  zone: ZoneId | null;
 }
 
 function side(s: GameState, owner: FactionId, troops: number, bonuses: Side['bonuses'], from: string[], units?: string[]): Side {
@@ -371,21 +580,54 @@ function side(s: GameState, owner: FactionId, troops: number, bonuses: Side['bon
   return { owner, units: units ?? from.map((r) => s.map[r].unit), troops, bonuses: live, strength: troops + live.reduce((n, b) => n + b.n, 0), from };
 }
 
+/**
+ * Rule switches, for the sim to measure variants against; the game never
+ * changes them. defenderFallback: a beaten defender keeps half its troops and
+ * falls back to ground it still holds next door, so losing ground isn't
+ * losing the army (measured in README "Measured").
+ */
+export const RULES = { defenderFallback: true };
+
 export function resolveRound(prev: GameState): { state: GameState; report: RoundReport } {
+  must(prev.phase === 'PLANNING', 'The exercise is over.');
   const s: GameState = structuredClone(prev);
   const steps: ReportStep[] = [];
-  const orders = (f: FactionId) => player(s, f).orders ?? [];
   const live = alive(s);
+  // Orders are re-checked for shape here too: whatever slipped past
+  // validation is skipped, never allowed to throw.
+  const plans = new Map<FactionId, Order[]>();
+  for (const f of live) {
+    const raw = player(s, f).orders;
+    plans.set(f, Array.isArray(raw) ? raw.filter(wellFormed) : []);
+  }
+  const orders = (f: FactionId) => plans.get(f) ?? [];
+  const name = (f: FactionId) => FACTIONS[f].name;
+  const place = (r: string) => BOARD.byId[r].name;
+
+  // Who had eyes on what, as the round opened (see ReportStep.seen).
+  const startOwner: Record<string, FactionId> = {};
+  for (const r of REGION_IDS) startOwner[r] = s.map[r].owner;
+  const watchers = (regions: string[], also: FactionId[]): FactionId[] =>
+    s.factions.filter(
+      (f) =>
+        also.includes(f) ||
+        (live.includes(f) &&
+          regions.some((r) => startOwner[r] === f || player(s, f).revealed.includes(r) || BOARD.byId[r].neighbours.some((n) => startOwner[n] === f))),
+    );
 
   // 1. Deployments.
   for (const f of live) for (const o of orders(f)) if (o.kind === 'DEPLOY' && s.map[o.region].owner === f) s.map[o.region].troops += o.count;
 
   // 2. Fleets sail together, then fight wherever rivals meet.
+  const sailed = new Set<string>();
   for (const f of live)
     for (const o of orders(f)) {
-      if (o.kind !== 'SAIL') continue;
+      if (o.kind !== 'SAIL' || sailed.has(o.ship)) continue;
       const ship = s.ships.find((sh) => sh.id === o.ship && sh.owner === f);
-      if (ship?.zone) ship.zone = o.to;
+      if (ship?.zone && SEA_ZONES[ship.zone].neighbours.includes(o.to)) {
+        ship.zone = o.to;
+        sailed.add(o.ship);
+      }
     }
   for (const zone of ZONE_IDS) {
     const here = shipsIn(s.ships, zone);
@@ -421,11 +663,13 @@ export function resolveRound(prev: GameState): { state: GameState; report: Round
       if (o.kind !== 'STRIKE' || s.map[o.region].owner === f) continue;
       const killed = Math.min(STRIKE_DAMAGE, s.map[o.region].troops - 1);
       s.map[o.region].troops -= killed;
-      steps.push({ kind: 'STRIKE', by: f, region: o.region, killed });
+      steps.push({ kind: 'STRIKE', by: f, region: o.region, killed, seen: watchers([o.region], [f, s.map[o.region].owner]) });
     }
 
   // 4. Everyone sets off at once. Strikes may have thinned a region below what
-  //    was ordered out of it; a landing needs the sea still to be yours.
+  //    was ordered out of it; a landing needs the sea still to be yours and
+  //    room on the ships that are left. Orders over the same road (or the same
+  //    crossing) travel as one column — splitting a force buys nothing.
   const parts: Part[] = [];
   const lift: Record<string, number> = {};
   for (const f of live)
@@ -433,21 +677,40 @@ export function resolveRound(prev: GameState): { state: GameState; report: Round
       if (o.kind !== 'MOVE' && o.kind !== 'LAND') continue;
       if (s.map[o.from].owner !== f) continue;
       let count = Math.min(o.count, s.map[o.from].troops - 1);
+      if (count <= 0) continue;
       if (o.kind === 'LAND') {
-        const ships = shipsIn(s.ships, o.zone).filter((sh) => sh.owner === f).length;
+        const sea = SEA_ZONES[o.zone].name;
         if (controller(s.ships, o.zone) !== f) {
-          steps.push({ kind: 'FAILED', owner: f, text: `${FACTIONS[f].name} lost control of the ${SEA_ZONES[o.zone].name}: the landing at ${BOARD.byId[o.to].name} is off.` });
+          steps.push({ kind: 'FAILED', owner: f, text: `${name(f)} lost control of the ${sea}: the landing at ${place(o.to)} is off.` });
           continue;
         }
         const key = `${f}/${o.zone}`;
-        count = Math.min(count, ships * shipCapacity(f) - (lift[key] ?? 0));
-        lift[key] = (lift[key] ?? 0) + Math.max(0, count);
+        const room = shipsIn(s.ships, o.zone).filter((sh) => sh.owner === f).length * shipCapacity(f) - (lift[key] ?? 0);
+        if (count > room) {
+          steps.push({
+            kind: 'FAILED',
+            owner: f,
+            text:
+              room > 0
+                ? `${name(f)} has room for only ${room} of ${plural(count, 'troop')} in the ${sea}: ${plural(count - room, 'troop')} stay in ${place(o.from)}.`
+                : `${name(f)} has no room left on its ships in the ${sea}: the landing of ${plural(count, 'troop')} at ${place(o.to)} is off.`,
+          });
+          count = room;
+        }
+        if (count <= 0) continue;
+        lift[key] = (lift[key] ?? 0) + count;
       }
-      if (count <= 0) continue;
       s.map[o.from].troops -= count;
-      parts.push({ owner: f, from: o.from, to: o.to, count, landing: o.kind === 'LAND' });
+      const zone = o.kind === 'LAND' ? o.zone : null;
+      const same = parts.find((p) => p.owner === f && p.from === o.from && p.to === o.to && p.zone === zone);
+      if (same) same.count += count;
+      else parts.push({ owner: f, from: o.from, to: o.to, count, landing: o.kind === 'LAND', zone });
     }
-  if (parts.length) steps.push({ kind: 'MOVES', moves: parts.map((p) => ({ owner: p.owner, from: p.from, to: p.to, count: p.count, landing: p.landing })) });
+  if (parts.length)
+    steps.push({
+      kind: 'MOVES',
+      moves: parts.map((p) => ({ owner: p.owner, from: p.from, to: p.to, count: p.count, landing: p.landing, seen: watchers([p.from, p.to], [p.owner]) })),
+    });
 
   // 5. Columns marching straight at each other meet on the road.
   for (const a of parts) {
@@ -465,16 +728,15 @@ export function resolveRound(prev: GameState): { state: GameState; report: Round
       b.count -= Math.ceil(a.count / 2);
       a.count = 0;
     } else a.count = b.count = 0;
-    steps.push({ kind: 'CLASH', a: sa, b: sb, at: [a.from, a.to], winner });
+    steps.push({ kind: 'CLASH', a: sa, b: sb, at: [a.from, a.to], winner, seen: watchers([a.from, a.to], [a.owner, b.owner]) });
   }
 
   // 6. Every contested region fights it out, all against the board as it stood
   //    when the columns left — captures and retreats land afterwards.
   const navalSupport = (f: FactionId, region: string) => zonesOf(region).some((z) => controller(s.ships, z) === f);
-  const gunfire = (f: FactionId) => NAVAL_GUNFIRE_BONUS * (f === 'JERUNG' ? 2 : 1);
   const cas = (f: FactionId, region: string) => orders(f).some((o) => o.kind === 'CAS' && o.region === region);
   const captures: { region: string; owner: FactionId; troops: number }[] = [];
-  const returns: { owner: FactionId; to: string; count: number }[] = [];
+  const retreats: { owner: FactionId; region: string; origins: string[]; count: number; step?: Extract<ReportStep, { kind: 'BATTLE' }> }[] = [];
   const holds: { region: string; troops: number }[] = [];
   const reinforcements: { region: string; count: number }[] = [];
   const targets = [...new Set(parts.filter((p) => p.count > 0).map((p) => p.to))];
@@ -497,7 +759,7 @@ export function resolveRound(prev: GameState): { state: GameState; report: Round
       [
         { label: BOARD.byId[region].stronghold ? 'Stronghold' : 'Dug in', n: defenceBonus(region) },
         { label: 'Air support', n: cas(holder, region) ? CAS_BONUS : 0 },
-        { label: 'Naval gunfire', n: navalSupport(holder, region) ? gunfire(holder) : 0 },
+        { label: 'Naval gunfire', n: navalSupport(holder, region) ? gunfireBonus(holder) : 0 },
         { label: 'Ambush', n: holder === 'HARIMAU' ? HARIMAU_AMBUSH_BONUS : 0 },
       ],
       [],
@@ -512,29 +774,46 @@ export function resolveRound(prev: GameState): { state: GameState; report: Round
         ps.reduce((n, p) => n + p.count, 0),
         [
           { label: 'Air support', n: cas(owner, region) ? CAS_BONUS : 0 },
-          { label: 'Naval gunfire', n: navalSupport(owner, region) ? gunfire(owner) : 0 },
+          { label: 'Naval gunfire', n: navalSupport(owner, region) ? gunfireBonus(owner) : 0 },
         ],
         [...new Set(ps.map((p) => p.from))],
       ),
     );
-    // Strongest wins; every tie goes to whoever already holds the ground.
-    const ranked = [defender, ...attackers].sort((a, b) => b.strength - a.strength || (a === defender ? -1 : b === defender ? 1 : 0));
-    const win = ranked[0];
-    const runnerUp = ranked[1]?.strength ?? 0;
+    // Strongest wins, and the defender wins any tie it's part of. Attackers
+    // tied for strongest get in each other's way: the defender holds — so seat
+    // order never decides a fight.
+    const top = Math.max(...attackers.map((a) => a.strength));
+    const leaders = attackers.filter((a) => a.strength === top);
+    const bounced = top > defender.strength && leaders.length > 1;
+    const win = top > defender.strength && !bounced ? leaders[0] : defender;
+    const runnerUp = Math.max(0, ...[defender, ...attackers].filter((x) => x !== win).map((x) => x.strength));
     const survivors = Math.max(1, win.troops - Math.ceil(runnerUp / 2));
     const captured = win !== defender;
+    const step: Extract<ReportStep, { kind: 'BATTLE' }> = {
+      kind: 'BATTLE',
+      region,
+      defender,
+      attackers,
+      winner: win.owner,
+      captured,
+      survivors,
+      seen: watchers([region], [holder, ...attackers.map((a) => a.owner)]),
+      ...(bounced ? { bounced: true as const } : {}),
+    };
     if (captured) {
       captures.push({ region, owner: win.owner, troops: survivors });
       s.stats.captures++;
+      const back = Math.floor(defTroops / 2);
+      if (RULES.defenderFallback && back > 0) retreats.push({ owner: holder, region, origins: [], count: back, step });
     } else holds.push({ region, troops: survivors });
-    // Beaten attackers lose half and fall back to where they came from.
+    // Beaten attackers lose half and fall back the way they came.
     for (const a of attackers) {
       if (a === win) continue;
       const back = Math.floor(a.troops / 2);
-      const origin = byOwner.get(a.owner)!.sort((x, y) => y.count - x.count)[0].from;
-      if (back > 0) returns.push({ owner: a.owner, to: origin, count: back });
+      const origins = [...byOwner.get(a.owner)!].sort((x, y) => y.count - x.count).map((p) => p.from);
+      if (back > 0) retreats.push({ owner: a.owner, region, origins: [...new Set(origins)], count: back });
     }
-    steps.push({ kind: 'BATTLE', region, defender, attackers, winner: win.owner, captured, survivors });
+    steps.push(step);
   }
 
   for (const h of holds) s.map[h.region].troops = h.troops;
@@ -543,7 +822,17 @@ export function resolveRound(prev: GameState): { state: GameState; report: Round
     s.map[c.region] = { owner: c.owner, troops: c.troops, unit: '' };
     s.map[c.region].unit = nextCompany(s, c.owner);
   }
-  for (const r of returns) if (s.map[r.to].owner === r.owner) s.map[r.to].troops += r.count;
+  // Retreats go home if home is still theirs, else to any of their ground
+  // next to the fight. With nowhere to go, they're cut off and surrender.
+  for (const r of retreats) {
+    const to =
+      r.origins.find((o) => s.map[o].owner === r.owner) ??
+      BOARD.byId[r.region].neighbours.filter((n) => s.map[n].owner === r.owner).sort((a, b) => s.map[b].troops - s.map[a].troops)[0];
+    if (to) {
+      s.map[to].troops += r.count;
+      if (r.step) r.step.fallback = { to, count: r.count };
+    } else steps.push({ kind: 'FAILED', owner: r.owner, text: `${plural(r.count, 'troop')} of ${name(r.owner)} were cut off at ${place(r.region)} and surrendered.` });
+  }
 
   // 7. Upkeep: eliminations, repairs, scoring, victory.
   for (const f of live) {
@@ -605,19 +894,19 @@ function narrate(s: GameState, step: ReportStep) {
     case 'NAVAL':
       return log(s, step.winner, `Naval battle in the ${SEA_ZONES[step.zone].name}: ${step.winner ? `${n(step.winner)} wins` : 'no winner'}.`);
     case 'STRIKE':
-      return log(s, step.by, `${n(step.by)} air strike on ${r(step.region)}: ${step.killed} troops lost.`);
+      return log(s, step.by, `${n(step.by)} air strike on ${r(step.region)}: ${plural(step.killed, 'troop')} lost.`);
     case 'FAILED':
       return log(s, step.owner, step.text);
     case 'CLASH':
       return log(s, step.winner, `Columns clash between ${r(step.at[0])} and ${r(step.at[1])}${step.winner ? `: ${n(step.winner)} pushes through` : ': both shattered'}.`);
-    case 'BATTLE':
-      return log(
-        s,
-        step.winner,
-        step.captured
-          ? `${r(step.region)} captured by ${n(step.winner)} (${step.attackers.find((a) => a.owner === step.winner)!.units.join(' & ')}).`
-          : `${step.defender!.units[0]} (${n(step.winner)}) holds ${r(step.region)}.`,
-      );
+    case 'BATTLE': {
+      if (step.captured) {
+        const fell = step.fallback ? ` The defenders fall back to ${r(step.fallback.to)}.` : '';
+        return log(s, step.winner, `${r(step.region)} captured by ${n(step.winner)} (${step.attackers.find((a) => a.owner === step.winner)!.units.join(' & ')}).${fell}`);
+      }
+      const tie = step.bounced ? `${step.attackers.filter((a) => a.strength === Math.max(...step.attackers.map((x) => x.strength))).map((a) => n(a.owner)).join(' and ')} get in each other's way: ` : '';
+      return log(s, step.winner, `${tie}${step.defender!.units[0]} (${n(step.winner)}) holds ${r(step.region)}.`);
+    }
     case 'RECOMMISSION':
       return log(s, step.owner, `${n(step.owner)} recommissions a ship in the ${SEA_ZONES[step.zone].name}.`);
     case 'ELIMINATED':

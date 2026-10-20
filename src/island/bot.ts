@@ -14,8 +14,20 @@ import { CAS_BONUS, Intel, Order, PlayerView } from './types';
 
 export type BotLevel = 'RECRUIT' | 'REGULAR' | 'VETERAN';
 
-/** Extra strength a bot wants over its estimate of the defence before it commits. */
-const MARGIN: Record<BotLevel, number> = { RECRUIT: 3, REGULAR: 2, VETERAN: 1 };
+/**
+ * Extra strength a bot wants over its estimate of the defence before it
+ * commits. A timid RECRUIT turned out *harder* to beat (it bleeds less), so
+ * only the VETERAN is bolder.
+ */
+const MARGIN: Record<BotLevel, number> = { RECRUIT: 2, REGULAR: 2, VETERAN: 1 };
+
+/**
+ * New troops a round a bot gets on top of the normal flow (negative: fewer),
+ * passed to newGame as `handicaps` for the bot seats only. Caution alone
+ * barely moves the result — what decides these games is troops — so this is
+ * where difficulty really lives. Calibrated in scripts/islandcheck.ts.
+ */
+export const LEVEL_HANDICAP: Record<BotLevel, number> = { RECRUIT: -2, REGULAR: -0.5, VETERAN: 1.5 };
 
 export function estimate(intel: Intel): number {
   if (intel.kind === 'exact') return intel.troops;
