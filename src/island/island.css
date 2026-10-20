@@ -131,6 +131,18 @@ a:focus-visible {
   background: rgba(255, 255, 255, 0.14);
 }
 
+.io-chip-btn.on {
+  background: var(--gold);
+  color: #3a2600;
+  border-color: var(--gold);
+}
+
+.io-chip-btn b {
+  font-family: var(--display);
+  font-weight: 400;
+  margin-left: 2px;
+}
+
 .io-seg {
   display: inline-flex;
   background: rgba(0, 0, 0, 0.3);
@@ -425,10 +437,10 @@ a:focus-visible {
   position: relative;
   max-width: 1080px;
   margin: 0 auto;
-  padding: 40px 16px 28px;
+  padding: 18px 16px 16px;
   display: flex;
   flex-direction: column;
-  gap: 26px;
+  gap: 14px;
   min-height: 100%;
 }
 
@@ -437,7 +449,7 @@ a:focus-visible {
 }
 
 .io-hero-kicker {
-  font-size: 13px;
+  font-size: 12px;
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--gold);
@@ -447,46 +459,46 @@ a:focus-visible {
 .io-logo {
   font-family: var(--display);
   font-weight: 400;
-  font-size: clamp(56px, 11vw, 120px);
+  font-size: clamp(34px, 6vw, 68px);
   line-height: 0.95;
-  margin: 8px 0 0;
+  margin: 4px 0 0;
   letter-spacing: 0.03em;
   background: linear-gradient(180deg, #fff 30%, #ffe08a 75%, #ffb300);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  filter: drop-shadow(0 6px 0 #6b3f00) drop-shadow(0 14px 24px rgba(0, 0, 0, 0.6));
+  filter: drop-shadow(0 4px 0 #6b3f00) drop-shadow(0 8px 16px rgba(0, 0, 0, 0.6));
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
 .io-logo-tag {
-  font-size: clamp(16px, 2.6vw, 26px);
-  letter-spacing: 0.4em;
-  margin-top: 10px;
-  padding: 6px 18px 6px 26px;
+  font-size: clamp(13px, 1.8vw, 18px);
+  letter-spacing: 0.35em;
+  margin-top: 6px;
+  padding: 4px 14px 4px 20px;
   background: var(--danger);
   color: #fff;
   -webkit-background-clip: border-box;
   background-clip: border-box;
-  border-radius: 8px;
+  border-radius: 7px;
   transform: rotate(-2deg);
-  box-shadow: 0 4px 0 #8c1d14;
+  box-shadow: 0 3px 0 #8c1d14;
   filter: none;
 }
 
 .io-tagline {
-  font-size: clamp(17px, 2.2vw, 22px);
-  margin: 18px 0 0;
+  font-size: clamp(13px, 1.6vw, 16px);
+  margin: 8px 0 0;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
 
 .io-setup {
   background: var(--panel);
   border: 2px solid var(--line);
-  border-radius: 24px;
-  padding: 22px;
+  border-radius: 20px;
+  padding: 16px;
   backdrop-filter: blur(6px);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
 }
@@ -494,26 +506,26 @@ a:focus-visible {
 .io-setup h2 {
   font-family: var(--display);
   font-weight: 400;
-  font-size: 20px;
-  margin: 0 0 14px;
+  font-size: 16px;
+  margin: 0 0 10px;
   letter-spacing: 0.04em;
 }
 
 .io-factions {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 10px;
 }
 
 .io-faction {
   border: 3px solid transparent;
   background: linear-gradient(180deg, color-mix(in srgb, var(--c) 32%, #0c2238), #0c2238 75%);
-  border-radius: 18px;
-  padding: 16px 12px 14px;
+  border-radius: 14px;
+  padding: 10px 10px 9px;
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
   transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -528,34 +540,34 @@ a:focus-visible {
 }
 
 .io-faction-emblem {
-  width: 52px;
-  height: 52px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   background: var(--c);
-  border: 3px solid #fff;
+  border: 2px solid #fff;
   display: grid;
   place-items: center;
-  box-shadow: 0 4px 0 var(--d);
+  box-shadow: 0 3px 0 var(--d);
 }
 
 .io-faction-name {
   font-family: var(--display);
-  font-size: 17px;
-  margin-top: 4px;
+  font-size: 14px;
+  margin-top: 2px;
 }
 
 .io-faction-power {
   color: var(--c);
   filter: brightness(1.3);
   font-weight: 900;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .io-faction-text {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 11.5px;
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 .io-setup-row {
@@ -563,7 +575,7 @@ a:focus-visible {
   align-items: flex-end;
   flex-wrap: wrap;
   gap: 18px;
-  margin-top: 20px;
+  margin-top: 12px;
 }
 
 .io-field {
@@ -583,9 +595,9 @@ a:focus-visible {
   margin-left: auto;
   font-family: var(--display);
   font-weight: 400;
-  font-size: 24px;
+  font-size: 19px;
   letter-spacing: 0.08em;
-  padding: 14px 44px;
+  padding: 11px 34px;
 }
 
 .io-title-foot {
@@ -595,8 +607,8 @@ a:focus-visible {
   justify-content: center;
   align-items: center;
   color: var(--muted);
-  font-size: 13px;
-  margin-top: auto;
+  font-size: 12px;
+  margin-top: 2px;
 }
 
 .io-fine {
@@ -615,7 +627,7 @@ a:focus-visible {
 
 .io-map-wrap {
   position: absolute;
-  inset: 64px 0 120px;
+  inset: 58px 0 108px;
 }
 
 .io-topbar {
@@ -623,7 +635,7 @@ a:focus-visible {
   top: 0;
   left: 0;
   right: 0;
-  height: 64px;
+  height: 58px;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -738,18 +750,6 @@ a:focus-visible {
   margin-right: 4px;
 }
 
-.io-side {
-  position: absolute;
-  top: 76px;
-  left: 14px;
-  width: 250px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  z-index: 4;
-  max-height: calc(100% - 230px);
-}
-
 .io-ops {
   background: var(--panel);
   border: 2px solid var(--line);
@@ -790,7 +790,7 @@ a:focus-visible {
 
 .io-log {
   position: absolute;
-  top: 76px;
+  top: 70px;
   right: 14px;
   width: 320px;
   max-height: calc(100% - 230px);
@@ -1090,6 +1090,31 @@ a:focus-visible {
   border: 3px solid #fff;
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.4);
   overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+}
+
+.io-encik-mini {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #f1e3c8;
+  border: 3px solid #fff;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.io-encik-mini:hover {
+  opacity: 1;
+}
+
+.io-encik-mini svg {
+  width: 100%;
+  height: 100%;
 }
 
 .io-encik-text {
@@ -1323,15 +1348,8 @@ a:focus-visible {
 /* --- Wide screens: keep the island clear of the side panels ------------- */
 
 @media (min-width: 1101px) {
-  .io-map-wrap {
-    left: 252px;
-    right: 236px;
-  }
   .io-orders {
-    width: 222px;
-  }
-  .io-side {
-    width: 236px;
+    width: 240px;
   }
 }
 
@@ -1362,23 +1380,20 @@ a:focus-visible {
   .io-round {
     display: none;
   }
-  .io-side {
-    top: 70px;
-    left: 8px;
-    width: auto;
-    right: 8px;
-  }
   .io-ops {
     padding: 6px 10px;
   }
   .io-sectors {
-    display: none;
+    top: 64px;
+    left: 8px;
+    width: auto;
+    right: 8px;
   }
   .io-ops-alt {
     display: none;
   }
   .io-map-wrap {
-    inset: 64px 0 170px;
+    inset: 58px 0 170px;
   }
   .io-panel-wrap {
     padding: 0 8px 8px;
@@ -1456,11 +1471,37 @@ a:focus-visible {
 }
 
 .io-sectors {
+  position: absolute;
+  top: 70px;
+  left: 14px;
+  width: 280px;
+  max-height: calc(100% - 200px);
+  display: flex;
+  flex-direction: column;
   background: var(--panel);
   border: 2px solid var(--line);
   border-radius: 14px;
-  padding: 8px 12px 10px;
+  z-index: 6;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  animation: io-drop 0.2s ease-out;
+}
+
+.io-sectors-head-title {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold);
+  font-weight: 800;
+}
+
+.io-sectors-sub {
+  padding: 0 14px 8px;
+  border-bottom: 2px solid var(--line);
+}
+
+.io-sectors-body {
+  overflow-y: auto;
+  padding: 8px 14px 10px;
 }
 
 .io-sectors-head {
@@ -1524,7 +1565,7 @@ a:focus-visible {
 
 .io-recap {
   position: absolute;
-  top: 76px;
+  top: 70px;
   left: 0;
   right: 0;
   margin: 0 auto;
@@ -1596,7 +1637,7 @@ a:focus-visible {
   }
 }
 
-/* --- v0.3: Pasukan — simultaneous orders, sea zones, playback -------------- */
+/* --- v0.3: task forces — simultaneous orders, sea zones, playback -------------- */
 
 .io-zone-pad {
   fill: rgba(255, 255, 255, 0.04);
@@ -1730,7 +1771,7 @@ a:focus-visible {
 
 .io-orders {
   position: absolute;
-  top: 76px;
+  top: 70px;
   right: 14px;
   width: 250px;
   max-height: calc(100% - 240px);
@@ -1860,7 +1901,7 @@ a:focus-visible {
 
 .io-step-card {
   position: absolute;
-  top: 76px;
+  top: 70px;
   left: 0;
   right: 0;
   margin: 0 auto;
@@ -2012,10 +2053,10 @@ a:focus-visible {
 }
 
 .io-faction-orbat {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--muted);
-  margin-top: 4px;
-  line-height: 1.4;
+  margin-top: 2px;
+  line-height: 1.35;
   opacity: 0.85;
 }
 

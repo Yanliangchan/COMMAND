@@ -1,6 +1,6 @@
 // ============================================================================
 // The match. Each round: plan in secret (deploy, march, land, sail, fly,
-// recon) → Ready → every Pasukan's orders resolve together → watch the
+// recon) → Ready → every task force's orders resolve together → watch the
 // playback, battle by battle → round report → plan again.
 // ============================================================================
 
@@ -96,6 +96,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
   const [report, setReport] = useState<{ round: number; lines: ReportLine[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [logOpen, setLogOpen] = useState(false);
+  const [kiOpen, setKiOpen] = useState(false);
   const [banners, setBanners] = useState<{ id: number; title: string; sub?: string; color: string }[]>([]);
   const [shake, setShake] = useState(0);
   const banner = useCallback((title: string, color: string, sub?: string) => {
@@ -258,7 +259,7 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
     setSelShip(null);
     setReport(null);
     sound.play('turn');
-    banner('Orders in — Execute!', FACTIONS[me].color, `Round ${rep.round}: every Pasukan moves at once`);
+    banner('Orders in — Execute!', FACTIONS[me].color, `Round ${rep.round}: every task force moves at once`);
     setPlayback({ report: rep, before: s, after: state, index: -1, overrides: {}, arrows: [], card: null, naval: null });
   };
 
@@ -466,11 +467,9 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
         />
       </div>
 
-      <TopBar game={game} me={me} playing={!!playback} onExit={onExit} onLog={() => setLogOpen((v) => !v)} />
+      <TopBar game={game} me={me} playing={!!playback} onExit={onExit} onLog={() => setLogOpen((v) => !v)} onKi={() => setKiOpen((v) => !v)} kiOpen={kiOpen} />
 
-      <div className="io-side">
-        <Installations game={game} me={me} />
-      </div>
+      {kiOpen && <Installations game={game} me={me} onClose={() => setKiOpen(false)} />}
 
       {planning && (
         <OrdersPanel
@@ -578,7 +577,12 @@ export function GameScreen({ initial, level, onExit, onRestart }: { initial: Gam
 
 // ---------------------------------------------------------------------------
 
-function TopBar({ game, me, playing, onExit, onLog }: { game: GameState; me: FactionId; playing: boolean; onExit: () => void; onLog: () => void }) {
+function TopBar({
+  game, me, playing, onExit, onLog, onKi, kiOpen,
+}: {
+  game: GameState; me: FactionId; playing: boolean; onExit: () => void; onLog: () => void; onKi: () => void; kiOpen: boolean;
+}) {
+  const held = installationsOf(game, me).length;
   return (
     <div className="io-topbar">
       <div className="io-logo-mini">
@@ -614,6 +618,9 @@ function TopBar({ game, me, playing, onExit, onLog }: { game: GameState; me: Fac
         <span className="io-round">
           Round {game.round}/{MAX_ROUNDS} · first to {VP_TARGET} VP{playing ? ' · resolving' : ''}
         </span>
+        <button className={`io-chip-btn${kiOpen ? ' on' : ''}`} onClick={onKi} data-testid="ki-toggle">
+          ★ Bases <b>{held}</b>
+        </button>
         <button className="io-chip-btn" onClick={onLog}>
           Log
         </button>
@@ -625,26 +632,31 @@ function TopBar({ game, me, playing, onExit, onLog }: { game: GameState; me: Fac
   );
 }
 
-function Installations({ game, me }: { game: GameState; me: FactionId }) {
+function Installations({ game, me, onClose }: { game: GameState; me: FactionId; onClose: () => void }) {
   const held = installationsOf(game, me).length;
   return (
     <div className="io-sectors">
-      <div className="io-sectors-head">
-        <span>★ Key Installations</span>
-        <span className="io-next">
-          yours <b>{held}</b> = +{held} VP/round
-        </span>
+      <div className="io-log-head">
+        <span className="io-sectors-head-title">★ Key Installations</span>
+        <button className="io-icon-btn" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
       </div>
-      {Object.entries(INSTALLATIONS).map(([r, kind]) => {
-        const owner = game.map[r].owner;
-        return (
-          <div key={r} className={`io-ki-row${owner === me ? ' io-sector-mine' : ''}`} title={INSTALLATION_INFO[kind].perk}>
-            <i style={{ background: FACTIONS[owner].color }} />
-            <span className="io-sector-name">{BOARD.byId[r].name}</span>
-            <span className="io-ki-perk">{INSTALLATION_INFO[kind].label}</span>
-          </div>
-        );
-      })}
+      <div className="io-next io-sectors-sub">
+        yours <b>{held}</b> = +{held} VP/round
+      </div>
+      <div className="io-sectors-body">
+        {Object.entries(INSTALLATIONS).map(([r, kind]) => {
+          const owner = game.map[r].owner;
+          return (
+            <div key={r} className={`io-ki-row${owner === me ? ' io-sector-mine' : ''}`} title={INSTALLATION_INFO[kind].perk}>
+              <i style={{ background: FACTIONS[owner].color }} />
+              <span className="io-sector-name">{BOARD.byId[r].name}</span>
+              <span className="io-ki-perk">{INSTALLATION_INFO[kind].label}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -862,6 +874,7 @@ interface PlanPanelProps {
 
 function PlanPanel({ view, tool, setTool, amount, setAmount, deployLeft, sortiesLeft, from, selShip, onUndo, onClear, onReady, me }: PlanPanelProps) {
   const fac = FACTIONS[me];
+  const [encikOpen, setEncikOpen] = useState(true);
   const tip = selShip
     ? 'Tap a lit sea zone to sail there (or its own zone to stay). Ships in a zone you alone hold carry landings and add naval gunfire.'
     : tool === 'move' && from
@@ -874,24 +887,33 @@ function PlanPanel({ view, tool, setTool, amount, setAmount, deployLeft, sorties
     { id: 'cas', label: '✈ Air Support', badge: String(sortiesLeft) },
     { id: 'recon', label: '◉ Recon', badge: String(view.reconsLeft) },
   ];
+  const encikFace = (
+    <svg viewBox="0 0 40 40">
+      <circle cx="20" cy="22" r="13" fill="#e8b98a" />
+      <path d="M6 17 Q8 4 22 5 Q35 6 34 15 L34 17Z" fill="#7a1f1f" />
+      <circle cx="28" cy="10" r="2.5" fill="#f2c94c" />
+      <rect x="13" y="21" width="5" height="2.2" rx="1" fill="#2b1d12" />
+      <rect x="22" y="21" width="5" height="2.2" rx="1" fill="#2b1d12" />
+      <path d="M15 29 Q20 27 25 29" stroke="#2b1d12" strokeWidth="1.8" fill="none" />
+    </svg>
+  );
   return (
     <div className="io-panel-wrap">
-      <div className="io-encik">
-        <div className="io-encik-face" aria-hidden="true">
-          <svg viewBox="0 0 40 40">
-            <circle cx="20" cy="22" r="13" fill="#e8b98a" />
-            <path d="M6 17 Q8 4 22 5 Q35 6 34 15 L34 17Z" fill="#7a1f1f" />
-            <circle cx="28" cy="10" r="2.5" fill="#f2c94c" />
-            <rect x="13" y="21" width="5" height="2.2" rx="1" fill="#2b1d12" />
-            <rect x="22" y="21" width="5" height="2.2" rx="1" fill="#2b1d12" />
-            <path d="M15 29 Q20 27 25 29" stroke="#2b1d12" strokeWidth="1.8" fill="none" />
-          </svg>
+      {encikOpen ? (
+        <div className="io-encik">
+          <button className="io-encik-face" aria-label="Hide Encik's tip" onClick={() => setEncikOpen(false)}>
+            {encikFace}
+          </button>
+          <div className="io-encik-text">
+            <b>Encik says</b>
+            {tip}
+          </div>
         </div>
-        <div className="io-encik-text">
-          <b>Encik says</b>
-          {tip}
-        </div>
-      </div>
+      ) : (
+        <button className="io-encik-mini" aria-label="Show Encik's tip" onClick={() => setEncikOpen(true)}>
+          {encikFace}
+        </button>
+      )}
       <div className="io-panel" style={{ ['--c' as string]: fac.color }}>
         <div className="io-steps">
           <span className="io-step io-step-on">Round {view.round} · plan your orders</span>

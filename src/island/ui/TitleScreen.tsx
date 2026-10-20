@@ -45,7 +45,7 @@ export function TitleScreen({ initial, onStart }: { initial: Setup; onStart: (s:
         </header>
 
         <section className="io-setup">
-          <h2>Choose your Pasukan</h2>
+          <h2>Choose your task force</h2>
           <div className="io-factions">
             {FACTION_IDS.map((id) => {
               const f = FACTIONS[id];
@@ -125,7 +125,7 @@ export function HowToPlay({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <p>
-          Every round, all Pasukan plan <b>at the same time and in secret</b>. When everyone is ready, all orders happen at once. No dice — the strongest force
+          Every round, all task forces plan <b>at the same time and in secret</b>. When everyone is ready, all orders happen at once. No dice — the strongest force
           wins, and ties go to whoever holds the ground. What you can't be sure of is what the others ordered, and exactly how strong they are.
         </p>
         <ol className="io-howto-steps">
@@ -150,7 +150,7 @@ export function HowToPlay({ onClose }: { onClose: () => void }) {
         </ol>
         <p>
           <b>Winning.</b> Each ★ Key Installation you hold at the end of a round scores 1 victory point. First to {VP_TARGET} wins — or hold the most when round{' '}
-          {MAX_ROUNDS} ends, or be the last Pasukan on the island.
+          {MAX_ROUNDS} ends, or be the last task force on the island.
         </p>
       </div>
     </div>

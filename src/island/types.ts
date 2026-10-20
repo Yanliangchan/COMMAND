@@ -1,7 +1,7 @@
 // ============================================================================
 // ISLAND OPS — game state, orders and tuning constants.
 //
-// Every Pasukan (task force) plans its round in secret and at the same time;
+// Every task force plans its round in secret and at the same time;
 // the server — or, single-player, the client — resolves all orders together.
 // No dice: battles are decided by strength, and the uncertainty comes from not
 // knowing what the others ordered or exactly how strong they are.
@@ -13,7 +13,7 @@ export type FactionId = 'SINGA' | 'HARIMAU' | 'HELANG' | 'JERUNG';
 
 export interface FactionDef {
   id: FactionId;
-  /** "Pasukan Singa" */
+  /** "Task Force Lion" */
   name: string;
   short: string;
   animal: string;
@@ -23,7 +23,7 @@ export interface FactionDef {
   motto: string;
   doctrine: string;
   doctrineText: string;
-  /** Real SAF battalions in this Pasukan's order of battle (see README: Formation naming). */
+  /** Real SAF battalions in this task force's order of battle (see README: Formation naming). */
   battalions: string[];
   /** The RSN squadron its ships belong to. */
   squadron: string;
@@ -31,22 +31,22 @@ export interface FactionDef {
 
 export const FACTIONS: Record<FactionId, FactionDef> = {
   SINGA: {
-    id: 'SINGA', name: 'Pasukan Singa', short: 'SINGA', animal: 'Lion', color: '#e0483c', deep: '#7a1d15',
-    motto: 'Majulah', doctrine: 'Total Mobilisation', doctrineText: '+1 troop every round.',
+    id: 'SINGA', name: 'Task Force Lion', short: 'LION', animal: 'Lion', color: '#e0483c', deep: '#7a1d15',
+    motto: 'Forward, Always', doctrine: 'Total Mobilisation', doctrineText: '+1 troop every round.',
     battalions: ['1 SIR', '2 SIR', '40 SAR', '21 SA', '10 C4I Bn'], squadron: '185 SQN',
   },
   HARIMAU: {
-    id: 'HARIMAU', name: 'Pasukan Harimau', short: 'HARIMAU', animal: 'Tiger', color: '#f29a1f', deep: '#7a4504',
-    motto: 'Senyap, Pantas', doctrine: 'Ambush', doctrineText: '+1 strength whenever you defend. +1 recon a round, and you see exact enemy numbers along your borders.',
+    id: 'HARIMAU', name: 'Task Force Tiger', short: 'TIGER', animal: 'Tiger', color: '#f29a1f', deep: '#7a4504',
+    motto: 'Silent, Swift', doctrine: 'Ambush', doctrineText: '+1 strength whenever you defend. +1 recon a round, and you see exact enemy numbers along your borders.',
     battalions: ['3 SIR', '5 SIR', '41 SAR', '35 SCE', '11 C4I Bn'], squadron: '188 SQN',
   },
   HELANG: {
-    id: 'HELANG', name: 'Pasukan Helang', short: 'HELANG', animal: 'Eagle', color: '#3d8ee8', deep: '#163e74',
+    id: 'HELANG', name: 'Task Force Eagle', short: 'EAGLE', animal: 'Eagle', color: '#3d8ee8', deep: '#163e74',
     motto: 'Above All', doctrine: 'Air Superiority', doctrineText: '+1 air sortie every round.',
     battalions: ['8 SIR', '1 GDS', '42 SAR', '20 SA', '12 C4I Bn'], squadron: '189 SQN',
   },
   JERUNG: {
-    id: 'JERUNG', name: 'Pasukan Jerung', short: 'JERUNG', animal: 'Shark', color: '#16a88f', deep: '#0a4d42',
+    id: 'JERUNG', name: 'Task Force Shark', short: 'SHARK', animal: 'Shark', color: '#16a88f', deep: '#0a4d42',
     motto: 'Beyond the Horizon', doctrine: 'Sea Control', doctrineText: 'An extra ship, ships carry 2 more troops, and your naval gunfire hits twice as hard.',
     battalions: ['9 SIR', '1 CDO BN', '48 SAR', '30 SCE', '16 C4I Bn'], squadron: '191 SQN',
   },
@@ -67,7 +67,7 @@ export interface Holding {
 
 const COMPANIES = ['Alpha Coy', 'Bravo Coy', 'Charlie Coy', 'Support Coy'];
 
-/** Every company in a Pasukan's ORBAT, in the order they're sent to hold ground. */
+/** Every company in a task force's ORBAT, in the order they're sent to hold ground. */
 export function companies(f: FactionId): string[] {
   const out: string[] = [];
   for (const coy of COMPANIES) for (const bn of FACTIONS[f].battalions) out.push(`${coy}, ${bn}`);

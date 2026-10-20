@@ -1,7 +1,7 @@
 // ============================================================================
 // ISLAND OPS — rules engine.
 //
-// A round: every Pasukan plans in secret (deploy, march, land, sail, fly,
+// A round: every task force plans in secret (deploy, march, land, sail, fly,
 // recon), submits, and when all are in the round resolves at once:
 //   1. deployments land          4. every march and landing sets off together
 //   2. fleets sail, then fight   5. forces meeting head-on clash en route
@@ -43,7 +43,7 @@ function shuffle<T>(s: GameState, arr: T[]): T[] {
 // Setup
 // ---------------------------------------------------------------------------
 
-/** Headquarters spread round the island, so every Pasukan starts with a coherent home ground. */
+/** Headquarters spread round the island, so every task force starts with a coherent home ground. */
 const HQ_SETS: Record<number, string[]> = {
   2: ['tuas', 'changi'],
   3: ['tuas', 'punggol', 'tanjong-pagar'],
@@ -575,7 +575,7 @@ export function resolveRound(prev: GameState): { state: GameState; report: Round
   const rank = (a: FactionId, b: FactionId) => player(s, b).vp - player(s, a).vp || regionsOf(s, b).length - regionsOf(s, a).length || troopsOf(s, b) - troopsOf(s, a);
   const leader = [...standing].sort(rank)[0];
   let reason: string | null = null;
-  if (standing.length === 1) reason = 'last Pasukan standing on the island.';
+  if (standing.length === 1) reason = 'last task force standing on the island.';
   else if (player(s, leader).vp >= VP_TARGET) reason = `first to ${VP_TARGET} victory points.`;
   else if (s.round >= MAX_ROUNDS) reason = `most victory points when the exercise clock ran out.`;
   if (reason && leader) {
