@@ -89,8 +89,8 @@ const MIME_TYPES: Record<string, string> = {
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
   "img-src 'self' data:",
   "connect-src 'self' ws: wss:",
   "object-src 'none'",
@@ -137,7 +137,9 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
   try {
     const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
     let filePath = path.normalize(path.join(DIST_DIR, urlPath));
-    if (!filePath.startsWith(DIST_DIR)) {
+    // Compare against the directory plus a separator: a bare prefix test would
+    // let "/../dist-server/..." through, since "dist-server" starts with "dist".
+    if (filePath !== DIST_DIR && !filePath.startsWith(DIST_DIR + path.sep)) {
       res.writeHead(403);
       res.end('Forbidden');
       return;
@@ -152,6 +154,13 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
       isFile = false;
     }
     const isIndexFallback = !isFile;
+    // A missing hashed asset is a stale tab after a deploy: answer 404 so the
+    // client's import fails cleanly, instead of handing back HTML as a script.
+    if (!isFile && urlPath.startsWith('/assets/')) {
+      res.writeHead(404, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-cache' });
+      res.end('Not found');
+      return;
+    }
     // SPA fallback: any non-file GET (client-side routes, deep links) serves index.html.
     if (!isFile) {
       filePath = path.join(DIST_DIR, 'index.html');
