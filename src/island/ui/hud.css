@@ -164,8 +164,8 @@
 }
 
 .io-top-right .io-icon-btn {
-  min-width: 40px;
-  height: 40px;
+  min-width: var(--tap);
+  height: var(--tap);
 }
 
 /* Side panel */
@@ -392,6 +392,7 @@
 }
 
 .io-dock {
+  container-type: inline-size;
   background: var(--panel);
   border: 2px solid var(--line);
   border-top: 5px solid var(--c);
@@ -586,7 +587,6 @@
 .io-picker-wrap {
   position: absolute;
   left: 0;
-  top: 0;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -594,7 +594,15 @@
   z-index: 9;
 }
 
+.io-picker-inner {
+  display: flex;
+  max-height: 100%;
+}
+
+/* Never taller than the space between the top bar and the dock; scrolls inside if it must. */
 .io-picker {
+  max-height: 100%;
+  overflow-y: auto;
   background: var(--panel-solid);
   border: 2px solid var(--line-strong);
   border-radius: var(--r-card);
@@ -776,3 +784,55 @@
   }
 }
 
+
+/* The dock decides its own density from its own width (it shares the row with the side panel). */
+@container (max-width: 1000px) {
+  .io-tool-group .io-tool-label,
+  .io-tool-edit .io-tool-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+}
+
+@container (max-width: 780px) {
+  .io-tool-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+}
+
+/* Short screens: the picker's odds compact to fit; the dock keeps to one row. */
+@media (max-height: 560px) {
+  .io-tools {
+    gap: 4px;
+  }
+  .io-seg button {
+    padding: 6px 9px;
+  }
+  .io-tool-count {
+    padding: 3px 7px 3px 5px;
+    margin: 0 1px 0 2px;
+  }
+  .io-picker {
+    padding: 8px 12px 10px;
+    gap: 6px;
+  }
+  .io-picker-sub {
+    display: none;
+  }
+  .io-odds b {
+    font-size: 18px;
+  }
+  .io-odds small {
+    display: none;
+  }
+  .io-verdict {
+    padding: 5px 8px;
+  }
+}

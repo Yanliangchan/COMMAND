@@ -496,192 +496,218 @@ h3 {
 
 /* Area styles live beside their components: ui/map.css, ui/title.css, ui/hud.css,
    ui/cards.css, ui/end.css. Responsive rules for every area stay here so the
-   breakpoints read in one place. */
+   breakpoints read in one place — each selector carries a :root:root prefix so
+   it outranks the area stylesheets whatever order the bundler loads them in. */
 
 /* --- Responsive ------------------------------------------------------------ */
 
 @media (max-width: 1240px) {
-  .io-logo-mini,
-  .io-player-extra {
+  :root:root .io-logo-mini,
+  :root:root .io-player-extra {
     display: none;
   }
 }
 
 @media (max-width: 1099px) {
-  .io-factions {
+  :root:root .io-factions {
     grid-template-columns: repeat(2, 1fr);
   }
-  .io-round-full {
+  :root:root .io-round-full {
     display: none;
   }
 }
 
 @media (max-width: 1279px) {
-  .io-side {
+  :root:root .io-side {
     width: 270px;
   }
 }
 
 /* Short screens (landscape phones): one-line hint, slimmer bars. */
 @media (max-height: 560px) {
-  .io-topbar {
+  :root:root .io-topbar {
     min-height: 50px;
     padding: 4px 8px;
   }
-  .io-dock {
+  :root:root .io-dock {
     padding: 5px 10px 7px;
   }
-  .io-dock-hint {
+  :root:root .io-dock-hint {
     margin-bottom: 5px;
     min-height: 0;
   }
-  .io-dock-hint > span:last-child {
+  :root:root .io-dock-hint > span:last-child {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .io-encik-face {
+  :root:root .io-encik-face {
     width: 24px;
     height: 24px;
   }
-  .io-btn-main {
+  :root:root .io-btn-main {
     min-height: var(--tap);
     padding: 8px 16px;
     font-size: 15px;
   }
-  .io-band {
+  :root:root .io-band {
     max-height: 52vh;
   }
-  .io-step-card {
+  :root:root .io-step-card {
     padding: 6px 10px;
   }
 }
 
 @media (max-width: 899px) {
-  .io-vpbar,
-  .io-vp-of {
+  :root:root .io-vpbar,
+  :root:root .io-vp-of {
     display: none;
   }
-  .io-player {
+  :root:root .io-player {
     padding-right: 10px;
   }
-  .io-tool-label {
+  :root:root .io-tool-label {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip: rect(0 0 0 0);
   }
-  .io-tool {
+  :root:root .io-tool {
     padding: 6px 9px;
   }
 }
 
 @media (max-width: 699px) {
-  .io-player-text small {
+  :root:root .io-player-text small {
     display: block;
   }
-  .io-player-text b {
+  :root:root .io-player-text b {
     font-size: 12px;
   }
-  .io-player-text em,
-  .io-lead {
+  :root:root .io-player-text em,
+  :root:root .io-lead {
     display: none;
   }
-  .io-player {
+  :root:root .io-player {
     gap: 6px;
     padding: 3px 9px 3px 3px;
   }
-  .io-emblem-dot {
+  :root:root .io-emblem-dot {
     width: 26px;
     height: 26px;
   }
-  .io-topbar {
+  :root:root .io-topbar {
     gap: 6px;
     padding: 5px 6px;
   }
-  .io-round {
+  :root:root .io-round {
     font-size: 13px;
     margin-right: 0;
   }
-  .io-top-right .io-icon-btn {
+  :root:root .io-top-right .io-icon-btn {
     min-width: 38px;
     height: 38px;
   }
-  .io-bottom {
+  :root:root .io-bottom {
     padding: 0 6px 6px;
   }
-  .io-dock {
+  :root:root .io-dock {
     padding: 6px 8px 8px;
   }
-  .io-dock-row {
+  :root:root .io-dock-row {
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
   }
-  .io-btn-main {
+  :root:root .io-btn-main {
     width: 100%;
   }
-  .io-dock-hint {
+  :root:root .io-dock-hint {
     font-size: 12.5px;
   }
-  .io-setup-go {
+  :root:root .io-setup-go {
     width: 100%;
     margin-left: 0;
   }
-  .io-setup-go .io-btn {
+  :root:root .io-setup-go .io-btn {
     flex: 1;
   }
-  .io-continue {
+  :root:root .io-continue {
     flex-wrap: wrap;
   }
-  .io-continue .io-btn {
+  :root:root .io-continue .io-btn {
     width: 100%;
   }
-  .io-step-card {
+  :root:root .io-step-card {
     padding: 8px 10px;
   }
-  .io-banner {
+  :root:root .io-banner {
     padding: 8px 40px 10px;
   }
 }
 
 @media (max-width: 520px) {
-  .io-player-text b {
+  :root:root .io-player-text b {
     display: none;
   }
-  .io-player {
+  :root:root .io-player {
     padding-right: 8px;
   }
-  .io-player-text small {
+  :root:root .io-player-text small {
     font-family: var(--display);
     font-weight: 400;
     font-size: 14px;
     color: #fff;
   }
-  .io-round {
+  :root:root .io-round {
     display: none;
   }
-  .io-players {
+  :root:root .io-players {
     gap: 5px;
   }
 }
 
 @media (max-width: 480px) {
-  .io-factions {
+  :root:root .io-factions {
     gap: 8px;
   }
-  .io-faction-orbat {
+  :root:root .io-faction-orbat {
     display: none;
   }
-  .io-faction {
+  :root:root .io-faction {
     padding: 8px 9px;
   }
-  .io-modal {
+  :root:root .io-modal {
     padding: 14px 14px 16px;
   }
-  .io-key li {
+  :root:root .io-key li {
     grid-template-columns: 64px 1fr;
+  }
+}
+
+/* Short screens: the zoom buttons lie along the edge instead of stacking up the map. */
+@media (max-height: 560px) {
+  :root:root .io-zoom {
+    flex-direction: row;
+  }
+  :root:root .io-tools {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+}
+
+/* Touch screens: no keyboard hints; every control at least a full fingertip. */
+@media (pointer: coarse) {
+  :root:root .io-btn kbd {
+    display: none;
+  }
+  :root:root .io-seg button,
+  :root:root .io-tool,
+  :root:root .io-top-right .io-icon-btn {
+    min-height: var(--tap);
+    min-width: var(--tap);
   }
 }
 

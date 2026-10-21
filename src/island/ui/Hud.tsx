@@ -107,7 +107,7 @@ export function orderText(o: Order, game: GameState): string {
   const n = (id: string) => BOARD.byId[id].name;
   switch (o.kind) {
     case 'DEPLOY':
-      return `+${o.count} troops at ${n(o.region)}`;
+      return `+${plural(o.count, 'troop')} at ${n(o.region)}`;
     case 'MOVE':
       return `${o.count} ${game.map[o.to].owner === game.map[o.from].owner ? 'reinforce' : 'attack'} ${n(o.to)} from ${n(o.from)}`;
     case 'LAND':
@@ -176,22 +176,41 @@ function OrdersList({ draft, issues, game, onRemove, onEdit }: { draft: Order[];
         a ship, then a sea zone, to sail. Nobody sees your orders until everyone is ready.
       </p>
     );
+  // Several taps on one region are one deployment as far as the player is concerned.
+  const rows: { orders: Order[]; issue: string | null; text: string }[] = [];
+  const deployRow: Record<string, (typeof rows)[number]> = {};
+  draft.forEach((o, i) => {
+    if (o.kind === 'DEPLOY' && deployRow[o.region]) {
+      const row = deployRow[o.region];
+      row.orders.push(o);
+      row.issue ??= issues[i];
+      const n = row.orders.reduce((t, x) => t + (x.kind === 'DEPLOY' ? x.count : 0), 0);
+      row.text = orderText({ ...o, count: n }, game);
+      return;
+    }
+    const row = { orders: [o], issue: issues[i], text: orderText(o, game) };
+    if (o.kind === 'DEPLOY') deployRow[o.region] = row;
+    rows.push(row);
+  });
   return (
     <ul className="io-order-list" data-testid="orders">
-      {draft.map((o, i) => (
-        <li key={i} className={issues[i] ? 'io-order-bad' : ''}>
-          <button className="io-order-text" onClick={() => onEdit(o)} disabled={o.kind !== 'MOVE' && o.kind !== 'LAND'} title={issues[i] ?? undefined}>
-            <Icon name={ORDER_ICON[o.kind]} size={15} />
-            <span>
-              {orderText(o, game)}
-              {issues[i] && <small>{issues[i]}</small>}
-            </span>
-          </button>
-          <button className="io-order-x" onClick={() => onRemove(o)} aria-label={`Remove order: ${orderText(o, game)}`}>
-            <Icon name="close" size={14} />
-          </button>
-        </li>
-      ))}
+      {rows.map(({ orders, issue, text }, i) => {
+        const o = orders[0];
+        return (
+          <li key={i} className={issue ? 'io-order-bad' : ''}>
+            <button className="io-order-text" onClick={() => onEdit(o)} disabled={o.kind !== 'MOVE' && o.kind !== 'LAND'} title={issue ?? undefined}>
+              <Icon name={ORDER_ICON[o.kind]} size={15} />
+              <span>
+                {text}
+                {issue && <small>{issue}</small>}
+              </span>
+            </button>
+            <button className="io-order-x" onClick={() => orders.forEach(onRemove)} aria-label={`Remove order: ${text}`}>
+              <Icon name="close" size={14} />
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -324,17 +343,16 @@ export function Dock({
               ))}
             </div>
           )}
-          <span className="io-tool-sep" />
-          <button className="io-tool io-tool-plain" onClick={onUndo} disabled={!ordersCount} aria-label="Undo last order">
+          <button className="io-tool io-tool-plain io-tool-edit" onClick={onUndo} disabled={!ordersCount} aria-label="Undo last order">
             <Icon name="undo" size={17} />
             <span className="io-tool-label">Undo</span>
           </button>
-          <button className="io-tool io-tool-plain" onClick={onClear} disabled={!ordersCount} aria-label="Clear all orders">
+          <button className="io-tool io-tool-plain io-tool-edit" onClick={onClear} disabled={!ordersCount} aria-label="Clear all orders">
             <Icon name="clear" size={17} />
             <span className="io-tool-label">Clear</span>
           </button>
           {compact && onOrders && (
-            <button className="io-tool io-tool-plain" onClick={onOrders} aria-label={`Show orders (${ordersCount})`} data-testid="orders-toggle">
+            <button className="io-tool io-tool-plain io-tool-edit" onClick={onOrders} aria-label={`Show orders (${ordersCount})`} data-testid="orders-toggle">
               <Icon name="orders" size={17} />
               <span className="io-tool-label">Orders</span>
               <b>{ordersCount}</b>

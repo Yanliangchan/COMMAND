@@ -47,7 +47,7 @@ function reportLines(report: RoundReport, before: GameState, me: FactionId, spec
       else if (mineDefending && st.captured)
         lines.push({ tone: 'loss', text: `Lost ${name(st.region)} to ${FACTIONS[st.winner].name} (${vs(st.defender!.strength, best(st.attackers))}).` });
       else if (mineDefending)
-        lines.push({ tone: 'hold', text: `Held ${name(st.region)} against ${st.attackers.map((a) => FACTIONS[a.owner].short).join(' & ')} (${vs(st.defender!.strength, best(st.attackers))}).` });
+        lines.push({ tone: 'hold', text: `Held ${name(st.region)} against ${st.attackers.map((a) => FACTIONS[a.owner].name).join(' and ')} (${vs(st.defender!.strength, best(st.attackers))}).` });
       else if (mineAttacking)
         lines.push({ tone: 'fail', text: `Attack on ${name(st.region)} beaten back (${vs(mineAttacking.strength, Math.max(st.defender?.strength ?? 0, best(st.attackers.filter((a) => a !== mineAttacking))))}).` });
       else if (spectator && st.captured) lines.push({ tone: 'info', text: `${FACTIONS[st.winner].name} took ${name(st.region)}.` });
@@ -62,7 +62,20 @@ function reportLines(report: RoundReport, before: GameState, me: FactionId, spec
     else if (st.kind === 'ELIMINATED') lines.push({ tone: st.who === me ? 'loss' : 'info', text: `${FACTIONS[st.who].name} has been wiped off the island.` });
   }
   if (!lines.length) lines.push({ tone: 'info', text: 'A quiet round on your front.' });
-  return lines;
+  // Two identical lines (two strikes on the same region, say) read as one with a count.
+  const merged: ReportLine[] = [];
+  const seen = new Map<string, { line: ReportLine; n: number }>();
+  for (const l of lines) {
+    const hit = seen.get(l.text);
+    if (hit) hit.n++;
+    else {
+      const entry = { line: { ...l }, n: 1 };
+      seen.set(l.text, entry);
+      merged.push(entry.line);
+    }
+  }
+  for (const { line, n } of seen.values()) if (n > 1) line.text = `${line.text} (×${n})`;
+  return merged;
 }
 
 function useLayout() {
@@ -361,6 +374,9 @@ export function GameScreen({ initial, level, initialDraft = [], onExit, onRestar
           }
         }
         const { state, report: rep } = resolveRound(s);
+        // Save the outcome now, before the playback: leaving mid-playback must
+        // not bring back the pre-round state with the result already known.
+        saveMatch({ game: state, level, draft: [] });
         setDraft([]);
         setFrom(null);
         setSelShip(null);
@@ -568,7 +584,7 @@ export function GameScreen({ initial, level, initialDraft = [], onExit, onRestar
 
   const sidePanel = (asSheet: boolean) => (
     <SidePanel
-      tab={playback && tab === 'orders' ? 'log' : tab}
+      tab={(playback || !meAlive) && tab === 'orders' ? 'log' : tab}
       setTab={setTab}
       draft={draft}
       issues={p.issues}
@@ -613,7 +629,7 @@ export function GameScreen({ initial, level, initialDraft = [], onExit, onRestar
 
       {/* Small screens: playback cards and the report get a band of their own above the map. */}
       {!layout.side && (card || reportCard) && (
-        <div ref={bandRef} className="io-band" style={{ top: topH || 58 }}>
+        <div ref={bandRef} className="io-band" style={{ top: topH || 58, maxHeight: Math.max(120, Math.min(layout.h * 0.45, layout.h - (topH || 58) - bottomH - 12)) }}>
           {card ?? reportCard}
         </div>
       )}
@@ -687,8 +703,8 @@ export function GameScreen({ initial, level, initialDraft = [], onExit, onRestar
       </div>
 
       {picker && (
-        <div className="io-picker-wrap" style={{ bottom: insets.bottom + 8, right: insets.right }} onClick={() => setPicker(null)}>
-          <div onClick={(e) => e.stopPropagation()}>
+        <div className="io-picker-wrap" style={{ top: (topH || 58) + 8, bottom: insets.bottom + 8, right: insets.right }} onClick={() => setPicker(null)}>
+          <div className="io-picker-inner" onClick={(e) => e.stopPropagation()}>
             <Picker p={picker} game={game} onChange={(n) => setPicker({ ...picker, count: n })} onConfirm={confirmPicker} onCancel={() => setPicker(null)} />
           </div>
         </div>

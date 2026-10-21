@@ -146,7 +146,7 @@ for (const bad of ['{"faction":"__proto__"}', '{"faction":"toString"}', '{"oppon
   await click(page, `path[data-region="${target}"]`);
   await page.getByRole('button', { name: 'Undo last order' }).click();
   const toast = await page.locator('.io-toast').textContent();
-  check(/^Undone: \+\d+ troops/.test(toast), `Undo names what it removed ("${toast}")`);
+  check(/^Undone: \+\d+ troops?/.test(toast), `Undo names what it removed ("${toast}")`);
   await ctx.close();
 }
 
@@ -162,6 +162,47 @@ for (const bad of ['{"faction":"__proto__"}', '{"faction":"toString"}', '{"oppon
   await page.getByTestId('continue').click();
   const hint = await page.locator('.io-dock-hint').textContent();
   check(round === 2 && hint.includes(`Round ${round}/`), `reload keeps the match: Continue resumes round ${round}`);
+  await ctx.close();
+}
+
+// --- 6b. Leaving mid-playback can't take back a round you've seen resolve ---
+{
+  const { ctx, page } = await open();
+  await page.getByTestId('deploy').click();
+  await deployAll(page);
+  await page.getByTestId('ready').click();
+  await page.getByTestId('skip').waitFor();
+  await page.getByRole('button', { name: /Main menu/ }).click();
+  await page.getByTestId('continue').click();
+  const hint = await page.locator('.io-dock-hint').textContent();
+  check(hint.includes('Round 2/'), `exit mid-playback, Continue: the resolved round stands (${hint.slice(0, 20)})`);
+  await ctx.close();
+}
+
+// --- 6c. A corrupt saved match is never offered (it would crash every Continue) ---
+for (const [label, mutate] of [
+  ['ships not an array', 'm.game.ships = "x"'],
+  ['ship in an unknown zone', 'm.game.ships[0].zone = "NOWHERE"'],
+  ['player record missing', 'delete m.game.players[m.game.factions[1]]'],
+  ['malformed draft order', 'm.draft = [{ kind: "MOVE", from: "nowhere" }]'],
+]) {
+  const { ctx, page } = await open();
+  await page.getByTestId('deploy').click();
+  await page.getByTestId('ready').waitFor();
+  await page.evaluate((code) => {
+    const m = JSON.parse(localStorage.getItem('island_ops_match_v1'));
+    new Function('m', code)(m);
+    localStorage.setItem('island_ops_match_v1', JSON.stringify(m));
+  }, mutate);
+  await page.reload();
+  await page.getByTestId('deploy').waitFor();
+  const offered = await page.getByTestId('continue').isVisible().catch(() => false);
+  if (offered) {
+    await page.getByTestId('continue').click();
+    await page.waitForTimeout(500);
+  }
+  const crashed = await page.getByText('Something went wrong').isVisible().catch(() => false);
+  check(!crashed, `corrupt saved match (${label}) never crashes the game${offered ? ' (offered, but loads)' : ''}`);
   await ctx.close();
 }
 

@@ -1,4 +1,5 @@
 import { Component, ReactNode } from 'react';
+import { clearMatch } from './save';
 
 /**
  * A render error inside the match shouldn't blank the page. The match is saved
@@ -22,8 +23,18 @@ export class ErrorBoundary extends Component<{ children: ReactNode; onReset: () 
       <div className="io-modal-backdrop">
         <div className="io-card io-crash" role="alertdialog" aria-labelledby="io-crash-title">
           <h2 id="io-crash-title">Something went wrong</h2>
-          <p>The exercise hit an error. Your match was saved at the start of this round — you can pick it up from the main menu.</p>
+          <p>The exercise hit an error. Your match is saved — you can pick it up from the main menu. If it keeps happening, start a new match.</p>
           <div className="io-actions">
+            <button
+              className="io-btn io-btn-ghost"
+              onClick={() => {
+                clearMatch();
+                this.setState({ error: null });
+                this.props.onReset();
+              }}
+            >
+              Discard saved match
+            </button>
             <button
               className="io-btn io-btn-primary"
               onClick={() => {
