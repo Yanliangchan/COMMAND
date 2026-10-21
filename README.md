@@ -1,7 +1,7 @@
 # COMMAND: Island Ops
 
 **Plan in secret. Strike together. Hold the island.** A fast, bright strategy
-game in Total Defence colours. Three or four **Pasukan** (task forces) fight an
+game in Total Defence colours. Three or four **task forces** fight an
 exercise for a stylised Singapore — and every round, everyone plans at the same
 time and in secret, then every order happens at once.
 
@@ -14,25 +14,60 @@ documented below, unchanged).
 ```bash
 npm install
 npm run dev          # http://localhost:5173 — Island Ops, single player vs bots
-npm run islandcheck  # rules checks + bot-vs-bot balance and pacing sim
+npm run islandcheck  # rules checks + bot-vs-bot balance and pacing sim (~90 s)
+npm run e2e          # end-to-end checks in a real browser (Playwright + Chromium)
+npm run build        # production client (dist/) + server (dist-server/)
+npm start            # serve the production build (PORT, default 8787)
 ```
+
+Fonts are self-hosted (`@fontsource`), so the game renders with no external
+requests. `npm run e2e` needs a Chromium Playwright can launch
+(`npx playwright install chromium` if you don't already have one).
+
+### Playing it
+
+- **Mouse or touch:** drag from your region onto a neighbour to march, or onto
+  a far coast to land by sea. Tap a ship, then a sea zone, to sail. Wheel,
+  pinch or the ± buttons zoom; drag the sea to pan. Phones open zoomed in on
+  your own ground.
+- **Keyboard:** Tab to a region (the arrow keys then walk between
+  neighbours), Enter to act with the current tool; Enter sends your orders,
+  Escape cancels. Every dialog traps focus and closes with Escape.
+- **The attack picker** shows your strength against everything the defence is
+  known to get (dug in / stronghold, Ambush, naval gunfire) and whether they
+  could still swing it with air support — and it defaults to enough troops to
+  win against the worst case, not to everything you've got.
+- **The match is saved** at every change; a reload, a closed tab or Main menu
+  never loses it — **Continue** picks it up from the title.
+- **Playback** can be paused, sped up (2×) or skipped. Wiped off the island?
+  **Watch to the end** lets the bots finish it.
+- **The field manual** (the ? button) has the full rules and a map key.
+  Sound can be muted from the title and the match; animations respect
+  "reduce motion".
 
 ## How it plays
 
-- **Simultaneous, secret orders.** Each round every Pasukan deploys, marches,
+- **Simultaneous, secret orders.** Each round every task force deploys, marches,
   lands, sails, flies and scouts — then presses Ready. When all are in, the
   round resolves at once and plays back battle by battle. No waiting for other
   players' turns.
 - **No dice.** A fight is decided by strength: troops + defence (+1 dug in, +2
   in a stronghold) + air support (+3) + naval gunfire (+1). Ties go to whoever
-  holds the ground. The uncertainty comes from what the others ordered and how
-  strong they really are.
+  holds the ground — and if two attackers tie for strongest, they get in each
+  other's way and the defender holds. The winner loses half the runner-up's
+  strength in troops. Beaten attackers lose half and fall back home (or to
+  their own ground next to the fight); a beaten defender keeps half and falls
+  back to its own ground next door. Troops with nowhere to go surrender. The
+  uncertainty comes from what the others ordered and how strong they really
+  are.
 - **Fog of war.** You see exact numbers only on your own ground. Along your
   borders you see a range (1–2, 3–5, 6–9, 10+); beyond, only colours. **Recon**
-  reveals a region and its neighbours exactly for the round.
+  reveals an enemy region and its neighbours exactly for the round. The round's
+  playback shows the numbers only for fights you had eyes on; a commander
+  wiped off the island watches the rest with the fog lifted.
 - **One SAF, every service doing its own job:**
   - **Army** — troops hold and take ground. Columns marching straight at each
-    other clash on the road.
+    other clash on the road; orders over the same road travel as one column.
   - **Navy** — ships hold the four sea zones (Johor Strait, Western Approaches,
     Singapore Strait, Changi Waters). Hold a zone alone and your ships carry
     landings between any two coasts on it, and add naval gunfire. Rival fleets
@@ -43,47 +78,78 @@ npm run islandcheck  # rules checks + bot-vs-bot balance and pacing sim
 - **Victory points from Key Installations** — 4 Air Bases, 3 Naval Bases,
   Marina Bay, Jurong Island, the Bukit Timah radar and the Woodlands Causeway.
   Each one held at the end of a round scores 1 VP and gives a perk. First to 30
-  VP wins, or the most VP after round 15, or the last Pasukan standing.
+  VP wins, or the most VP after round 15, or the last task force standing.
+- **Difficulty** sets the bots' reinforcements: Recruit bots get 2 fewer new
+  troops a round, Regular half a troop fewer (one every other round), Veteran
+  1.5 more; Veterans also attack on thinner margins.
 
-### The Pasukan
+### The task forces
 
-| Pasukan | Doctrine | Battalions (real SAF designations) | Navy |
+| Task force | Doctrine | Battalions (real SAF designations) | Navy |
 | --- | --- | --- | --- |
-| **Singa** (lion) | Total Mobilisation: +1 troop a round | 1 SIR, 2 SIR, 40 SAR, 21 SA, 10 C4I Bn | 185 SQN |
-| **Harimau** (tiger) | Ambush: +1 when defending; +1 recon; exact border intel | 3 SIR, 5 SIR, 41 SAR, 35 SCE, 11 C4I Bn | 188 SQN |
-| **Helang** (eagle) | Air Superiority: +1 sortie a round | 8 SIR, 1 GDS, 42 SAR, 20 SA, 12 C4I Bn | 189 SQN |
-| **Jerung** (shark) | Sea Control: extra ship, +2 lift per ship, double gunfire | 9 SIR, 1 CDO BN, 48 SAR, 30 SCE, 16 C4I Bn | 191 SQN |
+| **Lion** | Total Mobilisation: +1 troop a round | 1 SIR, 2 SIR, 40 SAR, 21 SA, 10 C4I Bn | 185 SQN |
+| **Tiger** | Ambush: +1 when defending; +1 recon; exact border intel | 3 SIR, 5 SIR, 41 SAR, 35 SCE, 11 C4I Bn | 188 SQN |
+| **Eagle** | Air Superiority: +1 sortie a round | 8 SIR, 1 GDS, 42 SAR, 20 SA, 12 C4I Bn | 189 SQN |
+| **Shark** | Sea Control: extra ship, +2 lift per ship, double gunfire | 9 SIR, 1 CDO BN, 48 SAR, 30 SCE, 16 C4I Bn | 191 SQN |
 
 Ground is held by the companies of those battalions — "Charlie Coy, 40 SAR" —
 so every battle report names real units. The designations are the ones
 verified for the classic game (see "Formation naming — what was checked"
-below); which battalion goes to which Pasukan is a fictional exercise
+below); which battalion goes to which task force is a fictional exercise
 arrangement.
 
-### Measured (bot-vs-bot, `npm run islandcheck`, 300 games of 3–4 players)
+### Measured (`npm run islandcheck`: 1000 bot-vs-bot games of 3–4 players)
 
 Bots plan from the same fogged view a player gets.
 
 | | |
 | --- | --- |
-| Rounds per game | 7.4 |
-| Battles per round | 6.2 (plus 0.7 road clashes and 4.2 air strikes) |
+| Rounds per game | 7.5 |
+| Battles per round | 6.5 (plus 0.7 road clashes and 4.1 air strikes) |
+| Attacks that capture | 86% (1.7 beaten defenders a round fall back next door) |
 | Games that finish | 100%, all by reaching the VP target |
-| Win share per Pasukan | 0.78–1.14× of an even share |
+| Win share per task force | 0.87–1.16× of an even share (Eagle highest, Shark lowest) |
+
+Difficulty, measured with a stand-in for the player in seat 0 (200 games per cell):
+
+| Stand-in | vs Recruit | vs Regular | vs Veteran |
+| --- | --- | --- | --- |
+| A Regular bot | 52% | 29% | 15% |
+| A scripted newcomer (recon, guard, mass on one target) | 50% | 39% | 19% |
+
+The beaten-defender fallback was adopted on measurement (1500 games, rule off →
+on): captures 86.7% → 86.2%, battles per round 6.25 → 6.48, rounds 7.40 →
+7.52, every game still ends on the VP target, win shares 0.86–1.17 →
+0.86–1.13. It does little for a pure turtle, which still wins about 4% of the
+time.
 
 ## Code layout (Island Ops)
 
 ```
 src/island/
   map.ts          Board: island, regions (Voronoi), sea zones, Key Installations.
-  types.ts        Pasukan, ORBAT, orders, fog view, round report, tuning constants.
+  types.ts        Task forces, ORBAT, orders, fog view, round report, tuning constants.
   engine.ts       Pure rules: newGame, viewFor (fog), recon, validate/submitOrders,
-                  resolveRound → { state, report }. RNG only for setup.
+                  orderIssues/planSummary (what a draft allows), defenceEstimate,
+                  resolveRound → { state, report }, redactReport. RNG only for setup.
   bot.ts          planBot(view): recon, then orders — from the fogged view only.
-  IslandApp.tsx   Title screen → match.
-  ui/             MapView (SVG diorama), GameScreen (planning, playback, report), Glyphs.
-  island.css      The Island Ops look.
-scripts/islandcheck.ts   Rules checks + balance/pacing sim.
+                  LEVEL_HANDICAP: the difficulty levels.
+  IslandApp.tsx   Title screen → match; validated settings, Continue, error boundary.
+  ui/
+    MapView.tsx       The board: SVG diorama, camera (zoom/pan/pinch), keyboard focus.
+    GameScreen.tsx    The match: planning, Ready, layout zones, persistence.
+    usePlayback.ts    Playback director: steps, focus, effects — every timer tracked.
+    Hud.tsx           Top bar, side panel (orders/installations/log), dock, picker,
+                      playback cards, round report, end screen.
+    plan.ts           The draft as the engine sees it (planSummary, orderIssues).
+    Help.tsx          Field manual: rules and map key.
+    Modal.tsx         Accessible dialog (focus trap, Escape, focus return).
+    TitleScreen.tsx   Setup and Continue.
+    save.ts, settings.ts, theme.ts, Glyphs.tsx, ErrorBoundary.tsx
+  island.css      The Island Ops look: one token system (see its header).
+scripts/islandcheck.ts   Rules checks, regression scenarios, hostile-input fuzz,
+                         difficulty matrix, balance/pacing sim (~90 s).
+scripts/e2e.mjs          Browser checks of the player journeys and audit regressions.
 ```
 
 ---

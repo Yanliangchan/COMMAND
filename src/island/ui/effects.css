@@ -1,0 +1,596 @@
+/* ISLAND OPS — the board's effects layer (Effects.tsx): the playback focus
+   reticle and clash mark (in the board's SVG), and the one-shot effects and
+   travelling tokens (HTML, in an overlay that carries the board's matrix).
+   Uses the design tokens defined in island.css.
+
+   Performance rules for this file: overlay effects animate transform and
+   opacity only (compositor-only); no animated filters, colours, sizes or
+   shadows; nothing loops — every effect ends and is removed, so an idle board
+   costs nothing. Every duration and delay is divided by --sp (playback speed,
+   set per effect). Particles carry their own delay (--d), motion (--dx, --dy,
+   --rot), starting angle (--r0) and colour (--c) inline. Sizes and positions
+   are board units: the overlay's matrix scales them with the board. */
+
+/* --- Focus reticle: closes in once, then holds still -------------------- */
+
+.io-focus {
+  animation: io-focus-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+.io-focus circle {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 3;
+  stroke-dasharray: 7 5;
+}
+
+.io-focus .io-focus-casing {
+  stroke: rgba(8, 25, 43, 0.55);
+  stroke-width: 6;
+  stroke-dasharray: none;
+}
+
+.io-focus-ticks {
+  stroke: #fff;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+
+@keyframes io-focus-in {
+  from {
+    transform: scale(1.7) rotate(-45deg);
+    opacity: 0;
+  }
+}
+
+/* --- Road clash: two blades slam together ------------------------------- */
+
+.io-clash-mark path {
+  stroke: #fff;
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.io-clash-mark .io-clash-casing {
+  stroke: rgba(8, 25, 43, 0.6);
+  stroke-width: 9;
+  animation: io-fx-appear 0.2s 0.15s both;
+}
+
+.io-clash-a {
+  animation: io-clash-a 0.25s cubic-bezier(0.5, 0, 0.75, 0) both;
+}
+
+.io-clash-b {
+  animation: io-clash-b 0.25s cubic-bezier(0.5, 0, 0.75, 0) both;
+}
+
+@keyframes io-clash-a {
+  from {
+    transform: translate(-22px, -22px);
+    opacity: 0;
+  }
+}
+
+@keyframes io-clash-b {
+  from {
+    transform: translate(22px, -22px);
+    opacity: 0;
+  }
+}
+
+@keyframes io-fx-appear {
+  from {
+    opacity: 0;
+  }
+}
+
+/* --- The overlay ---------------------------------------------------------- */
+
+/* Over the board, under the HUD, never in the way of a click. */
+.io-fx-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Board coordinates: Effects.tsx sets this box's transform to the board's matrix. */
+.io-fx-board {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+.io-fx {
+  --sp: 1;
+}
+
+.io-p,
+.io-glyph {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
+
+.io-glyph {
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+}
+
+.io-glyph svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+}
+
+/* Every particle: hidden before its delay, gone after its run. */
+.io-p,
+.io-fx .io-glyph {
+  animation-duration: calc(650ms / var(--sp));
+  animation-delay: calc(var(--d, 0ms) / var(--sp));
+  animation-fill-mode: both;
+  animation-timing-function: ease-out;
+}
+
+.io-jet-body {
+  fill: #fff;
+  stroke: #1d2a36;
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+.io-fx-jet-shadow {
+  fill: rgba(8, 25, 43, 0.38);
+}
+
+/* --- Blasts: flash, fireball core, shockwave, scorch, debris ------------- */
+
+.io-fx-flash {
+  border-radius: 50%;
+  background: radial-gradient(circle, #fffbe6 0 40%, rgba(255, 236, 160, 0.85) 60%, rgba(255, 200, 80, 0) 72%);
+  animation-name: io-fx-flash;
+  animation-duration: calc(380ms / var(--sp));
+}
+
+@keyframes io-fx-flash {
+  0% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+.io-fx-core {
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffe680 0 30%, #ff8a2a 62%, #b6461c 100%);
+  animation-name: io-fx-core;
+  animation-duration: calc(700ms / var(--sp));
+}
+
+@keyframes io-fx-core {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  12% {
+    transform: scale(1.4);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2.3);
+    opacity: 0;
+  }
+}
+
+.io-fx-shock {
+  border-radius: 50%;
+  border: 2.5px solid #fff;
+  animation-name: io-fx-shock;
+  animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1);
+}
+
+@keyframes io-fx-shock {
+  0% {
+    transform: scale(0.15);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+.io-fx-scorch {
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(30, 18, 8, 0.55), rgba(30, 18, 8, 0));
+  animation-name: io-fx-scorch;
+  animation-duration: calc(1100ms / var(--sp));
+}
+
+@keyframes io-fx-scorch {
+  0% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  20% {
+    transform: none;
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.io-fx-debris,
+.io-fx-confetti {
+  border-radius: 1px;
+  animation-name: io-fx-debris;
+  animation-duration: calc(720ms / var(--sp));
+  animation-timing-function: cubic-bezier(0.15, 0.6, 0.4, 1);
+}
+
+.io-fx-debris {
+  background: #3b2a1c;
+  box-shadow: inset 0 0 0 0.8px #ffd38a;
+}
+
+.io-fx-confetti {
+  background: var(--c);
+  animation-duration: calc(820ms / var(--sp));
+}
+
+@keyframes io-fx-debris {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx, 0px), calc(var(--dy, 0px) + 14px)) rotate(var(--rot, 0deg));
+    opacity: 0;
+  }
+}
+
+/* --- Dust, smoke, muzzle flashes, rings, splashes ------------------------ */
+
+.io-fx-dust,
+.io-fx-smoke {
+  border-radius: 50%;
+  animation-name: io-fx-puff;
+}
+
+.io-fx-dust {
+  background: radial-gradient(closest-side, rgba(246, 230, 196, 0.95), rgba(236, 214, 168, 0.7) 60%, rgba(236, 214, 168, 0));
+}
+
+.io-fx-smoke {
+  background: radial-gradient(closest-side, rgba(40, 44, 52, 0.8), rgba(40, 44, 52, 0.45) 60%, rgba(40, 44, 52, 0));
+  animation-duration: calc(900ms / var(--sp));
+}
+
+@keyframes io-fx-puff {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx, 0px), var(--dy, -6px)) scale(1.7);
+    opacity: 0;
+  }
+}
+
+.io-fx-muzzle {
+  border-radius: 50%;
+  background: radial-gradient(circle, #fffbe0 0 35%, #ffd34d 55%, #ff8a2a 70%, rgba(255, 138, 42, 0) 72%);
+  animation-name: io-fx-muzzle;
+  animation-duration: calc(280ms / var(--sp));
+}
+
+@keyframes io-fx-muzzle {
+  0% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  25% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+}
+
+.io-fx-ring {
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  animation-name: io-fx-ring;
+  animation-duration: calc(600ms / var(--sp));
+}
+
+@keyframes io-fx-ring {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.io-fx-splash {
+  animation-name: io-fx-splash;
+  animation-duration: calc(520ms / var(--sp));
+}
+
+@keyframes io-fx-splash {
+  0% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  25% {
+    transform: scaleY(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(4px) scaleY(0.2);
+    opacity: 0;
+  }
+}
+
+/* A sunk ship lists, slides under, and is gone. */
+.io-fx-sink {
+  animation-name: io-fx-sink;
+  animation-duration: calc(800ms / var(--sp));
+  animation-timing-function: ease-in;
+}
+
+@keyframes io-fx-sink {
+  0% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  35% {
+    transform: rotate(-16deg) scale(1.15);
+  }
+  100% {
+    transform: translate(4px, 12px) rotate(-38deg) scale(0.7);
+    opacity: 0;
+  }
+}
+
+/* --- Columns: arrival thump --------------------------------------------- */
+
+.io-fx-thump {
+  border-radius: 50%;
+  border: 3.5px solid rgba(255, 255, 255, 0.85);
+  animation-name: io-fx-ring;
+  animation-duration: calc(480ms / var(--sp));
+}
+
+/* --- Clash sparks: short bars flying outward ---------------------------- */
+
+.io-fx-spark {
+  border-radius: 2px;
+  background: #ffe27a;
+  box-shadow: 0 0 0 0.6px #ff8a2a;
+  transform-origin: 0 50%;
+  animation-name: io-fx-spark;
+  animation-duration: calc(420ms / var(--sp));
+}
+
+@keyframes io-fx-spark {
+  0% {
+    transform: rotate(var(--r0, 0deg)) translateX(4px) scaleX(0.3);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(var(--r0, 0deg)) translateX(var(--dx, 20px)) scaleX(0.6);
+    opacity: 0;
+  }
+}
+
+/* --- Capture: rings in the winner's colour, flag up, confetti ------------ */
+
+.io-fx-cap {
+  border: 4px solid var(--c);
+  animation-duration: calc(1100ms / var(--sp));
+  animation-name: io-fx-cap;
+}
+
+@keyframes io-fx-cap {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2.9);
+    opacity: 0;
+  }
+}
+
+.io-fx-flag {
+  animation-name: io-fx-flag;
+  animation-duration: calc(1300ms / var(--sp));
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+@keyframes io-fx-flag {
+  0% {
+    transform: translateY(26px) scaleY(0.2);
+    opacity: 0;
+  }
+  25% {
+    transform: none;
+    opacity: 1;
+  }
+  80% {
+    transform: none;
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-4px);
+    opacity: 0;
+  }
+}
+
+/* --- Scoring stars rise toward the scoreboard ---------------------------- */
+
+.io-fx-star {
+  animation-name: io-fx-star;
+  animation-duration: calc(1100ms / var(--sp));
+  animation-timing-function: cubic-bezier(0.3, 0, 0.6, 1);
+}
+
+@keyframes io-fx-star {
+  0% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  18% {
+    transform: scale(1.5);
+    opacity: 1;
+  }
+  35% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: translateY(-110px) scale(0.5);
+    opacity: 0;
+  }
+}
+
+/* --- Elimination: a dark ring closing in, smoke where they stood --------- */
+
+.io-fx-wipe {
+  border-radius: 50%;
+  border: 4px solid var(--c);
+  background: rgba(8, 25, 43, 0.35);
+  animation-name: io-fx-wipe;
+  animation-duration: calc(1000ms / var(--sp));
+}
+
+@keyframes io-fx-wipe {
+  0% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+  30% {
+    transform: none;
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+}
+
+/* --- Recommissioned ship: wake rings ------------------------------------- */
+
+.io-fx-launch {
+  border: 3px solid var(--c);
+  animation-duration: calc(800ms / var(--sp));
+}
+
+/* --- One of yours was lost (after playback): three pulses, then gone ------ */
+
+.io-fx-alert {
+  border-radius: 50%;
+  border: 5px solid var(--danger);
+  animation: io-fx-alert 1s ease-in-out 3 both;
+}
+
+@keyframes io-fx-alert {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* --- Board shake, scaled by the battle (usePlayback sets --io-quake, 0.5–1.5).
+   GameScreen toggles .io-shake-a / .io-shake-b; these override map.css's
+   fixed-size shake with one proportional to the fight, and shake the effects
+   overlay with the board. Off under reduced motion (island.css). */
+
+.io-game.io-shake-a .io-map,
+.io-game.io-shake-a .io-fx-host {
+  animation: io-quake-a calc(0.3s + var(--io-quake, 1) * 0.12s) ease-out;
+}
+
+.io-game.io-shake-b .io-map,
+.io-game.io-shake-b .io-fx-host {
+  animation: io-quake-b calc(0.3s + var(--io-quake, 1) * 0.12s) ease-out;
+}
+
+@keyframes io-quake-a {
+  15% {
+    transform: translate(calc(var(--io-quake, 1) * -6px), calc(var(--io-quake, 1) * 3px));
+  }
+  35% {
+    transform: translate(calc(var(--io-quake, 1) * 5px), calc(var(--io-quake, 1) * -3px));
+  }
+  60% {
+    transform: translate(calc(var(--io-quake, 1) * -3px), calc(var(--io-quake, 1) * 1.5px));
+  }
+  80% {
+    transform: translate(calc(var(--io-quake, 1) * 1.5px), 0);
+  }
+}
+
+@keyframes io-quake-b {
+  15% {
+    transform: translate(calc(var(--io-quake, 1) * 6px), calc(var(--io-quake, 1) * -3px));
+  }
+  35% {
+    transform: translate(calc(var(--io-quake, 1) * -5px), calc(var(--io-quake, 1) * 3px));
+  }
+  60% {
+    transform: translate(calc(var(--io-quake, 1) * 3px), calc(var(--io-quake, 1) * -1.5px));
+  }
+  80% {
+    transform: translate(calc(var(--io-quake, 1) * -1.5px), 0);
+  }
+}
+
+/* No flourishes under reduced motion: Effects.tsx draws no one-shot effects;
+   the reticle, clash mark and loss ring simply appear. */
+@media (prefers-reduced-motion: reduce) {
+  .io-focus,
+  .io-clash-mark *,
+  .io-fx-alert {
+    animation: none !important;
+  }
+}

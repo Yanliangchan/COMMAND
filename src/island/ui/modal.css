@@ -1,0 +1,123 @@
+/* ISLAND OPS — dialogs (Modal). Uses the design tokens in island.css.
+   Selectors carry two classes so they win over island.css's base .io-modal
+   rules whichever stylesheet loads first. No backdrop-filter: a blur over the
+   animated title map costs frames; a deeper veil reads just as well. */
+
+.io-modal-backdrop.io-mbd {
+  backdrop-filter: none;
+  background: radial-gradient(ellipse at 50% 40%, rgba(8, 25, 43, 0.62), rgba(3, 9, 17, 0.88));
+  animation: io-mbd-in 0.2s ease-out both;
+}
+
+@keyframes io-mbd-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.io-card.io-modal {
+  position: relative;
+  border: 0;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #143657, var(--panel-solid) 120px);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12), 0 2px 0 2px rgba(255, 255, 255, 0.05) inset, var(--shadow-modal);
+  padding: 0 22px 20px;
+  overflow: hidden;
+  animation: io-modal-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+
+/* A gold rule across the top: the "binder" edge. */
+.io-card.io-modal::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 5px;
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold) 30%, #fff1b8 50%, var(--gold) 70%, var(--gold-deep));
+  pointer-events: none;
+}
+
+@keyframes io-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+  }
+}
+
+.io-modal .io-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 -6px 0 0;
+  padding: 18px 0 12px;
+}
+
+.io-modal-head.io-sr {
+  padding: 0;
+}
+
+.io-modal-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--gold-ink);
+  background: linear-gradient(#ffd85e, var(--gold));
+  box-shadow: 0 3px 0 var(--gold-deep);
+}
+
+.io-modal-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.io-modal-kicker {
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--gold);
+  font-weight: 900;
+}
+
+.io-modal .io-modal-head h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.io-modal-close.io-icon-btn {
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid var(--line);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.io-modal-close.io-icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+  transform: rotate(90deg);
+}
+
+@media (max-width: 480px) {
+  .io-card.io-modal {
+    padding: 0 14px 16px;
+  }
+  .io-modal .io-modal-head {
+    padding: 14px 0 10px;
+  }
+  .io-modal .io-modal-head h2 {
+    font-size: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .io-modal-backdrop.io-mbd,
+  .io-card.io-modal {
+    animation: none !important;
+  }
+  .io-modal-close.io-icon-btn:hover:not(:disabled) {
+    transform: none;
+  }
+}

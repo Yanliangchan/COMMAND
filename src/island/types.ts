@@ -96,6 +96,8 @@ export interface Player {
   /** This round's orders once submitted; null while still planning. */
   orders: Order[] | null;
   eliminatedRound?: number;
+  /** Extra new troops a round (negative: fewer; −0.5 is one fewer every other round) — how bot difficulty is set. */
+  handicap?: number;
 }
 
 export type Phase = 'PLANNING' | 'GAME_OVER';
@@ -111,7 +113,8 @@ export interface GameState {
   ships: Ship[];
   /** The last round's resolution, for the playback and the recap. */
   lastReport: RoundReport | null;
-  log: { round: number; who: FactionId | null; text: string }[];
+  /** Narration; `seen`/`open` fog it per reader (see engine logFor). */
+  log: { round: number; who: FactionId | null; text: string; seen?: FactionId[]; open?: string }[];
   winner: FactionId | null;
   winReason: string | null;
   stats: { battles: number; captures: number };
@@ -188,13 +191,33 @@ export interface Side {
   from: string[];
 }
 
+/**
+ * `seen` on a step lists the task forces entitled to its detail: those that, at
+ * the start of the round, held the ground or a neighbour of it, had it revealed
+ * by recon, or took part. Anyone else knows only that it happened.
+ * `redacted` marks a step whose numbers were stripped for a viewer (redactReport).
+ */
 export type ReportStep =
   | { kind: 'NAVAL'; zone: ZoneId; sides: { owner: FactionId; ships: number }[]; winner: FactionId | null; sunk: Partial<Record<FactionId, number>> }
-  | { kind: 'STRIKE'; by: FactionId; region: string; killed: number }
-  | { kind: 'MOVES'; moves: { owner: FactionId; from: string; to: string; count: number; landing: boolean }[] }
+  | { kind: 'STRIKE'; by: FactionId; region: string; killed: number; seen: FactionId[]; redacted?: true }
+  | { kind: 'MOVES'; moves: { owner: FactionId; from: string; to: string; count: number; landing: boolean; seen: FactionId[] }[] }
   | { kind: 'FAILED'; owner: FactionId; text: string }
-  | { kind: 'CLASH'; a: Side; b: Side; at: [string, string]; winner: FactionId | null }
-  | { kind: 'BATTLE'; region: string; defender: Side | null; attackers: Side[]; winner: FactionId; captured: boolean; survivors: number }
+  | { kind: 'CLASH'; a: Side; b: Side; at: [string, string]; winner: FactionId | null; seen: FactionId[]; redacted?: true }
+  | {
+      kind: 'BATTLE';
+      region: string;
+      defender: Side | null;
+      attackers: Side[];
+      winner: FactionId;
+      captured: boolean;
+      survivors: number;
+      seen: FactionId[];
+      /** Two or more attackers tied for strongest and beat the defence: they bounce off each other and the defender holds. */
+      bounced?: true;
+      /** A beaten defender's survivors and where they fell back to. */
+      fallback?: { to: string; count: number };
+      redacted?: true;
+    }
   | { kind: 'RECOMMISSION'; owner: FactionId; zone: ZoneId }
   | { kind: 'SCORE'; gains: Partial<Record<FactionId, number>> }
   | { kind: 'ELIMINATED'; who: FactionId }

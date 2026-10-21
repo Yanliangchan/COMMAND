@@ -26,7 +26,10 @@
 // never spam the console — it just stays silent.
 // ============================================================================
 
-export type SoundName = 'move' | 'attack' | 'contact' | 'objective' | 'turn' | 'kill' | 'ui';
+export type SoundName =
+  | 'move' | 'attack' | 'contact' | 'objective' | 'turn' | 'kill' | 'ui'
+  // Island Ops playback (added; the classic sounds above are unchanged):
+  | 'salvo' | 'sink' | 'jet' | 'boom' | 'bigboom' | 'thump' | 'clash' | 'capture' | 'tick' | 'knell';
 
 interface AudioSettings {
   muted: boolean;
@@ -269,6 +272,52 @@ class SoundEngine {
           this.noiseBurst(ctx, t0, { dur: 0.5, gain: 0.34 * vol, filterFreq: 700, filterQ: 0.5 });
           this.tone(ctx, t0, { freq: 90, freqTo: 42, dur: 0.5, type: 'sine', gain: 0.3 * vol, attack: 0.003 });
           break;
+        // --- Island Ops playback ---
+        case 'salvo':
+          // Three gun reports rolling across the water.
+          for (let i = 0; i < 3; i++) {
+            this.noiseBurst(ctx, t0 + i * 0.26, { dur: 0.22, gain: 0.26 * vol, filterFreq: 900 - i * 120, filterQ: 0.6 });
+            this.tone(ctx, t0 + i * 0.26, { freq: 120, freqTo: 55, dur: 0.2, type: 'sine', gain: 0.22 * vol, attack: 0.002 });
+          }
+          break;
+        case 'sink':
+          this.tone(ctx, t0, { freq: 220, freqTo: 70, dur: 0.7, type: 'triangle', gain: 0.16 * vol, attack: 0.02 });
+          this.noiseBurst(ctx, t0 + 0.05, { dur: 0.55, gain: 0.14 * vol, filterFreq: 420, filterQ: 1.2 });
+          break;
+        case 'jet':
+          this.sweep(ctx, t0, { dur: 0.75, from: 500, to: 2600, gain: 0.16 * vol });
+          break;
+        case 'boom':
+          this.noiseBurst(ctx, t0, { dur: 0.42, gain: 0.34 * vol, filterFreq: 520, filterQ: 0.5 });
+          this.tone(ctx, t0, { freq: 110, freqTo: 40, dur: 0.38, type: 'sine', gain: 0.32 * vol, attack: 0.002 });
+          break;
+        case 'bigboom':
+          this.noiseBurst(ctx, t0, { dur: 0.7, gain: 0.4 * vol, filterFreq: 380, filterQ: 0.45 });
+          this.tone(ctx, t0, { freq: 85, freqTo: 30, dur: 0.65, type: 'sine', gain: 0.38 * vol, attack: 0.002 });
+          this.noiseBurst(ctx, t0 + 0.12, { dur: 0.3, gain: 0.16 * vol, filterFreq: 1600, filterQ: 0.7 });
+          break;
+        case 'thump':
+          this.tone(ctx, t0, { freq: 95, freqTo: 55, dur: 0.16, type: 'sine', gain: 0.3 * vol, attack: 0.003 });
+          this.noiseBurst(ctx, t0, { dur: 0.1, gain: 0.12 * vol, filterFreq: 300, filterQ: 0.7 });
+          break;
+        case 'clash':
+          this.tone(ctx, t0, { freq: 1250, freqTo: 900, dur: 0.18, type: 'square', gain: 0.07 * vol, attack: 0.001 });
+          this.tone(ctx, t0 + 0.02, { freq: 1870, freqTo: 1500, dur: 0.22, type: 'triangle', gain: 0.1 * vol, attack: 0.001 });
+          this.noiseBurst(ctx, t0, { dur: 0.12, gain: 0.2 * vol, filterFreq: 2600, filterQ: 0.9 });
+          break;
+        case 'capture':
+          // A short rising bugle: three notes.
+          [523, 659, 784].forEach((f, i) => this.tone(ctx, t0 + i * 0.1, { freq: f, dur: i === 2 ? 0.38 : 0.12, type: 'triangle', gain: 0.2 * vol, attack: 0.01 }));
+          break;
+        case 'tick':
+          this.tone(ctx, t0, { freq: 1320, dur: 0.06, type: 'sine', gain: 0.14 * vol, attack: 0.002 });
+          this.tone(ctx, t0 + 0.05, { freq: 1760, dur: 0.09, type: 'sine', gain: 0.1 * vol, attack: 0.002 });
+          break;
+        case 'knell':
+          this.tone(ctx, t0, { freq: 196, freqTo: 185, dur: 1.1, type: 'triangle', gain: 0.24 * vol, attack: 0.005 });
+          this.tone(ctx, t0, { freq: 98, dur: 1.2, type: 'sine', gain: 0.22 * vol, attack: 0.005 });
+          this.noiseBurst(ctx, t0, { dur: 0.5, gain: 0.18 * vol, filterFreq: 300, filterQ: 0.5 });
+          break;
       }
     } catch {
       // Synthesis failure of any kind is cosmetic — never let it interrupt play.
@@ -294,6 +343,26 @@ class SoundEngine {
     osc.connect(gain).connect(ctx.destination);
     osc.start(at);
     osc.stop(at + opts.dur + 0.02);
+  }
+
+  /** Filtered noise whose band sweeps up then back down — a jet passing over. */
+  private sweep(ctx: AudioContext, at: number, opts: { dur: number; from: number; to: number; gain: number }) {
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer(ctx);
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.setValueAtTime(1.4, at);
+    filter.frequency.setValueAtTime(opts.from, at);
+    filter.frequency.exponentialRampToValueAtTime(opts.to, at + opts.dur * 0.55);
+    filter.frequency.exponentialRampToValueAtTime(opts.from * 0.8, at + opts.dur);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, at);
+    gain.gain.exponentialRampToValueAtTime(opts.gain, at + opts.dur * 0.5);
+    gain.gain.exponentialRampToValueAtTime(0.001, at + opts.dur);
+    src.connect(filter).connect(gain).connect(ctx.destination);
+    src.start(at);
+    src.stop(at + opts.dur + 0.02);
   }
 
   private noiseBurst(ctx: AudioContext, at: number, opts: { dur: number; gain: number; filterFreq: number; filterQ: number }) {

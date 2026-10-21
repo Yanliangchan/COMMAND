@@ -1,0 +1,873 @@
+/* ISLAND OPS — match layout: top bar, side panel, dock, picker, banners.
+   Uses the design tokens defined in island.css. */
+
+/* --- Match layout --------------------------------------------------------
+   Zones: top bar · map (fills the screen; fitted into what the HUD leaves) ·
+   side panel (right, wide screens) · bottom stack (toast, sheet, dock).
+   ------------------------------------------------------------------------- */
+
+.io-game {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  background: var(--sea-3);
+}
+
+.io-top-zone {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6;
+}
+
+.io-topbar {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: linear-gradient(180deg, rgba(8, 25, 43, 0.97), rgba(8, 25, 43, 0.88));
+  border-bottom: 2px solid var(--line);
+}
+
+.io-logo-mini {
+  font-family: var(--display);
+  font-size: 18px;
+  line-height: 1;
+  color: var(--gold);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.io-logo-mini span {
+  font-family: var(--body);
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  color: #fff;
+  margin-top: 3px;
+}
+
+.io-players {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  list-style: none;
+  margin: 0;
+  padding: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.io-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 2px solid transparent;
+  flex-shrink: 0;
+}
+
+.io-player-me {
+  border-color: var(--c);
+  background: color-mix(in srgb, var(--c) 24%, transparent);
+}
+
+.io-player-dead {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
+.io-player-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  gap: 2px;
+}
+
+.io-player-text b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.io-player-text em {
+  font-style: normal;
+  font-family: var(--body);
+  font-weight: 900;
+  font-size: 10px;
+  background: var(--gold);
+  color: var(--gold-ink);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.io-lead {
+  font-style: normal;
+  color: var(--gold);
+  font-size: 10px;
+}
+
+.io-vpbar {
+  display: block;
+  width: 78px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.io-vpbar span {
+  display: block;
+  height: 100%;
+  background: var(--c);
+  transition: width 0.6s ease;
+}
+
+.io-player-text small {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.io-vp {
+  color: var(--gold);
+  font-weight: 900;
+  display: inline-block;
+  animation: io-pop 0.5s ease-out;
+}
+
+.io-top-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.io-round {
+  font-family: var(--display);
+  font-size: 14px;
+  color: #d6e3ee;
+  white-space: nowrap;
+  margin-right: 6px;
+}
+
+.io-round-of {
+  color: var(--muted);
+}
+
+.io-top-right .io-icon-btn {
+  min-width: var(--tap);
+  height: var(--tap);
+}
+
+/* Side panel */
+
+.io-side {
+  position: absolute;
+  top: 70px;
+  right: 12px;
+  bottom: 12px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.io-side > * {
+  pointer-events: auto;
+}
+
+.io-side-tabs {
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-bottom: 0;
+  border-radius: var(--r-card) var(--r-card) 0 0;
+  padding: 0 6px;
+  margin-bottom: -10px;
+  align-items: center;
+}
+
+.io-side-tabs button[role='tab'] {
+  padding: 8px 8px;
+  font-size: 13px;
+}
+
+.io-side-close {
+  margin-left: auto;
+}
+
+.io-side-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 var(--r-card) var(--r-card);
+  padding: 10px 12px 12px;
+  box-shadow: var(--shadow-panel);
+}
+
+.io-empty {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+  margin: 2px 0;
+}
+
+.io-empty b {
+  color: #fff;
+}
+
+.io-order-list,
+.io-ki-list,
+.io-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.io-order-list li {
+  display: flex;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.io-order-text {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 0;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: var(--r-row);
+  min-height: 40px;
+  padding: 6px 9px;
+  font-size: 13px;
+  font-weight: 800;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.io-order-text:disabled {
+  cursor: default;
+  color: inherit;
+}
+
+.io-order-text:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.io-order-text span {
+  display: flex;
+  flex-direction: column;
+}
+
+.io-order-text svg {
+  flex-shrink: 0;
+  color: var(--c);
+}
+
+.io-order-bad .io-order-text {
+  background: rgba(255, 90, 78, 0.18);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.io-order-bad small {
+  color: #ffb3ab;
+  font-weight: 700;
+}
+
+.io-order-x {
+  border: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-row);
+  color: var(--muted);
+  width: 40px;
+  display: grid;
+  place-items: center;
+}
+
+.io-order-x:hover {
+  color: #fff;
+  background: rgba(255, 90, 78, 0.3);
+}
+
+.io-side-note {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.io-side-note b {
+  color: var(--gold);
+}
+
+.io-ki-list li {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: var(--r-row);
+}
+
+.io-ki-list li.io-mine {
+  background: rgba(255, 200, 61, 0.1);
+}
+
+.io-ki-name {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+
+.io-ki-name small {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.io-log-list li {
+  font-size: 12.5px;
+  font-weight: 700;
+  border-left: 4px solid;
+  padding: 2px 0 2px 8px;
+  line-height: 1.4;
+}
+
+.io-log-list small {
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+/* On small screens the side panel is a sheet in the bottom stack, above the dock. */
+.io-side.io-side-sheet {
+  position: static;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  max-height: min(46vh, 380px);
+  gap: 0;
+}
+
+.io-side-sheet .io-side-tabs {
+  margin-bottom: 0;
+  background: var(--panel-solid);
+}
+
+.io-side-sheet .io-side-body {
+  background: var(--panel-solid);
+}
+
+/* Bottom stack: toast, sheet, dock */
+
+.io-bottom {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 7;
+  pointer-events: none;
+}
+
+.io-bottom > * {
+  pointer-events: auto;
+}
+
+.io-dock {
+  container-type: inline-size;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-top: 5px solid var(--c);
+  border-radius: var(--r-card);
+  padding: 8px 12px 10px;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.io-dock-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: #e3edf6;
+  margin-bottom: 8px;
+  min-height: 28px;
+}
+
+.io-dock-hint b {
+  color: var(--gold);
+}
+
+.io-encik-face {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #f1e3c8;
+  border: 2px solid #fff;
+  overflow: hidden;
+}
+
+.io-encik-face svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.io-dock-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.io-tools {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.io-tool {
+  border: 2px solid var(--line);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: var(--r-ctl);
+  min-height: var(--tap);
+  padding: 6px 11px;
+  font-weight: 900;
+  font-size: 14px;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.io-tool:hover:not(:disabled):not(.on) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.io-tool:disabled {
+  opacity: 0.4;
+}
+
+.io-tool.on {
+  background: #fff;
+  color: var(--ink);
+  border-color: #fff;
+}
+
+.io-tool b {
+  background: var(--gold);
+  color: var(--gold-ink);
+  border-radius: 999px;
+  min-width: 20px;
+  padding: 0 6px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.io-tool-spent b,
+.io-tool-group.io-tool-spent .io-tool-count {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--muted);
+}
+
+.io-tool-plain {
+  background: transparent;
+}
+
+.io-tool-group {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.io-tool-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--display);
+  font-size: 13px;
+  background: var(--gold);
+  color: var(--gold-ink);
+  border-radius: 999px;
+  padding: 3px 9px 3px 7px;
+  margin: 0 2px 0 4px;
+}
+
+.io-tool-sep {
+  width: 2px;
+  align-self: stretch;
+  background: var(--line);
+  margin: 4px 2px;
+}
+
+.io-btn-main {
+  font-size: 17px;
+  padding: 12px 20px;
+  min-height: 52px;
+}
+
+/* "Ready" breathes once every troop is placed. The halo is a fixed shadow on its
+   own layer and only its opacity animates — animating box-shadow itself repaints
+   every frame (measured ~40% main thread at 4x CPU throttle). */
+.io-btn-main {
+  position: relative;
+}
+
+.io-btn-main::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 6px rgba(255, 200, 61, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  will-change: opacity;
+}
+
+.io-btn-main:not([data-blocked])::after {
+  animation: io-ready-glow 2s ease-in-out infinite;
+}
+
+@keyframes io-ready-glow {
+  50% {
+    opacity: 1;
+  }
+}
+
+.io-dock-play {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  border-top-width: 2px;
+  border-color: var(--c, var(--line));
+  max-width: 760px;
+}
+
+.io-play-title {
+  font-size: 15px;
+}
+
+.io-play-ctl {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.io-speed {
+  font-family: var(--display);
+  font-size: 15px;
+  min-width: 24px;
+}
+
+.io-toast {
+  align-self: center;
+  max-width: min(640px, 100%);
+  background: var(--paper);
+  color: var(--paper-ink);
+  border-radius: 14px;
+  padding: 9px 16px;
+  font-size: 14px;
+  text-align: center;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  animation: io-drop 0.2s ease-out;
+}
+
+/* Picker: docked just above the command panel, never over the target. */
+
+.io-picker-wrap {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 12px;
+  z-index: 9;
+}
+
+.io-picker-inner {
+  display: flex;
+  max-height: 100%;
+}
+
+/* Never taller than the space between the top bar and the dock; scrolls inside if it must. */
+.io-picker {
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--panel-solid);
+  border: 2px solid var(--line-strong);
+  border-radius: var(--r-card);
+  padding: 12px 16px 14px;
+  width: min(460px, calc(100vw - 24px));
+  box-shadow: var(--shadow-modal);
+  animation: io-drop 0.2s ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.io-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  flex-wrap: wrap;
+}
+
+.io-picker-x {
+  margin-left: auto;
+  min-width: 36px;
+  height: 36px;
+}
+
+.io-picker-sub {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.io-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.io-slider-row input {
+  flex: 1;
+  accent-color: var(--gold);
+  min-width: 80px;
+  height: 32px;
+}
+
+.io-count {
+  font-family: var(--display);
+  font-size: 28px;
+  color: var(--gold);
+  min-width: 56px;
+  text-align: right;
+}
+
+.io-count small {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.io-odds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.io-odds > div {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: var(--r-ctl);
+  padding: 7px 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.io-odds span {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.io-odds b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.io-odds small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.io-verdict {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  border-radius: var(--r-ctl);
+  padding: 7px 10px;
+}
+
+.io-verdict-good {
+  background: rgba(63, 208, 110, 0.16);
+  color: #b4f2c6;
+}
+
+.io-verdict-risky {
+  background: rgba(255, 200, 61, 0.16);
+  color: #ffe3a1;
+}
+
+.io-verdict-bad {
+  background: rgba(255, 90, 78, 0.18);
+  color: #ffc1ba;
+}
+
+
+/* Small screens: cards get their own band under the top bar. */
+
+.io-band {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  z-index: 6;
+  padding-top: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+/* Banners */
+
+.io-banners {
+  position: absolute;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.io-banner {
+  background: linear-gradient(90deg, transparent, var(--c) 18%, var(--c) 82%, transparent);
+  padding: 10px 90px 12px;
+  text-align: center;
+  animation: io-banner 1.9s ease-in-out forwards;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.3);
+  max-width: 100%;
+}
+
+.io-banner-title {
+  font-family: var(--display);
+  font-size: clamp(24px, 4.5vw, 42px);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.io-banner-sub {
+  font-size: 15px;
+}
+
+@keyframes io-banner {
+  0% {
+    transform: scaleX(0.2) scaleY(1.4);
+    opacity: 0;
+  }
+  12% {
+    transform: scaleX(1.05);
+    opacity: 1;
+  }
+  20%,
+  80% {
+    transform: none;
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-14px);
+    opacity: 0;
+  }
+}
+
+
+/* The dock decides its own density from its own width (it shares the row with the side panel). */
+@container (max-width: 1000px) {
+  .io-tool-group .io-tool-label,
+  .io-tool-edit .io-tool-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+}
+
+@container (max-width: 780px) {
+  .io-tool-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+}
+
+/* Short screens: the picker's odds compact to fit; the dock keeps to one row. */
+@media (max-height: 560px) {
+  .io-tools {
+    gap: 4px;
+  }
+  .io-seg button {
+    padding: 6px 9px;
+  }
+  .io-tool-count {
+    padding: 3px 7px 3px 5px;
+    margin: 0 1px 0 2px;
+  }
+  .io-picker {
+    padding: 8px 12px 10px;
+    gap: 6px;
+  }
+  .io-picker-sub {
+    display: none;
+  }
+  .io-odds b {
+    font-size: 18px;
+  }
+  .io-odds small {
+    display: none;
+  }
+  .io-verdict {
+    padding: 5px 8px;
+  }
+}
+
+/* When the picker has to scroll (short screens), its actions stay pinned in view. */
+.io-picker > .io-actions {
+  position: sticky;
+  bottom: -14px;
+  margin: 0 -16px -14px;
+  padding: 8px 16px 12px;
+  background: linear-gradient(transparent, var(--panel-solid) 10px);
+}
+
+@media (max-height: 560px) {
+  .io-picker > .io-actions {
+    bottom: -10px;
+    margin: 0 -12px -10px;
+    padding: 6px 12px 8px;
+  }
+}
