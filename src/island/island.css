@@ -283,12 +283,6 @@ h3 {
   border-width: 1.5px;
 }
 
-.io-emblem-lg {
-  width: 42px;
-  height: 42px;
-  box-shadow: 0 3px 0 var(--d, rgba(0, 0, 0, 0.4));
-}
-
 .io-star {
   color: var(--gold);
   vertical-align: -2px;
@@ -303,10 +297,6 @@ h3 {
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
-}
-
-.io-actions-center {
-  justify-content: center;
 }
 
 .io-pill {
@@ -399,42 +389,6 @@ h3 {
   margin: 6px 0;
 }
 
-.io-lede {
-  font-size: 15.5px;
-  margin-top: 12px !important;
-}
-
-.io-help-steps,
-.io-help-list {
-  padding-left: 22px;
-  margin: 6px 0;
-}
-
-.io-help-steps li,
-.io-help-list li {
-  margin-bottom: 8px;
-}
-
-.io-help-factions {
-  list-style: none;
-  padding: 0;
-}
-
-.io-help-factions li {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.io-help-factions .io-emblem-dot {
-  width: 26px;
-  height: 26px;
-}
-
-.io-help-note {
-  color: var(--muted);
-}
-
 .io-key {
   list-style: none;
   padding: 0;
@@ -450,49 +404,12 @@ h3 {
   align-items: center;
 }
 
-.io-key-factions li {
-  grid-template-columns: 48px 32px 1fr;
-}
-
-.io-key-art {
-  display: grid;
-  place-items: center;
-}
-
-.io-key-swatch {
-  width: 54px;
-  height: 30px;
-  border-radius: 8px;
-  background: #3d8ee8;
-}
-
-.io-key-target {
-  box-shadow: inset 0 0 0 4px #ffe14d;
-}
-
-.io-key-landing {
-  outline: 4px dashed #8fd6ff;
-  outline-offset: -4px;
-}
-
-.io-key-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  display: grid;
-  place-items: center;
-  color: #fff;
-}
-
-
 @keyframes io-drop {
   from {
     transform: translateY(-12px) scale(0.97);
     opacity: 0;
   }
 }
-
 
 /* Area styles live beside their components: ui/map.css, ui/title.css, ui/hud.css,
    ui/cards.css, ui/end.css. Responsive rules for every area stay here so the
@@ -509,9 +426,6 @@ h3 {
 }
 
 @media (max-width: 1099px) {
-  :root:root .io-factions {
-    grid-template-columns: repeat(2, 1fr);
-  }
   :root:root .io-round-full {
     display: none;
   }
@@ -633,12 +547,6 @@ h3 {
   :root:root .io-setup-go .io-btn {
     flex: 1;
   }
-  :root:root .io-continue {
-    flex-wrap: wrap;
-  }
-  :root:root .io-continue .io-btn {
-    width: 100%;
-  }
   :root:root .io-step-card {
     padding: 8px 10px;
   }
@@ -669,15 +577,6 @@ h3 {
 }
 
 @media (max-width: 480px) {
-  :root:root .io-factions {
-    gap: 8px;
-  }
-  :root:root .io-faction-orbat {
-    display: none;
-  }
-  :root:root .io-faction {
-    padding: 8px 9px;
-  }
   :root:root .io-modal {
     padding: 14px 14px 16px;
   }
