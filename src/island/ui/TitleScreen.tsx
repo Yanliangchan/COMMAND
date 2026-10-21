@@ -102,7 +102,7 @@ export function TitleScreen({ initial, onStart, saved, onResume }: { initial: Se
               <Emblem faction={savedMe} size={24} color={FACTION_INK[savedMe]} />
             </span>
             <span className="io-resume-text">
-              <span className="io-resume-kicker">Operation in progress</span>
+              <span className="io-resume-kicker">{saved.game.phase === 'GAME_OVER' ? 'Exercise over — result waiting' : 'Operation in progress'}</span>
               <b>{FACTIONS[savedMe].name}</b>
               <small>
                 Round {saved.game.round} of {MAX_ROUNDS} · {saved.game.players[savedMe]!.vp} VP

@@ -54,6 +54,7 @@ interface Match {
   game: GameState;
   level: BotLevel;
   draft: Order[];
+  resumed?: boolean;
 }
 
 export default function IslandApp() {
@@ -78,7 +79,7 @@ export default function IslandApp() {
     const m = loadMatch();
     if (!m) return setSaved(null);
     sound.unlock();
-    setMatch(m);
+    setMatch({ ...m, resumed: true });
   };
 
   const exit = () => {
@@ -94,6 +95,7 @@ export default function IslandApp() {
         initial={match.game}
         level={match.level}
         initialDraft={match.draft}
+        resumed={match.resumed}
         onExit={exit}
         onRestart={() => begin({ ...setup, level: match.level })}
       />

@@ -21,7 +21,7 @@ import './hud.css';
 import { Help } from './Help';
 import { Badge, Highlight, Insets, MapView, Marker, OrderArrow } from './MapView';
 import { defence, isMovement, plan, plural, regionName } from './plan';
-import { saveMatch } from './save';
+import { clearMatch, saveMatch } from './save';
 import { setPrefs, usePrefs } from './settings';
 import { Playback, stepSeen, usePlayback } from './usePlayback';
 
@@ -120,11 +120,25 @@ interface Props {
   initial: GameState;
   level: BotLevel;
   initialDraft?: Order[];
+  /** Picked up from a save: show the last round's report again. */
+  resumed?: boolean;
   onExit: () => void;
   onRestart: () => void;
 }
 
-export function GameScreen({ initial, level, initialDraft = [], onExit, onRestart }: Props) {
+/** Last round's report as the player may see it, for a resumed match. */
+function resumeRecap(game: GameState): { round: number; lines: ReportLine[] } | null {
+  try {
+    const me = game.factions.find((f) => player(game, f).human)!;
+    const rep = viewFor(game, me).lastReport;
+    if (!rep || game.phase !== 'PLANNING' || rep.round !== game.round - 1) return null;
+    return { round: rep.round, lines: reportLines(rep, game, me, !player(game, me).alive) };
+  } catch {
+    return null;
+  }
+}
+
+export function GameScreen({ initial, level, initialDraft = [], resumed = false, onExit, onRestart }: Props) {
   const [game, setGame] = useState(initial);
   const [draft, setDraft] = useState<Order[]>(initialDraft);
   const [tool, setTool] = useState<Tool>('deploy');
@@ -132,7 +146,7 @@ export function GameScreen({ initial, level, initialDraft = [], onExit, onRestar
   const [from, setFrom] = useState<string | null>(null);
   const [selShip, setSelShip] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerState | null>(null);
-  const [report, setReport] = useState<{ round: number; lines: ReportLine[] } | null>(null);
+  const [report, setReport] = useState<{ round: number; lines: ReportLine[] } | null>(() => (resumed ? resumeRecap(initial) : null));
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const [tab, setTab] = useState<SideTab>('orders');
   const [sheet, setSheet] = useState(false);
@@ -191,9 +205,12 @@ export function GameScreen({ initial, level, initialDraft = [], onExit, onRestar
   };
 
   // ---- persistence: every change of the match or the draft ----
+  // Once the end screen is up the match is over for good; until then (even a
+  // finished one whose result hasn't been shown yet) it stays saved.
   useEffect(() => {
     if (playback) return;
-    saveMatch({ game, level, draft });
+    if (game.phase === 'GAME_OVER') clearMatch();
+    else saveMatch({ game, level, draft });
   }, [game, draft, level, playback]);
 
   // ---- the plan, as the engine sees it ----

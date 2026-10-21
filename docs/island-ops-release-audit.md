@@ -17,6 +17,14 @@ persisted. Tests: `islandcheck` (rules + a 300-game bot sim) — no UI tests.
 support/recon) → Ready → bots plan → resolve → step-by-step playback → round
 report → … → end screen.
 
+**Independent retests.** After implementation, a fresh visual/UX reviewer
+(about 300 screenshots at 8 sizes, colour-vision simulation, keyboard and
+reduced-motion runs) and a fresh adversarial QA tester re-ran the original
+reproductions against the integrated build. QA confirmed 20 of 22 claims
+fixed outright and found 8 new defects (RT-01…08); visual found 14 (RV-01…14).
+All of them were fixed and regression-tested (registers below); the two
+partial claims were closed by RT-01/02 and RT-04.
+
 **How it was audited.** Five independent read-only specialist audits, run in
 parallel with evidence for each finding (the seven requested roles were merged
 into five agents): visual design; gameplay/game design (with simulation
@@ -103,6 +111,13 @@ risk) · **Open**.
 | — (found in visual pass) | P2 | Wave drift re-blended the screen every frame in matches | Drift kept for the title only | playback 47 → 55 fps (1×) |
 | — (found in rebuild) | P2 | Responsive rules lost to area stylesheets after the split | `:root:root` prefix on breakpoint rules | screenshots at 844×390 |
 | REL-04/05/06 (part) | P3 | `tsx` as a runtime dependency; `.env.example` WS path; unused fonts; meta description | Fixed | build |
+| RT-01 | P2 | Log tab narrated fights the player couldn't see | Log entries carry `seen` and a public form; `logFor` per reader | islandcheck: 6,655 fogged readings, 0 leaks |
+| RT-02 | P2 | Other factions' failed orders shown as cards | Failed orders are their owner's only | code + retest |
+| RT-03 | P2 | Landscape phone: picker's Send hidden under the dock | Sticky action row in the scrolling picker | e2e at 844×390 |
+| RT-04 / RT-07 | P3 | Corrupt log entries / round 99 / duplicate ship ids slip past save validation | Log entries sanitised; round, ship ids and draft size checked; every faction's view dry-run | e2e: 9 corrupt-save cases |
+| RT-05 | P3 | Leaving during the deciding round lost the result | Finished matches stay saved until the end screen is shown | e2e: Continue shows Victory |
+| RT-06 | P3 | No report after resuming mid-playback | Recap of the last round on resume | e2e |
+| RT-08 / QA-07 caveat | P3 | "1 troop … were"; a hand-built state could deploy beyond its budget | Grammar; resolver caps deployments and sorties at the budget | islandcheck |
 
 ### Accepted / open (non-blocking)
 
@@ -153,10 +168,10 @@ Before/after screenshots were captured at 1366×768, 1920×1080, 1280×720,
 | --- | --- |
 | `npx tsc -b` (client + server) | clean |
 | `npm run build` | succeeds (client ~4 s + server tsc) |
-| `npm run check` — mapcheck, wirecheck (620,972 assertions), combatcheck, islandcheck | 233 checks, 0 failures |
+| `npm run check` — mapcheck, wirecheck (620,972 assertions), combatcheck, islandcheck | 235 checks, 0 failures |
 | islandcheck sim | 1,000 games: 7.5 rounds, 6.5 battles/round, 86% of attacks capture, 100% end on VP, shares 0.87–1.16× |
 | islandcheck fuzz | 160 games / 1,117 rounds with random, passive and hostile seats: no exceptions, invariants hold |
-| `npm run e2e` (Playwright, Chromium) | all checks pass (journeys + audit regressions) |
+| `npm run e2e` (Playwright, Chromium) | 42 checks, all pass (journeys + audit and retest regressions) |
 | Production server smoke | `/` 200; hashed asset 200; traversal 403; stale asset 404; `/healthz` 200 |
 | Offline fonts | title renders in 0.6 s with every external host blocked; fonts load |
 | `npm audit --omit=dev` | 0 vulnerabilities |
@@ -187,4 +202,22 @@ playtests.
 
 ## G. Final release assessment
 
-See the PR description for the verdict and the evidence that supports it.
+**READY WITH ACCEPTED RISKS.**
+
+- No open P0 or P1 defects; every P0/P1/P2 finding from the five audits and
+  both retests is fixed and covered by an automated check (section B).
+- Production-equivalent build succeeds; the production server serves the
+  game correctly and safely (section E); no dev-only configuration ships
+  (no debug flags, no secrets; fonts self-hosted; CSP tightened).
+- Critical journeys verified end to end in a browser: start, plan, resolve,
+  report, save/resume, elimination → spectate → end screen, play again,
+  keyboard-only, phone portrait and landscape.
+- Performance is at or better than the original on every measured scene.
+- Rollback: the overhaul is a single branch; reverting the merge commit
+  restores the previous release, and saved matches from this version are
+  simply not offered by older code (different storage key).
+
+The accepted risks are the P3 items in section B and the verification limits
+in section F (no real-device, Safari/Firefox, or screen-reader runs; balance
+measured with bot stand-ins). They should be cleared by a short device and
+human playtest pass before a wide launch; none blocks release.

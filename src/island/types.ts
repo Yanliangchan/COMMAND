@@ -113,7 +113,8 @@ export interface GameState {
   ships: Ship[];
   /** The last round's resolution, for the playback and the recap. */
   lastReport: RoundReport | null;
-  log: { round: number; who: FactionId | null; text: string }[];
+  /** Narration; `seen`/`open` fog it per reader (see engine logFor). */
+  log: { round: number; who: FactionId | null; text: string; seen?: FactionId[]; open?: string }[];
   winner: FactionId | null;
   winReason: string | null;
   stats: { battles: number; captures: number };

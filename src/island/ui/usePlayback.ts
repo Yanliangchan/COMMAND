@@ -61,6 +61,8 @@ export function stepSeen(step: ReportStep, me: FactionId, spectator: boolean): b
   if (step.kind === 'CLASH') return step.a.owner === me || step.b.owner === me || !step.seen || step.seen.includes(me);
   if (step.kind === 'STRIKE') return step.by === me || !step.seen || step.seen.includes(me);
   if (step.kind === 'MOVES') return visibleMoves(step, me, spectator).length > 0;
+  // A failed order is its owner's business (the engine's redactReport drops it too).
+  if (step.kind === 'FAILED') return step.owner === me;
   return true;
 }
 

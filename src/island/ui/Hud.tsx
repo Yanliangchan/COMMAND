@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { sound } from '../../audio/sound';
 import { BOARD, INSTALLATIONS, INSTALLATION_INFO, SEA_ZONES } from '../map';
-import { installationsOf, player, regionsOf } from '../engine';
+import { installationsOf, logFor, player, regionsOf } from '../engine';
 import { FACTIONS, FactionId, GameState, MAX_ROUNDS, Order, PlayerView, VP_TARGET } from '../types';
 import { Emblem, Icon, IconName } from './Glyphs';
 import { DefenceReadout, plural } from './plan';
@@ -162,7 +162,7 @@ export function SidePanel({
       <div className="io-side-body" role="tabpanel">
         {tab === 'orders' && <OrdersList draft={draft} issues={issues} game={game} onRemove={onRemove} onEdit={onEdit} />}
         {tab === 'bases' && <Installations game={game} me={me} />}
-        {tab === 'log' && <LogList game={game} />}
+        {tab === 'log' && <LogList game={game} me={me} />}
       </div>
     </aside>
   );
@@ -244,8 +244,9 @@ function Installations({ game, me }: { game: GameState; me: FactionId }) {
   );
 }
 
-function LogList({ game }: { game: GameState }) {
-  const items = game.log.slice(-80).reverse();
+function LogList({ game, me }: { game: GameState; me: FactionId }) {
+  // Only what this task force had eyes on — the same fog as the playback.
+  const items = logFor(game, me).slice(-80).reverse();
   return (
     <ul className="io-log-list">
       {items.map((l, i) => (

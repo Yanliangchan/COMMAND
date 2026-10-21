@@ -13,7 +13,7 @@
 
 import { BOARD, INSTALLATIONS, REGION_IDS, SEA_ZONES, ZONE_IDS, ZoneId } from '../src/island/map';
 import {
-  IllegalAction, allReady, alive, budget, defenceBonus, defenceEstimate, newGame, orderIssues, planSummary, player, recon, redactReport, regionsOf, resolveRound,
+  IllegalAction, allReady, alive, budget, defenceBonus, defenceEstimate, logFor, newGame, orderIssues, planSummary, player, recon, redactReport, regionsOf, resolveRound,
   submitOrders, troopsOf, validateOrders, viewFor,
 } from '../src/island/engine';
 import { BotLevel, LEVEL_HANDICAP, estimate, planBot } from '../src/island/bot';
@@ -483,6 +483,51 @@ section('fog in the report');
 }
 
 // --- engine fuzz (invariants) ----------------------------------------------
+section('fog in the log (RT-01) and hand-built orders (QA-07)');
+{
+  // Whatever a task force reads in the log, it was entitled to: entries fogged
+  // from it appear only in their public form (or not at all).
+  let entries = 0, fogged = 0, leaks = 0;
+  for (let g = 0; g < 20; g++) {
+    let s = newGame({ human: null, factions: lineup(g), seed: 1300 + g });
+    while (s.phase === 'PLANNING') {
+      for (const f of alive(s)) s = submitOrders(s, f, botPlan(() => s, f, (x) => (s = x)));
+      s = resolveRound(s).state;
+      if (s.phase !== 'PLANNING') break;
+      for (const f of alive(s)) {
+        // Count by round + text: the same sentence can legitimately appear in
+        // an entry the reader did have eyes on.
+        const key = (l: { round: number; text: string }) => `${l.round}|${l.text}`;
+        const shown = new Map<string, number>();
+        for (const l of logFor(s, f)) shown.set(key(l), (shown.get(key(l)) ?? 0) + 1);
+        const allowed = new Map<string, number>();
+        for (const l of s.log) {
+          entries++;
+          const k = key(l);
+          if (!l.seen || l.seen.includes(f)) allowed.set(k, (allowed.get(k) ?? 0) + 1);
+          else {
+            fogged++;
+            if (l.open) allowed.set(`${l.round}|${l.open}`, (allowed.get(`${l.round}|${l.open}`) ?? 0) + 1);
+          }
+        }
+        for (const [k, n] of shown) leaks += Math.max(0, n - (allowed.get(k) ?? 0));
+      }
+    }
+  }
+  check(fogged > 0 && leaks === 0, `log: ${fogged} of ${entries} entry readings fogged from their reader, 0 leaked (got ${leaks})`);
+
+  // An order set that never went through submitOrders can't spend beyond its budget.
+  const s = newGame({ human: null, factions: ['SINGA', 'HELANG', 'JERUNG'], seed: 77 });
+  const home = regionsOf(s, 'SINGA')[0];
+  const before = s.map[home].troops;
+  const forged = structuredClone(s);
+  forged.players.SINGA!.orders = [{ kind: 'DEPLOY', region: home, count: 1000 }];
+  for (const f of ['HELANG', 'JERUNG'] as FactionId[]) forged.players[f]!.orders = [];
+  const after = resolveRound(forged).state;
+  const cap = budget(s, 'SINGA').troops;
+  check(after.map[home].troops <= before + cap, `a hand-built DEPLOY 1000 is capped at the ${cap}-troop budget (${before} → ${after.map[home].troops} troops)`);
+}
+
 section('engine fuzz');
 {
   const fails: string[] = [];

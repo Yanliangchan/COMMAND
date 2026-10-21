@@ -561,8 +561,13 @@ export const allReady = (s: GameState) => alive(s).every((f) => player(s, f).ord
 // Resolution
 // ---------------------------------------------------------------------------
 
-function log(s: GameState, who: FactionId | null, text: string) {
-  s.log.push({ round: s.round, who, text });
+/**
+ * `seen` limits who may read an entry (the factions with eyes on it, as for
+ * report steps); `open` is what everyone else may read instead — e.g. that a
+ * region changed hands, which the map shows anyway — or nothing at all.
+ */
+function log(s: GameState, who: FactionId | null, text: string, fog?: { seen: FactionId[]; open?: string }) {
+  s.log.push({ round: s.round, who, text, ...(fog ? { seen: fog.seen, ...(fog.open ? { open: fog.open } : {}) } : {}) });
   if (s.log.length > 300) s.log.splice(0, s.log.length - 300);
 }
 
@@ -598,7 +603,23 @@ export function resolveRound(prev: GameState): { state: GameState; report: Round
   const plans = new Map<FactionId, Order[]>();
   for (const f of live) {
     const raw = player(s, f).orders;
-    plans.set(f, Array.isArray(raw) ? raw.filter(wellFormed) : []);
+    const shaped = Array.isArray(raw) ? raw.filter(wellFormed) : [];
+    // Orders that never went through submitOrders (a hand-built state) still
+    // can't spend more than the budget: deployments and sorties beyond it are
+    // trimmed (moves and landings are already capped by the troops present).
+    const b = budget(prev, f);
+    let troops = b.troops, sorties = b.sorties;
+    const capped: Order[] = [];
+    for (const o of shaped) {
+      if (o.kind === 'DEPLOY') {
+        const n = Math.min(o.count, troops);
+        troops -= n;
+        if (n > 0) capped.push({ ...o, count: n });
+      } else if (o.kind === 'STRIKE' || o.kind === 'CAS') {
+        if (sorties-- > 0) capped.push(o);
+      } else capped.push(o);
+    }
+    plans.set(f, capped);
   }
   const orders = (f: FactionId) => plans.get(f) ?? [];
   const name = (f: FactionId) => FACTIONS[f].name;
@@ -831,7 +852,7 @@ export function resolveRound(prev: GameState): { state: GameState; report: Round
     if (to) {
       s.map[to].troops += r.count;
       if (r.step) r.step.fallback = { to, count: r.count };
-    } else steps.push({ kind: 'FAILED', owner: r.owner, text: `${plural(r.count, 'troop')} of ${name(r.owner)} were cut off at ${place(r.region)} and surrendered.` });
+    } else steps.push({ kind: 'FAILED', owner: r.owner, text: `${plural(r.count, 'troop')} of ${name(r.owner)} ${r.count === 1 ? 'was' : 'were'} cut off at ${place(r.region)} and surrendered.` });
   }
 
   // 7. Upkeep: eliminations, repairs, scoring, victory.
@@ -894,18 +915,23 @@ function narrate(s: GameState, step: ReportStep) {
     case 'NAVAL':
       return log(s, step.winner, `Naval battle in the ${SEA_ZONES[step.zone].name}: ${step.winner ? `${n(step.winner)} wins` : 'no winner'}.`);
     case 'STRIKE':
-      return log(s, step.by, `${n(step.by)} air strike on ${r(step.region)}: ${plural(step.killed, 'troop')} lost.`);
+      return log(s, step.by, `${n(step.by)} air strike on ${r(step.region)}: ${plural(step.killed, 'troop')} lost.`, { seen: step.seen });
     case 'FAILED':
-      return log(s, step.owner, step.text);
+      return log(s, step.owner, step.text, { seen: [step.owner] });
     case 'CLASH':
-      return log(s, step.winner, `Columns clash between ${r(step.at[0])} and ${r(step.at[1])}${step.winner ? `: ${n(step.winner)} pushes through` : ': both shattered'}.`);
+      return log(s, step.winner, `Columns clash between ${r(step.at[0])} and ${r(step.at[1])}${step.winner ? `: ${n(step.winner)} pushes through` : ': both shattered'}.`, {
+        seen: step.seen,
+      });
     case 'BATTLE': {
       if (step.captured) {
         const fell = step.fallback ? ` The defenders fall back to ${r(step.fallback.to)}.` : '';
-        return log(s, step.winner, `${r(step.region)} captured by ${n(step.winner)} (${step.attackers.find((a) => a.owner === step.winner)!.units.join(' & ')}).${fell}`);
+        return log(s, step.winner, `${r(step.region)} captured by ${n(step.winner)} (${step.attackers.find((a) => a.owner === step.winner)!.units.join(' & ')}).${fell}`, {
+          seen: step.seen,
+          open: `${r(step.region)} changed hands: now held by ${n(step.winner)}.`,
+        });
       }
       const tie = step.bounced ? `${step.attackers.filter((a) => a.strength === Math.max(...step.attackers.map((x) => x.strength))).map((a) => n(a.owner)).join(' and ')} get in each other's way: ` : '';
-      return log(s, step.winner, `${tie}${step.defender!.units[0]} (${n(step.winner)}) holds ${r(step.region)}.`);
+      return log(s, step.winner, `${tie}${step.defender!.units[0]} (${n(step.winner)}) holds ${r(step.region)}.`, { seen: step.seen });
     }
     case 'RECOMMISSION':
       return log(s, step.owner, `${n(step.owner)} recommissions a ship in the ${SEA_ZONES[step.zone].name}.`);
@@ -916,4 +942,15 @@ function narrate(s: GameState, step: ReportStep) {
     default:
       return;
   }
+}
+
+/** The ops log as one task force may read it (a spectator, or anyone once the exercise is over, reads it all). */
+export function logFor(s: GameState, me: FactionId): { round: number; who: FactionId | null; text: string }[] {
+  const all = s.phase === 'GAME_OVER' || !player(s, me).alive;
+  const out: { round: number; who: FactionId | null; text: string }[] = [];
+  for (const l of s.log) {
+    if (all || !l.seen || l.seen.includes(me)) out.push({ round: l.round, who: l.who, text: l.text });
+    else if (l.open) out.push({ round: l.round, who: l.who, text: l.open });
+  }
+  return out;
 }

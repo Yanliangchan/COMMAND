@@ -176,6 +176,59 @@ for (const bad of ['{"faction":"__proto__"}', '{"faction":"toString"}', '{"oppon
   await page.getByTestId('continue').click();
   const hint = await page.locator('.io-dock-hint').textContent();
   check(hint.includes('Round 2/'), `exit mid-playback, Continue: the resolved round stands (${hint.slice(0, 20)})`);
+  check(await page.getByTestId('report').isVisible().catch(() => false), 'resuming shows the last round\'s report (RT-06)');
+  await ctx.close();
+}
+
+// --- 6b2. Leaving during the deciding round still shows the result (RT-05) ---
+{
+  const { ctx, page } = await open();
+  await page.getByTestId('deploy').click();
+  await page.getByTestId('ready').waitFor();
+  // One round from victory: 29 VP and every Key Installation, each well garrisoned.
+  await page.evaluate(() => {
+    const m = JSON.parse(localStorage.getItem('island_ops_match_v1'));
+    const g = m.game;
+    const me = g.factions.find((f) => g.players[f].human);
+    g.players[me].vp = 29;
+    for (const r of ['tengah', 'seletar', 'paya-lebar', 'changi', 'tuas', 'sembawang', 'tanjong-pagar', 'marina-bay', 'jurong-island', 'bukit-timah', 'woodlands'])
+      g.map[r] = { ...g.map[r], owner: me, troops: 40 };
+    m.draft = [];
+    localStorage.setItem('island_ops_match_v1', JSON.stringify(m));
+  });
+  await page.reload();
+  await page.getByTestId('continue').click();
+  await deployAll(page);
+  await page.getByTestId('ready').click();
+  await page.getByTestId('skip').waitFor();
+  await page.getByRole('button', { name: /Main menu/ }).click();
+  const offered = await page.getByTestId('continue').isVisible().catch(() => false);
+  check(offered, 'leaving during the deciding round keeps the finished match');
+  if (offered) {
+    await page.getByTestId('continue').click();
+    check(await page.getByRole('heading', { name: 'Victory' }).isVisible({ timeout: 4000 }).catch(() => false), 'Continue shows the result: Victory');
+    await page.reload();
+    check(!(await page.getByTestId('continue').isVisible().catch(() => false)), 'once the result has been shown the save is gone');
+  }
+  await ctx.close();
+}
+
+// --- 6b3. Landscape phone: the picker's Send button is on screen and on top (RT-03) ---
+{
+  const { ctx, page } = await open({ width: 844, height: 390 });
+  await page.getByTestId('deploy').click();
+  await deployAll(page);
+  await page.getByTestId('tool-move').click();
+  const [home] = await mine(page);
+  await click(page, `path[data-region="${home}"]`);
+  const target = await page.$eval('path.io-region.io-hl-target', (e) => e.getAttribute('data-region'));
+  await click(page, `path[data-region="${target}"]`);
+  const hit = await page.evaluate(() => {
+    const b = document.querySelector('[data-testid="picker-ok"]').getBoundingClientRect();
+    const el = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    return !!el?.closest('[data-testid="picker-ok"]') && b.bottom <= window.innerHeight;
+  });
+  check(hit, 'landscape phone: the picker\'s Send button is visible and clickable');
   await ctx.close();
 }
 
@@ -185,6 +238,11 @@ for (const [label, mutate] of [
   ['ship in an unknown zone', 'm.game.ships[0].zone = "NOWHERE"'],
   ['player record missing', 'delete m.game.players[m.game.factions[1]]'],
   ['malformed draft order', 'm.draft = [{ kind: "MOVE", from: "nowhere" }]'],
+  ['null log entry', 'm.game.log.push(null)'],
+  ['log entry from an unknown side', 'm.game.log.push({ round: 1, who: "ZZZ", text: "x" })'],
+  ['log text not a string', 'm.game.log.push({ round: 1, who: null, text: { x: 1 } })'],
+  ['round beyond the limit', 'm.game.round = 99'],
+  ['duplicate ship id', 'm.game.ships.push({ ...m.game.ships[0] })'],
 ]) {
   const { ctx, page } = await open();
   await page.getByTestId('deploy').click();
@@ -200,6 +258,8 @@ for (const [label, mutate] of [
   if (offered) {
     await page.getByTestId('continue').click();
     await page.waitForTimeout(500);
+    await page.getByTestId('tab-log').click().catch(() => {});
+    await page.waitForTimeout(200);
   }
   const crashed = await page.getByText('Something went wrong').isVisible().catch(() => false);
   check(!crashed, `corrupt saved match (${label}) never crashes the game${offered ? ' (offered, but loads)' : ''}`);
