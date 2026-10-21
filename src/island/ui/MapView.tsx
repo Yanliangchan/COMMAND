@@ -1,24 +1,31 @@
 // ============================================================================
-// The board, drawn as a tabletop diorama: a raised island on a patterned sea,
-// regions painted in their owner's colour (and texture, so colour is never the
-// only cue), chunky strength badges (exact, a range, or "?" under fog), Key
-// Installations ringed in gold, the four sea zones with their ships, and every
-// planned order as an arrow.
+// The board, drawn as a tabletop diorama: a raised island on a patterned sea —
+// a layered cliff plinth with beaches, surf and reef shallows, bridges to the
+// offshore islands, faint hill contours — regions painted in their owner's
+// colour (and texture, and an emblem on every badge, so colour is never the
+// only cue), chunky bevelled strength badges (exact, a range, or "?" under
+// fog), Key Installations ringed in gold, the four sea zones as compass pads
+// with their warships, and every planned order as an arrow.
 //
 // The camera fits the island into whatever part of the screen the HUD leaves
 // free, and can be zoomed and panned (wheel, pinch, drag on the sea, buttons).
-// Regions are keyboard-focusable; the arrow keys walk between neighbours.
+// The map is ONE tab stop (a roving tabindex): the arrow keys walk between
+// neighbouring regions, and out over the water to your own ships and to the
+// sea zones a selected ship can sail to.
 //
-// Nothing here animates continuously across the whole board: every looping
-// animation is small (a pulsing ring, a marching arrow), so an idle board costs
-// next to nothing to keep on screen.
+// Motion has a purpose and a budget. One-shot: a capture floods the new colour
+// out from the badge, numbers pop when they change, orders draw themselves in,
+// ships sail the sea lanes with a wake. Looping: only small things — the
+// selected badge's pulse, the focus ring's marching dash, a ship's stepped
+// bob — so an idle board costs next to nothing. All of it stops under
+// prefers-reduced-motion.
 // ============================================================================
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BOARD, INSTALLATIONS, SEA_ZONES, ZONE_IDS, ZoneId, polyPath } from '../map';
 import { FACTIONS, FACTION_IDS, FactionId, Ship } from '../types';
-import { BADGE_NUDGE, FACTION_INK, FOG, LABEL_SIDE, LANDMARK_AT } from './theme';
-import { Emblem, Icon, LandmarkGlyph } from './Glyphs';
+import { BADGE_NUDGE, FACTION_INK, FOG, HILLS, LABEL_SIDE, LANDMARK_AT, SEA_LANES } from './theme';
+import { EmblemMark, Icon, LandmarkGlyph } from './Glyphs';
 import './map.css';
 import { Effects, Traveller, prefersReducedMotion } from './Effects';
 
@@ -108,19 +115,41 @@ interface Props {
   describe?: (id: string) => string;
   /** The region the source/selection is on, for the keyboard. */
   selected?: string | null;
+  /**
+   * The player's faction: only their ships are focusable and look clickable.
+   * Optional — without it the owner of most `home` regions is assumed.
+   */
+  me?: FactionId;
 }
 
 // ---------------------------------------------------------------------------
 // Static geometry
 // ---------------------------------------------------------------------------
 
+type Pt = [number, number];
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 const VIEW = { x: 18, y: 46, w: 964, h: 510 };
 const MAIN_PATH = polyPath(BOARD.mainland);
 const ISLAND_PATHS = BOARD.islands.map((i) => ({ id: i.id, d: polyPath(i.poly) }));
+const LAND_PATH = [MAIN_PATH, ...ISLAND_PATHS.map((i) => i.d)].join(' ');
 const REGION_PATHS = Object.fromEntries(BOARD.regions.map((r) => [r.id, polyPath(r.poly)]));
+const OUTLINES = BOARD.regions.map((r) => REGION_PATHS[r.id]).join(' ');
 const SECTOR_BORDERS = BOARD.borders.filter((b) => BOARD.byId[b.a].sector !== BOARD.byId[b.b].sector);
 const MAINLAND = BOARD.regions.filter((r) => r.landmass === 'mainland');
 const ISLANDS = BOARD.regions.filter((r) => r.landmass !== 'mainland');
+
+const bboxOf = (pts: Pt[]) => {
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+};
+const LAND_BOX = bboxOf([...BOARD.mainland, ...BOARD.islands.flatMap((i) => i.poly)] as Pt[]);
+const REGION_BOX = Object.fromEntries(BOARD.regions.map((r) => [r.id, bboxOf(r.poly as Pt[])]));
 
 const BADGE_R = 15;
 
@@ -134,46 +163,203 @@ export const BADGE_AT: Record<string, [number, number]> = Object.fromEntries(
 
 const at = (id: string) => BADGE_AT[id];
 
-/** A quadratic route from a to b bowed by control point c, stopping `stop` short of b. */
-function route(x1: number, y1: number, x2: number, y2: number, cx: number, cy: number, stop: number) {
-  const len = Math.hypot(x2 - x1, y2 - y1) || 1;
-  const t = Math.max(0.45, 1 - stop / len);
-  const bx = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
-  const by = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
-  // Tangent at t, for the arrowhead.
-  const tx = 2 * (1 - t) * (cx - x1) + 2 * t * (x2 - cx);
-  const ty = 2 * (1 - t) * (cy - y1) + 2 * t * (y2 - cy);
-  const mid: [number, number] = [0.25 * x1 + 0.5 * cx + 0.25 * x2, 0.25 * y1 + 0.5 * cy + 0.25 * y2];
-  return { d: `M${x1.toFixed(1)},${y1.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`, end: [bx, by] as [number, number], angle: (Math.atan2(ty, tx) * 180) / Math.PI, mid };
+/** Where a region's name sits relative to its badge. */
+function labelSpot(id: string, rx: number, ki: boolean) {
+  const side = LABEL_SIDE[id];
+  return side === 'left'
+    ? { x: -rx - (ki ? 9 : 6), y: 4, anchor: 'end' as const }
+    : side === 'above'
+      ? { x: 0, y: -BADGE_R - (ki ? 15 : 7), anchor: 'middle' as const }
+      : { x: 0, y: BADGE_R + (ki ? 16 : 12), anchor: 'middle' as const };
 }
 
-const ISLAND_CENTRE: [number, number] = [520, 290];
+/** Average advance of the label font (Nunito 900, 10 units), measured in the browser. */
+const LABEL_CHAR = 5.55;
 
-function arrowGeometry(a: OrderArrow) {
-  if (a.sail) {
-    const [x1, y1] = SEA_ZONES[a.from as ZoneId].anchor;
-    const [x2, y2] = SEA_ZONES[a.to as ZoneId].anchor;
-    // Bow away from the island so a sail never cuts across the land.
-    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-    const ox = mx - ISLAND_CENTRE[0], oy = my - ISLAND_CENTRE[1];
-    const ol = Math.hypot(ox, oy) || 1;
-    const push = Math.hypot(x2 - x1, y2 - y1) * 0.45;
-    return route(x1, y1, x2, y2, mx + (ox / ol) * push, my + (oy / ol) * push, 30);
+function labelBox(id: string, rx: number, ki: boolean): Box {
+  const [x, y] = at(id);
+  const l = labelSpot(id, rx, ki);
+  const w = BOARD.byId[id].name.length * LABEL_CHAR + 4;
+  const left = l.anchor === 'middle' ? x + l.x - w / 2 : x + l.x - w;
+  return { x: left, y: y + l.y - 9, w, h: 12.5 };
+}
+
+const badgeRx = (b?: Badge) => (b && b.text.length > 2 ? BADGE_R + 6 : BADGE_R);
+
+// --- routes -----------------------------------------------------------------
+
+interface Route {
+  pts: Pt[];
+  d: string;
+  end: Pt;
+  angle: number;
+}
+
+const ptsPath = (pts: Pt[]) => 'M' + pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' L');
+
+function mkRoute(pts: Pt[]): Route {
+  const e = pts[pts.length - 1], p = pts[pts.length - 2] ?? pts[0];
+  return { pts, d: ptsPath(pts), end: e, angle: (Math.atan2(e[1] - p[1], e[0] - p[0]) * 180) / Math.PI };
+}
+
+/** Points along a quadratic from a to b bowed by c, from t = 0 to tEnd. */
+function quadPts(a: Pt, c: Pt, b: Pt, tEnd: number, n = 22): Pt[] {
+  const out: Pt[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = (i / n) * tEnd;
+    out.push([(1 - t) * (1 - t) * a[0] + 2 * (1 - t) * t * c[0] + t * t * b[0], (1 - t) * (1 - t) * a[1] + 2 * (1 - t) * t * c[1] + t * t * b[1]]);
   }
-  const [x1, y1] = at(a.from);
-  const [x2, y2] = at(a.to);
-  let cx: number, cy: number;
-  if (a.via) {
-    // Swing out over the sea zone the landing crosses.
-    const [ax, ay] = SEA_ZONES[a.via].anchor;
-    cx = (3 * ax - (x1 + x2) / 2) / 2;
-    cy = (3 * ay - (y1 + y2) / 2) / 2;
-  } else {
-    const len = Math.hypot(x2 - x1, y2 - y1) || 1;
-    cx = (x1 + x2) / 2 - ((y2 - y1) / len) * len * 0.18;
-    cy = (y1 + y2) / 2 + ((x2 - x1) / len) * len * 0.18;
+  return out;
+}
+
+/** An open Catmull-Rom curve through waypoints. */
+function smooth(ctrl: Pt[], per = 7): Pt[] {
+  const out: Pt[] = [];
+  const n = ctrl.length;
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = ctrl[Math.max(0, i - 1)], p1 = ctrl[i], p2 = ctrl[i + 1], p3 = ctrl[Math.min(n - 1, i + 2)];
+    for (let s = 0; s < per; s++) {
+      const t = s / per, t2 = t * t, t3 = t2 * t;
+      const f = (a: number, b: number, c: number, d: number) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push([f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]);
+    }
   }
-  return route(x1, y1, x2, y2, cx, cy, 30);
+  out.push(ctrl[n - 1]);
+  return out;
+}
+
+/** Drop `len` units of arc from the end of a polyline. */
+function trimEnd(pts: Pt[], len: number): Pt[] {
+  const out = pts.slice();
+  let left = len;
+  while (out.length > 2) {
+    const a = out[out.length - 2], b = out[out.length - 1];
+    const seg = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (seg > left) {
+      const k = (seg - left) / seg;
+      out[out.length - 1] = [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+      return out;
+    }
+    left -= seg;
+    out.pop();
+  }
+  return out;
+}
+
+const laneCache = new Map<string, Pt[]>();
+/** The sea lane from one zone to another, through open water. */
+function seaLane(from: ZoneId, to: ZoneId): Pt[] {
+  const key = `${from}-${to}`;
+  const hit = laneCache.get(key);
+  if (hit) return hit;
+  let way: Pt[] | undefined = SEA_LANES[key] ?? (SEA_LANES[`${to}-${from}`] ? [...SEA_LANES[`${to}-${from}`]].reverse() : undefined);
+  if (!way) {
+    // Not neighbours: go by way of a zone that neighbours both.
+    const mid = SEA_ZONES[from].neighbours.find((z) => SEA_ZONES[z].neighbours.includes(to));
+    way = mid ? [...seaLane(from, mid), ...seaLane(mid, to).slice(1)] : [SEA_ZONES[from].anchor, SEA_ZONES[to].anchor];
+    laneCache.set(key, way);
+    return way;
+  }
+  const pts = smooth(way as Pt[]);
+  laneCache.set(key, pts);
+  return pts;
+}
+
+function arrowRoute(a: OrderArrow): Route {
+  if (a.sail) return mkRoute(trimEnd(seaLane(a.from as ZoneId, a.to as ZoneId), 30));
+  const p = at(a.from), q = at(a.to);
+  const len = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+  // A landing swings out over the sea zone it crosses; a march bows gently to one side.
+  const c: Pt = a.via
+    ? [(3 * SEA_ZONES[a.via].anchor[0] - (p[0] + q[0]) / 2) / 2, (3 * SEA_ZONES[a.via].anchor[1] - (p[1] + q[1]) / 2) / 2]
+    : [(p[0] + q[0]) / 2 - (q[1] - p[1]) * 0.18, (p[1] + q[1]) / 2 + (q[0] - p[0]) * 0.18];
+  return mkRoute(quadPts(p, c, q, Math.max(0.45, 1 - 30 / len)));
+}
+
+/** Sideways nudges a mark may take off its route to stay clear of names and badges. */
+const SIDE_STEPS = [0, 12, -12, 22, -22, 32, -32];
+
+/** A point `off` units to the side of a polyline at index i. */
+function sideStep(pts: Pt[], i: number, off: number): Pt {
+  const p = pts[i];
+  if (!off) return p;
+  const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  return [p[0] - ((b[1] - a[1]) / len) * off, p[1] + ((b[0] - a[0]) / len) * off];
+}
+
+const overlap = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+
+/**
+ * Where order-count chips and travelling tokens settle: on their own route,
+ * clear of every badge and region name, and fanned apart from each other.
+ */
+function placeRouteMarks(arrows: OrderArrow[], routes: Map<string, Route>, badges: Record<string, Badge>, labels: boolean, keep: Map<string, Pt[]>) {
+  const obst: Box[] = [];
+  for (const r of BOARD.regions) {
+    const b = badges[r.id];
+    if (!b) continue;
+    const rx = badgeRx(b) + 3, ki = !!INSTALLATIONS[r.id];
+    const [x, y] = at(r.id);
+    obst.push({ x: x - rx, y: y - BADGE_R - (ki ? 9 : 3), w: 2 * rx, h: 2 * BADGE_R + (ki ? 12 : 6) });
+    if (labels) obst.push(labelBox(r.id, badgeRx(b), ki));
+  }
+  const placed: Box[] = [];
+  const cost = (bx: Box) => obst.reduce((n, o) => n + overlap(bx, o), 0) + placed.reduce((n, o) => n + 2.5 * overlap(bx, o), 0);
+  const chips = new Map<string, Pt>();
+  const tokens = new Map<string, Pt[]>();
+  // Tokens first: they stop at the far end, so they get first pick near it.
+  for (const a of arrows) {
+    if (!a.label || !a.travel) continue;
+    // A token already under way keeps its route: changing it would restart the run.
+    const kept = keep.get(a.id);
+    if (kept) {
+      const [x, y] = kept[kept.length - 1];
+      placed.push({ x: x - 12, y: y - 12, w: 24, h: 24 });
+      tokens.set(a.id, kept);
+      continue;
+    }
+    const pts = routes.get(a.id)!.pts;
+    const n = pts.length - 1;
+    let best = { i: n, p: pts[n] }, bestCost = Infinity;
+    for (let i = n; i >= Math.floor(n * 0.35); i--) {
+      for (const off of SIDE_STEPS) {
+        const p = sideStep(pts, i, off);
+        const c = cost({ x: p[0] - 12, y: p[1] - 12, w: 24, h: 24 }) + (n - i) * 2 + Math.abs(off) * 0.8;
+        if (c < bestCost) (bestCost = c), (best = { i, p });
+      }
+    }
+    const [x, y] = best.p;
+    placed.push({ x: x - 12, y: y - 12, w: 24, h: 24 });
+    const run = pts.slice(0, best.i + 1);
+    if (best.p !== pts[best.i]) run.push(best.p);
+    tokens.set(a.id, run);
+  }
+  for (const a of arrows) {
+    if (!a.label || a.travel) continue;
+    const pts = routes.get(a.id)!.pts;
+    const n = pts.length - 1;
+    let best: Pt = pts[Math.round(n / 2)], bestCost = Infinity;
+    for (let f = 0.2; f <= 0.81; f += 0.04) {
+      const i = Math.round(n * f);
+      for (const off of SIDE_STEPS) {
+        const p = sideStep(pts, i, off);
+        const c = cost({ x: p[0] - 13, y: p[1] - 9, w: 26, h: 18 }) + Math.abs(f - 0.5) * 40 + Math.abs(off) * 0.8;
+        if (c < bestCost) (bestCost = c), (best = p);
+      }
+    }
+    placed.push({ x: best[0] - 13, y: best[1] - 9, w: 26, h: 18 });
+    chips.set(a.id, best);
+  }
+  return { chips, tokens };
+}
+
+/** Keyframes for a glide along a polyline, spaced by arc length so the speed is even. */
+function glideFrames(pts: Pt[]): Keyframe[] {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const total = cum[cum.length - 1] || 1;
+  return pts.map((p, i) => ({ offset: cum[i] / total, transform: `translate(${p[0].toFixed(1)}px, ${p[1].toFixed(1)}px)` }));
 }
 
 function regionAt(clientX: number, clientY: number): string | null {
@@ -197,65 +383,149 @@ function neighbourToward(id: string, dx: number, dy: number): string | null {
   return best;
 }
 
+interface NavItem {
+  key: string;
+  kind: 'r' | 's' | 'z';
+  id: string;
+  x: number;
+  y: number;
+}
+
+/** The nearest item in a direction among `items`, or null. */
+function nearestToward(from: NavItem, items: NavItem[], dx: number, dy: number, reach: number): NavItem | null {
+  let best: NavItem | null = null, bestScore = -Infinity;
+  for (const it of items) {
+    if (it.key === from.key) continue;
+    const vx = it.x - from.x, vy = it.y - from.y;
+    const len = Math.hypot(vx, vy) || 1;
+    if (len > reach) continue;
+    const cos = (vx * dx + vy * dy) / len;
+    if (cos < 0.3) continue;
+    const score = cos - len / 400;
+    if (score > bestScore) (bestScore = score), (best = it);
+  }
+  return best;
+}
+
 // ---------------------------------------------------------------------------
 // Pieces
 // ---------------------------------------------------------------------------
 
-/** Per-faction textures laid over the fill, so territories differ by more than hue. */
+/** Per-faction textures laid over the fill, so territories differ by more than hue (and survive colour-blindness). */
 function FactionPatterns() {
-  const ink = 'rgba(255,255,255,0.2)';
+  const ink = 'rgba(255,255,255,0.34)';
   return (
     <>
+      {/* Lion: a diamond lattice. */}
       <pattern id="io-pat-SINGA" width="12" height="12" patternUnits="userSpaceOnUse">
-        <path d="M0 6 L6 0 L12 6 L6 12Z" fill="none" stroke={ink} strokeWidth="1.2" />
+        <path d="M0 6 L6 0 L12 6 L6 12Z" fill="none" stroke={ink} strokeWidth="1.4" />
       </pattern>
+      {/* Tiger: bold diagonal stripes. */}
       <pattern id="io-pat-HARIMAU" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
-        <rect width="4.5" height="14" fill="rgba(60,30,0,0.16)" />
+        <rect width="5" height="14" fill="rgba(70,32,0,0.26)" />
       </pattern>
+      {/* Eagle: polka dots. */}
       <pattern id="io-pat-HELANG" width="11" height="11" patternUnits="userSpaceOnUse">
-        <circle cx="5.5" cy="5.5" r="1.6" fill={ink} />
+        <circle cx="5.5" cy="5.5" r="2" fill={ink} />
       </pattern>
+      {/* Shark: waves. */}
       <pattern id="io-pat-JERUNG" width="18" height="10" patternUnits="userSpaceOnUse">
-        <path d="M0 6 Q4.5 2 9 6 T18 6" fill="none" stroke={ink} strokeWidth="1.3" />
+        <path d="M0 6 Q4.5 2 9 6 T18 6" fill="none" stroke={ink} strokeWidth="1.6" />
       </pattern>
     </>
   );
 }
 
-function Plinth() {
+/** Everything under the land: reef shallows, surf and foam, bridges, and the cliff the island stands on. */
+const Plinth = memo(function Plinth() {
   return (
     <g pointerEvents="none">
-      {BOARD.crossings.map(([a, b]) => {
-        const p = BOARD.byId[a].site, q = BOARD.byId[b].site;
-        return <line key={a + b} x1={p[0]} y1={p[1]} x2={q[0]} y2={q[1]} className="io-crossing" />;
-      })}
-      <g className="io-surf">
-        <path d={MAIN_PATH} />
-        {ISLAND_PATHS.map((i) => (
-          <path key={i.id} d={i.d} />
-        ))}
+      <path d={LAND_PATH} className="io-reef" />
+      <path d={LAND_PATH} className="io-shallows" />
+      <path d={LAND_PATH} className="io-surf" />
+      <path d={LAND_PATH} className="io-foam" />
+      <g className="io-bridges">
+        {BOARD.crossings.map(([a, b]) => {
+          const p = BOARD.byId[a].site, q = BOARD.byId[b].site;
+          return (
+            <g key={a + b}>
+              <line x1={p[0]} y1={p[1] + 4} x2={q[0]} y2={q[1] + 4} className="io-bridge-shadow" />
+              <line x1={p[0]} y1={p[1]} x2={q[0]} y2={q[1]} className="io-bridge-casing" />
+              <line x1={p[0]} y1={p[1]} x2={q[0]} y2={q[1]} className="io-bridge-deck" />
+              <line x1={p[0]} y1={p[1]} x2={q[0]} y2={q[1]} className="io-bridge-line" />
+            </g>
+          );
+        })}
       </g>
-      <g transform="translate(0 9)" fill="#4f3a28">
-        <path d={MAIN_PATH} />
-        {ISLAND_PATHS.map((i) => (
-          <path key={i.id} d={i.d} />
-        ))}
+      <path d={LAND_PATH} transform="translate(0 11)" className="io-cliff-base" />
+      <path d={LAND_PATH} transform="translate(0 8)" className="io-cliff-low" />
+      <path d={LAND_PATH} transform="translate(0 4.5)" className="io-cliff-high" />
+      <path d={LAND_PATH} transform="translate(0 6.5)" className="io-cliff-strata" />
+    </g>
+  );
+});
+
+/** Faint hill contours and hillshade over the land (clipped to it). */
+const Terrain = memo(function Terrain() {
+  return (
+    <g pointerEvents="none" className="io-terrain">
+      {HILLS.map((h, i) => (
+        <g key={i} transform={`translate(${h.at[0]} ${h.at[1]}) rotate(-14)`}>
+          <ellipse rx={h.r + h.rings * 9 + 8} ry={(h.r + h.rings * 9 + 8) * 0.7} fill="url(#io-hillshade)" stroke="none" />
+          {Array.from({ length: h.rings }, (_, k) => (
+            <ellipse key={k} rx={h.r + k * 9} ry={(h.r + k * 9) * 0.68} cx={k * 1.5} cy={k * 1.2} className="io-contour" />
+          ))}
+        </g>
+      ))}
+    </g>
+  );
+});
+
+/** A compass rose in the open sea off the south-west. */
+const Compass = memo(function Compass() {
+  return (
+    <g transform="translate(78 506)" className="io-compass" pointerEvents="none">
+      <circle r={27} className="io-compass-ring" />
+      <circle r={21} className="io-compass-ring io-compass-inner" />
+      <path d="M0 -25 L4 -4 L0 0 Z M0 25 L-4 4 L0 0Z M25 0 L4 4 L0 0Z M-25 0 L-4 -4 L0 0Z" className="io-compass-lit" />
+      <path d="M0 -25 L-4 -4 L0 0 Z M0 25 L4 4 L0 0Z M25 0 L4 -4 L0 0Z M-25 0 L-4 4 L0 0Z" className="io-compass-dark" />
+      <path d="M0 0 L11 -11 L3 -3Z M0 0 L-11 11 L-3 3Z M0 0 L11 11 L3 3Z M0 0 L-11 -11 L-3 -3Z" className="io-compass-dark" opacity={0.7} />
+      <text y={-31} className="io-compass-n">
+        N
+      </text>
+    </g>
+  );
+});
+
+const Stronghold = () => <path d="M-3.6 3.6 V-2 H-2.2 V-3.8 H-0.7 V-2 H0.7 V-3.8 H2.2 V-2 H3.6 V3.6Z" />;
+
+const StarPath = 'M0 -6 L1.8 -1.8 L6 -1.8 L2.6 1 L3.8 5.4 L0 2.8 L-3.8 5.4 L-2.6 1 L-6 -1.8 L-1.8 -1.8Z';
+
+/** A small warship in profile, bow to the right, standing on its waterline at y ≈ 8. */
+function Warship({ ship, left }: { ship: Ship; left: boolean }) {
+  const f = FACTIONS[ship.owner];
+  return (
+    <g transform="scale(0.82)">
+      <ellipse cy={9.4} rx={21} ry={3.4} className="io-ship-shadow" />
+      <g transform={left ? 'scale(-1 1)' : undefined}>
+        <path d="M-17 6.5 Q-34 3.5 -52 9 Q-34 11 -17 9.8Z" className="io-ship-wake" />
+        <path d="M-17.5 7.4 Q-24 6.4 -30 8.6 Q-24 9.8 -17 9.2Z M15 6.2 Q20 4.8 23 7.8 Q19 9 14.5 8.6Z" className="io-ship-foam" />
+        <path d="M-0.5 -15.5 L5.5 -13.8 L-0.5 -12.2Z" fill={f.color} stroke="#fff" strokeWidth={0.8} strokeLinejoin="round" />
+        <path d="M-0.5 -9 V-15.5 M-3.5 -12.6 H2.5 M11 -1.2 V-3.4 H14.5 M14 -2.4 H21.5" className="io-ship-rig" />
+        <path d="M-10.5 -1 V-5.6 H-4.5 V-9.6 H3.5 V-5.6 H9.5 V-1Z" className="io-ship-deck" />
+        <rect x={-3} y={-8.4} width={5.4} height={1.7} rx={0.6} className="io-ship-glass" />
+        <path d="M-18.5 -1.2 H20.5 L14.5 8.2 H-15.5Z" fill={f.color} stroke="#fff" strokeWidth={1.9} strokeLinejoin="round" />
+        <path d="M-16.6 5 H16.6 L14.5 8.2 H-15.5Z" fill={f.deep} />
       </g>
-      <g transform="translate(0 5)" fill="#7b5c3e">
-        <path d={MAIN_PATH} />
-        {ISLAND_PATHS.map((i) => (
-          <path key={i.id} d={i.d} />
-        ))}
+      <circle cx={left ? 3 : -3} cy={3.2} r={5.6} fill="#fff" stroke={f.deep} strokeWidth={1} />
+      <g transform={`translate(${left ? 3 : -3} 3.2)`}>
+        <EmblemMark faction={ship.owner} size={8.4} color={f.deep} />
       </g>
     </g>
   );
 }
 
-const ShipTokenPath = 'M-15 -1 H15 L10 8 H-10Z M-7 -1 V-6 H5 V-1';
-
-const Stronghold = () => <path d="M-3.6 3.6 V-2 H-2.2 V-3.8 H-0.7 V-2 H0.7 V-3.8 H2.2 V-2 H3.6 V3.6Z" />;
-
-const StarPath = 'M0 -6 L1.8 -1.8 L6 -1.8 L2.6 1 L3.8 5.4 L0 2.8 L-3.8 5.4 L-2.6 1 L-6 -1.8 L-1.8 -1.8Z';
+const reduced = () => prefersReducedMotion();
 
 // ---------------------------------------------------------------------------
 // Camera
@@ -287,7 +557,7 @@ const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
 function MapViewInner({
   badges, highlights = {}, dimOthers = false, fx = [], arrows = [], markers = [], ships = [], selectedShip = null, zoneHighlights = {},
-  onRegion, onZone, onShip, showLabels = true, threats = [], drag, focus = null, insets = NO_INSETS, camera = false, cover = false, home, describe, selected,
+  onRegion, onZone, onShip, showLabels = true, threats = [], drag, focus = null, insets = NO_INSETS, camera = false, cover = false, home, describe, selected, me,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -316,16 +586,27 @@ function MapViewInner({
     [fit, maxZ, safeW, safeH],
   );
 
-  // First real layout: on a small screen, open zoomed in on the player's own ground.
+  // First real layout: on a small screen, open zoomed in on the player's own
+  // ground; on a portrait screen, open with the land (not the sea round it)
+  // filling the width, leaning toward the player's ground.
   useEffect(() => {
     if (!camera || opened.current || !W || !H) return;
     opened.current = true;
-    if (fit >= 0.7 || !home?.length) return;
-    const pts = home.map(at);
-    const cx = pts.reduce((n, p) => n + p[0], 0) / pts.length;
-    const cy = pts.reduce((n, p) => n + p[1], 0) / pts.length;
-    setCam(clampCam({ z: comfortable / fit, cx, cy }));
-  }, [camera, W, H, fit, home, clampCam]);
+    const pts = (home ?? []).map(at);
+    const hx = pts.length ? pts.reduce((n, p) => n + p[0], 0) / pts.length : (LAND_BOX.x0 + LAND_BOX.x1) / 2;
+    const hy = pts.length ? pts.reduce((n, p) => n + p[1], 0) / pts.length : (LAND_BOX.y0 + LAND_BOX.y1) / 2;
+    if (fit < 0.7 && pts.length) {
+      setCam(clampCam({ z: comfortable / fit, cx: hx, cy: hy }));
+      return;
+    }
+    if (H > W) {
+      // Portrait: crop the empty sea, and a little of the far ends if the
+      // height allows, so the badges come up to a comfortable size.
+      const landW = LAND_BOX.x1 - LAND_BOX.x0, landH = LAND_BOX.y1 - LAND_BOX.y0;
+      const s = Math.max(safeW / (landW + 16), Math.min((safeH * 0.75) / landH, safeW / (landW * 0.86)));
+      setCam(clampCam({ z: Math.min(maxZ, s / fit), cx: (hx + (LAND_BOX.x0 + LAND_BOX.x1) / 2) / 2, cy: (LAND_BOX.y0 + LAND_BOX.y1) / 2 }));
+    }
+  }, [camera, W, H, fit, home, clampCam, safeW, safeH, maxZ]);
 
   // Keep the camera legal when the screen or the HUD changes size.
   useEffect(() => setCam((c) => clampCam(c)), [clampCam]);
@@ -536,24 +817,131 @@ function MapViewInner({
     return () => el.removeEventListener('wheel', wheel);
   }, [camera, zoomAt]);
 
-  // --- keyboard ---
-  const focusBadge = (id: string) => {
-    const el = svgRef.current?.querySelector<SVGGElement>(`[data-badge="${id}"]`);
-    el?.focus();
-  };
-  const onBadgeKey = (id: string, e: React.KeyboardEvent) => {
+
+  // --- whose ships are these ---
+  const myFaction = useMemo<FactionId | null>(() => {
+    if (me) return me;
+    if (!home?.length) return null;
+    const n: Partial<Record<FactionId, number>> = {};
+    for (const id of home) {
+      const o = badges[id]?.owner;
+      if (o) n[o] = (n[o] ?? 0) + 1;
+    }
+    const top = (Object.entries(n) as [FactionId, number][]).sort((a, b) => b[1] - a[1])[0];
+    return top ? top[0] : null;
+  }, [me, home, badges]);
+  const isMine = useCallback((sh: Ship) => !!onShip && (myFaction ? sh.owner === myFaction : true), [onShip, myFaction]);
+
+  // --- ships: where each one rides, and a glide along the sea lane when it moves ---
+  const shipSpots = useMemo(() => {
+    const out: Record<string, { x: number; y: number; zone: ZoneId }> = {};
+    for (const z of ZONE_IDS) {
+      const here = ships.filter((sh) => sh.zone === z);
+      const [x, y] = SEA_ZONES[z].anchor;
+      // A crowded zone sails in a staggered flotilla rather than one long line.
+      const tight = here.length > 3;
+      const gap = tight ? 31 : 38;
+      here.forEach((sh, i) => (out[sh.id] = { x: x + (i - (here.length - 1) / 2) * gap, y: y + 3 + (tight ? (i % 2 ? 5 : -4) : 0), zone: z }));
+    }
+    return out;
+  }, [ships]);
+  const prevSpots = useRef<Record<string, { x: number; y: number; zone: ZoneId }>>({});
+  const [faces, setFaces] = useState<Record<string, boolean>>({});
+  useLayoutEffect(() => {
+    const prev = prevSpots.current;
+    prevSpots.current = shipSpots;
+    const next: Record<string, boolean> = {};
+    let changed = false;
+    for (const [id, s] of Object.entries(shipSpots)) {
+      const p = prev[id];
+      // Ships at rest face the island; a ship that sails faces where it went.
+      next[id] = faces[id] ?? s.x > 520;
+      if (!(id in faces)) changed = true;
+      if (!p || (p.x === s.x && p.y === s.y)) continue;
+      const voyage = p.zone !== s.zone;
+      const path: Pt[] = voyage ? [[p.x, p.y], ...seaLane(p.zone, s.zone).slice(2, -2).map((q): Pt => [q[0], q[1] + 3]), [s.x, s.y]] : [[p.x, p.y], [s.x, s.y]];
+      const left = s.x < p.x;
+      if (next[id] !== left) (next[id] = left), (changed = true);
+      if (reduced()) continue;
+      const el = svgRef.current?.querySelector<SVGGElement>(`[data-ship="${id}"]`);
+      if (!el || typeof el.animate !== 'function') continue;
+      el.classList.add('io-ship-moving');
+      const anim = el.animate(glideFrames(path), { duration: voyage ? 1700 : 420, easing: 'cubic-bezier(0.45, 0, 0.25, 1)' });
+      const done = () => el.classList.remove('io-ship-moving');
+      anim.onfinish = done;
+      anim.oncancel = done;
+    }
+    if (changed) setFaces(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shipSpots]);
+
+  // --- captures: flood the new owner's colour out from the badge ---
+  const prevOwners = useRef<Record<string, FactionId> | null>(null);
+  const [sweeps, setSweeps] = useState<{ key: string; id: string; from: FactionId; to: FactionId }[]>([]);
+  const sweepSeq = useRef(0);
+  useLayoutEffect(() => {
+    const owners: Record<string, FactionId> = {};
+    for (const id in badges) owners[id] = badges[id].owner;
+    const prev = prevOwners.current;
+    prevOwners.current = owners;
+    if (!prev || reduced()) return;
+    const changed = Object.keys(owners).filter((id) => prev[id] && prev[id] !== owners[id]);
+    // A whole new board (a new game) isn't a capture.
+    if (!changed.length || changed.length > 8) return;
+    const add = changed.map((id) => ({ key: `${id}-${++sweepSeq.current}`, id, from: prev[id], to: owners[id] }));
+    setSweeps((s) => [...s.filter((x) => !changed.includes(x.id)), ...add]);
+    const keys = add.map((a) => a.key);
+    window.setTimeout(() => setSweeps((s) => s.filter((x) => !keys.includes(x.key))), 1100);
+  }, [badges]);
+
+  // --- keyboard: the map is one tab stop; arrows rove between regions, your ships and sail targets ---
+  const navItems = useMemo<NavItem[]>(() => {
+    const out: NavItem[] = [];
+    if (onRegion) for (const r of BOARD.regions) if (badges[r.id]) out.push({ key: `r:${r.id}`, kind: 'r', id: r.id, x: at(r.id)[0], y: at(r.id)[1] });
+    for (const sh of ships) {
+      const s = shipSpots[sh.id];
+      if (s && isMine(sh)) out.push({ key: `s:${sh.id}`, kind: 's', id: sh.id, x: s.x, y: s.y });
+    }
+    if (onZone) for (const z of ZONE_IDS) if (zoneHighlights[z] === 'sail') out.push({ key: `z:${z}`, kind: 'z', id: z, x: SEA_ZONES[z].anchor[0], y: SEA_ZONES[z].anchor[1] - 18 });
+    return out;
+  }, [onRegion, onZone, badges, ships, shipSpots, isMine, zoneHighlights]);
+  const [rove, setRove] = useState<string | null>(null);
+  const roveKey = useMemo(() => {
+    const has = (k: string) => navItems.some((i) => i.key === k);
+    if (rove && has(rove)) return rove;
+    for (const k of [selectedShip ? `s:${selectedShip}` : '', selected ? `r:${selected}` : '', home?.[0] ? `r:${home[0]}` : '']) if (k && has(k)) return k;
+    return navItems[0]?.key ?? null;
+  }, [navItems, rove, selected, selectedShip, home]);
+  const tabFor = (key: string) => (key === roveKey ? 0 : -1);
+  const focusNav = (key: string) => svgRef.current?.querySelector<SVGElement>(`[data-nav="${CSS.escape(key)}"]`)?.focus();
+  const onNavKey = (key: string, e: React.KeyboardEvent, activate: () => void) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       e.stopPropagation();
-      onRegion?.(id);
+      activate();
       return;
     }
     const dir: Record<string, [number, number]> = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
     const d = dir[e.key];
     if (!d) return;
     e.preventDefault();
-    const n = neighbourToward(id, d[0], d[1]);
-    if (n) focusBadge(n);
+    const item = navItems.find((i) => i.key === key);
+    if (!item) return;
+    let next: string | null = null;
+    if (item.kind === 'r') {
+      const n = neighbourToward(item.id, d[0], d[1]);
+      if (n) next = `r:${n}`;
+    }
+    if (!next) {
+      // Off the coast: out to a ship or a sail target; from the water, to whatever lies that way.
+      const pool = item.kind === 'r' ? navItems.filter((i) => i.kind !== 'r') : navItems;
+      next = nearestToward(item, pool, d[0], d[1], item.kind === 'r' ? 330 : 440)?.key ?? null;
+    }
+    if (next) focusNav(next);
+  };
+  const onNavFocus = (key: string, x: number, y: number) => {
+    setRove(key);
+    if (camera) glideTo(x, y);
   };
 
   // --- render ---
@@ -562,6 +950,14 @@ function MapViewInner({
   const hitR = Math.min(26, Math.max(BADGE_R + 5, 22 / (scale || 1)));
   const interactive = !!onRegion;
   const dimmed = dimOthers ? BOARD.regions.filter((r) => !highlights[r.id]).map((r) => r.id) : [];
+
+  const routes = useMemo(() => new Map(arrows.map((a) => [a.id, arrowRoute(a)])), [arrows]);
+  const tokenRuns = useRef(new Map<string, Pt[]>());
+  const marks = useMemo(() => {
+    const m = placeRouteMarks(arrows, routes, badges, showLabels, tokenRuns.current);
+    tokenRuns.current = m.tokens;
+    return m;
+  }, [arrows, routes, badges, showLabels]);
 
   const renderRegion = (id: string) => {
     const b = badges[id];
@@ -581,6 +977,22 @@ function MapViewInner({
     const b = badges[id];
     return b ? <path key={id} d={REGION_PATHS[id]} fill={`url(#io-pat-${b.owner})`} /> : null;
   };
+  const renderSweep = (s: (typeof sweeps)[number]) => {
+    const [x, y] = at(s.id);
+    const bb = REGION_BOX[s.id];
+    const R = Math.max(...[[bb.x0, bb.y0], [bb.x1, bb.y0], [bb.x0, bb.y1], [bb.x1, bb.y1]].map(([px, py]) => Math.hypot(px - x, py - y))) + 4;
+    return (
+      <g key={s.key} clipPath={`url(#io-sw-${s.key})`}>
+        <rect x={bb.x0 - 2} y={bb.y0 - 2} width={bb.x1 - bb.x0 + 4} height={bb.y1 - bb.y0 + 4} fill={FACTIONS[s.from].color} className="io-sweep-old" />
+        <g transform={`translate(${x} ${y})`}>
+          <g className="io-sweep">
+            <circle r={R} fill={FACTIONS[s.to].color} />
+            <circle r={R} className="io-sweep-edge" />
+          </g>
+        </g>
+      </g>
+    );
+  };
 
   return (
     <div ref={boxRef} className={`io-mapbox${camera ? ' io-mapbox-cam' : ''}`}>
@@ -592,7 +1004,11 @@ function MapViewInner({
         onPointerDown={onPointerDown}
         onClickCapture={onClickCapture}
         role={interactive ? 'application' : 'img'}
-        aria-label={interactive ? 'Map of the island. Tab to a region, arrow keys to move between neighbours, Enter to act.' : 'Map of the island'}
+        aria-label={
+          interactive
+            ? 'Map of the island. Tab to the map, then the arrow keys move between neighbouring regions and out to your ships; Enter acts.'
+            : 'Map of the island'
+        }
       >
         <defs>
           <linearGradient id="io-sheen" x1="0" y1="0" x2="0.4" y2="1">
@@ -600,36 +1016,76 @@ function MapViewInner({
             <stop offset="55%" stopColor="#fff" stopOpacity="0.03" />
             <stop offset="100%" stopColor="#000" stopOpacity="0.16" />
           </linearGradient>
-          <clipPath id="io-clip-main">
-            <path d={MAIN_PATH} />
+          <linearGradient id="io-gloss" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#fff" stopOpacity="0.42" />
+            <stop offset="46%" stopColor="#fff" stopOpacity="0.08" />
+            <stop offset="54%" stopColor="#000" stopOpacity="0" />
+            <stop offset="100%" stopColor="#000" stopOpacity="0.16" />
+          </linearGradient>
+          <radialGradient id="io-hillshade" cx="0.4" cy="0.38" r="0.6">
+            <stop offset="0%" stopColor="#fff" stopOpacity="0.16" />
+            <stop offset="70%" stopColor="#fff" stopOpacity="0.02" />
+            <stop offset="100%" stopColor="#000" stopOpacity="0" />
+          </radialGradient>
+          <clipPath id="io-clip-land">
+            <path d={LAND_PATH} />
           </clipPath>
           <filter id="io-badge-shadow" x="-50%" y="-50%" width="200%" height="200%">
             <feDropShadow dx="0" dy="2.5" stdDeviation="1.6" floodColor="#000" floodOpacity="0.45" />
           </filter>
           <FactionPatterns />
+          {sweeps.map((s) => (
+            <clipPath key={s.key} id={`io-sw-${s.key}`}>
+              <path d={REGION_PATHS[s.id]} />
+            </clipPath>
+          ))}
         </defs>
 
-        {/* Sea-zone pads sit on the water, under everything else. */}
+        <Compass />
+
+        {/* Sea-zone pads sit on the water, under everything else: compass-ringed, with a name plaque. */}
         <g className="io-zones">
           {ZONE_IDS.map((z) => {
             const [x, y] = SEA_ZONES[z].anchor;
             const hl = zoneHighlights[z];
+            const n = ships.filter((sh) => sh.zone === z).length;
+            const rx = Math.max(66, (n - 1) * (n > 3 ? 15.5 : 19) + 40);
+            const name = SEA_ZONES[z].name.toUpperCase();
+            const pw = name.length * 7.7 + 18;
+            const key = `z:${z}`;
+            const nav = onZone && hl === 'sail';
             return (
               <g
                 key={z}
                 transform={`translate(${x} ${y})`}
-                className={`io-zone${hl ? ` io-zone-${hl}` : ''}${onZone ? ' io-clickable' : ''}`}
+                className={`io-zone${hl ? ` io-zone-${hl}` : ''}${nav ? ' io-clickable' : ''}`}
                 onClick={onZone ? () => onZone(z) : undefined}
-                onKeyDown={onZone ? (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onZone(z)) : undefined}
-                tabIndex={onZone && hl === 'sail' ? 0 : undefined}
-                role={onZone && hl === 'sail' ? 'button' : undefined}
-                aria-label={onZone && hl === 'sail' ? `Sail to the ${SEA_ZONES[z].name}` : undefined}
+                onKeyDown={nav ? (e) => onNavKey(key, e, () => onZone(z)) : undefined}
+                onFocus={nav ? () => onNavFocus(key, x, y) : undefined}
+                tabIndex={nav ? tabFor(key) : undefined}
+                role={nav ? 'button' : undefined}
+                aria-label={nav ? `Sail to the ${SEA_ZONES[z].name}` : undefined}
                 data-zone={z}
+                data-nav={nav ? key : undefined}
               >
-                <ellipse rx={66} ry={32} className="io-zone-pad" />
-                <text y={-19} className="io-zone-name">
-                  {SEA_ZONES[z].name.toUpperCase()}
-                </text>
+                <ellipse rx={rx} ry={32} className="io-zone-pad" />
+                <ellipse rx={rx - 11} ry={23} className="io-zone-inner" />
+                <path d={`M${-rx - 7} 0 L${-rx + 1} -3.5 L${-rx + 1} 3.5Z M${rx + 7} 0 L${rx - 1} -3.5 L${rx - 1} 3.5Z M0 39 L-3.5 31 L3.5 31Z`} className="io-zone-tick" />
+                <g className="io-zone-buoy" transform={`translate(${-rx + 14} 18)`}>
+                  <path d="M0 -7 V-2" />
+                  <circle r={3.2} />
+                </g>
+                <g className="io-zone-buoy" transform={`translate(${rx - 14} 18)`}>
+                  <path d="M0 -7 V-2" />
+                  <circle r={3.2} />
+                </g>
+                <g transform="translate(0 -32)" className="io-zone-plaque">
+                  <rect x={-pw / 2} y={-9} width={pw} height={18} rx={9} />
+                  <text y={3.6} className="io-zone-name">
+                    {name}
+                  </text>
+                </g>
+                {nav && <ellipse rx={rx + 6} ry={37} className="io-zone-focus" />}
               </g>
             );
           })}
@@ -637,37 +1093,36 @@ function MapViewInner({
 
         <Plinth />
 
-        <g clipPath="url(#io-clip-main)">
+        {/* The land: fills, captures in progress, textures, light, terrain and borders — all clipped to the coast. */}
+        <g clipPath="url(#io-clip-land)">
           {MAINLAND.map((r) => renderRegion(r.id))}
-          <g pointerEvents="none">{MAINLAND.map((r) => renderTexture(r.id))}</g>
-          <path d={MAIN_PATH} fill="url(#io-sheen)" pointerEvents="none" />
-          {SECTOR_BORDERS.map((b, i) => (
-            <line key={i} x1={b.from[0]} y1={b.from[1]} x2={b.to[0]} y2={b.to[1]} className="io-sector-border" />
-          ))}
-          <g pointerEvents="none" className="io-veil">
-            {dimmed.filter((id) => BOARD.byId[id].landmass === 'mainland').map((id) => (
-              <path key={id} d={REGION_PATHS[id]} />
+          {ISLANDS.map((r) => renderRegion(r.id))}
+          <g pointerEvents="none">
+            {sweeps.map(renderSweep)}
+            {BOARD.regions.map((r) => renderTexture(r.id))}
+            <path d={MAIN_PATH} fill="url(#io-sheen)" />
+            {ISLAND_PATHS.map((i) => (
+              <path key={i.id} d={i.d} fill="url(#io-sheen)" />
             ))}
+            <Terrain />
+            <path d={OUTLINES} className="io-outline-shade" transform="translate(0.7 1.2)" />
+            <path d={OUTLINES} className="io-outline" />
+            {SECTOR_BORDERS.map((b, i) => (
+              <line key={i} x1={b.from[0]} y1={b.from[1]} x2={b.to[0]} y2={b.to[1]} className="io-sector-border" />
+            ))}
+            <g className="io-veil">
+              {dimmed.map((id) => (
+                <path key={id} d={REGION_PATHS[id]} />
+              ))}
+            </g>
+            <path d={LAND_PATH} className="io-beach" />
           </g>
         </g>
-        {ISLANDS.map((r) => renderRegion(r.id))}
         <g pointerEvents="none">
-          {ISLANDS.map((r) => renderTexture(r.id))}
-          {ISLAND_PATHS.map((i) => (
-            <path key={i.id} d={i.d} fill="url(#io-sheen)" />
-          ))}
-          <g className="io-veil">
-            {dimmed.filter((id) => BOARD.byId[id].landmass !== 'mainland').map((id) => (
-              <path key={id} d={REGION_PATHS[id]} />
-            ))}
-          </g>
-          <path d={MAIN_PATH} className="io-coast" />
-          {ISLAND_PATHS.map((i) => (
-            <path key={i.id} d={i.d} className="io-coast" />
-          ))}
-          {/* Highlight outlines drawn again unclipped, on top of the coast, so they read all the way round. */}
+          <path d={LAND_PATH} className="io-coast" />
+          {/* Highlight outlines drawn again on top of the coast, so they read all the way round. */}
           {Object.entries(highlights).map(([id, hl]) => (
-            <path key={id} d={REGION_PATHS[id]} className={`io-hl-line io-hl-${hl}`} clipPath={BOARD.byId[id].landmass === 'mainland' ? 'url(#io-clip-main)' : undefined} />
+            <path key={id} d={REGION_PATHS[id]} className={`io-hl-line io-hl-${hl}`} clipPath={BOARD.byId[id].landmass === 'mainland' ? 'url(#io-clip-land)' : undefined} />
           ))}
         </g>
 
@@ -684,117 +1139,141 @@ function MapViewInner({
           })}
         </g>
 
-        {/* Ships, grouped per zone. */}
+        {/* Ships. Only your own are buttons; the rest are scenery you can read. */}
         <g>
-          {ZONE_IDS.map((z) => {
-            const here = ships.filter((sh) => sh.zone === z);
-            const [x, y] = SEA_ZONES[z].anchor;
-            return here.map((sh, i) => {
-              const f = FACTIONS[sh.owner];
-              const dx = (i - (here.length - 1) / 2) * 32;
-              const mine = !!onShip;
-              return (
-                <g
-                  key={sh.id}
-                  style={{ transform: `translate(${x + dx}px, ${y + 8}px)` }}
-                  className={`io-ship${sh.id === selectedShip ? ' io-ship-on' : ''}${mine ? ' io-clickable' : ''}`}
-                  onClick={onShip ? (e) => (e.stopPropagation(), onShip(sh.id)) : undefined}
-                  onKeyDown={onShip ? (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onShip(sh.id)) : undefined}
-                  tabIndex={onShip ? 0 : undefined}
-                  role={onShip ? 'button' : undefined}
-                  aria-label={`${sh.name}, ${f.name}, ${SEA_ZONES[z].name}`}
-                  data-ship={sh.id}
-                >
-                  <title>{`${sh.name} — ${f.name}`}</title>
-                  <path d={ShipTokenPath} fill={f.color} stroke="#fff" strokeWidth={2} strokeLinejoin="round" />
-                  <g transform="translate(-5 -1) scale(0.42)">
-                    <Emblem faction={sh.owner} size={24} color={FACTION_INK[sh.owner]} />
-                  </g>
-                </g>
-              );
-            });
-          })}
-        </g>
-
-        {/* Planned orders and playback routes, under the badges. */}
-        <g>
-          {arrows.map((a) => {
-            const g = arrowGeometry(a);
-            const color = a.broken ? '#ff5a4e' : a.color;
-            const cls = `io-order${a.via ? ' io-order-landing' : ''}${a.sail ? ' io-order-sail' : ''}${a.travel ? ' io-order-faint' : ''}${a.broken ? ' io-order-broken' : ''}`;
+          {ships.map((sh) => {
+            const s = shipSpots[sh.id];
+            if (!s) return null;
+            const f = FACTIONS[sh.owner];
+            const mine = isMine(sh);
+            const key = `s:${sh.id}`;
+            const on = sh.id === selectedShip;
             return (
-              <g key={a.id} className={a.onClick ? 'io-clickable' : undefined} onClick={a.onClick}>
-                <path d={g.d} className="io-order-casing" />
-                <path d={g.d} className={cls} stroke={color} />
-                <path d="M-7 -6 L5 0 L-7 6Z" transform={`translate(${g.end[0]} ${g.end[1]}) rotate(${g.angle})`} className="io-order-head" fill={color} />
+              <g
+                key={sh.id}
+                style={{ transform: `translate(${s.x}px, ${s.y}px)` }}
+                className={`io-ship${on ? ' io-ship-on' : ''}${mine ? ' io-clickable io-ship-mine' : ''}`}
+                onClick={onShip ? (e) => (e.stopPropagation(), onShip(sh.id)) : undefined}
+                onKeyDown={mine ? (e) => onNavKey(key, e, () => onShip!(sh.id)) : undefined}
+                onFocus={mine ? () => onNavFocus(key, s.x, s.y) : undefined}
+                tabIndex={mine ? tabFor(key) : undefined}
+                role={mine ? 'button' : undefined}
+                aria-label={`${sh.name}, ${f.name}, ${SEA_ZONES[s.zone].name}`}
+                data-ship={sh.id}
+                data-nav={mine ? key : undefined}
+              >
+                <title>{`${sh.name} — ${f.name}`}</title>
+                <rect x={-20} y={-15} width={40} height={26} className="io-hit" />
+                {on && (
+                  <>
+                    <ellipse cy={7.5} rx={23} ry={6.5} className="io-ship-sel" />
+                    <ellipse cy={7.5} rx={23} ry={6.5} className="io-ship-sel-pulse" />
+                  </>
+                )}
+                <g className="io-ship-bob">
+                  <Warship ship={sh} left={!!faces[sh.id]} />
+                </g>
+                {mine && (
+                  <>
+                    <rect x={-23} y={-17} width={46} height={30} rx={10} className="io-focus-halo" />
+                    <rect x={-23} y={-17} width={46} height={30} rx={10} className="io-focus-ring" />
+                  </>
+                )}
               </g>
             );
           })}
         </g>
 
-        {/* Strength badges. */}
+        {/* Planned orders and playback routes, under the badges. Each draws itself in when it's made. */}
+        <g>
+          {arrows.map((a) => {
+            const g = routes.get(a.id)!;
+            const color = a.broken ? '#ff5a4e' : a.color;
+            const dashed = a.via || a.sail || a.broken;
+            const cls = `io-order${a.via ? ' io-order-landing' : ''}${a.sail ? ' io-order-sail' : ''}${a.travel ? ' io-order-faint' : ''}${a.broken ? ' io-order-broken' : ''}${dashed ? '' : ' io-order-solid'}`;
+            return (
+              <g key={a.id} className={a.onClick ? 'io-clickable' : undefined} onClick={a.onClick}>
+                <path d={g.d} className="io-order-casing" pathLength={1} />
+                <path d={g.d} className={cls} stroke={color} pathLength={dashed ? undefined : 1} />
+                <g transform={`translate(${g.end[0].toFixed(1)} ${g.end[1].toFixed(1)}) rotate(${g.angle.toFixed(1)})`}>
+                  <path d="M-7 -6 L5 0 L-7 6Z" className="io-order-head" fill={color} />
+                </g>
+              </g>
+            );
+          })}
+        </g>
+
+        {/* Strength badges: a chunky bevelled token per region, with the owner's emblem on its rim. */}
         <g>
           {BOARD.regions.map((r) => {
             const b = badges[r.id];
             if (!b) return null;
             const f = FACTIONS[b.owner];
-            const ki = INSTALLATIONS[r.id];
+            const ki = !!INSTALLATIONS[r.id];
             const wide = b.text.length > 2;
-            const rx = wide ? BADGE_R + 6 : BADGE_R;
+            const rx = badgeRx(b);
             const [x, y] = at(r.id);
-            const side = LABEL_SIDE[r.id];
-            const label =
-              side === 'left'
-                ? { x: -rx - (ki ? 9 : 6), y: 4, anchor: 'end' as const }
-                : side === 'above'
-                  ? { x: 0, y: -BADGE_R - (ki ? 15 : 7), anchor: 'middle' as const }
-                  : { x: 0, y: BADGE_R + (ki ? 16 : 12), anchor: 'middle' as const };
+            const label = labelSpot(r.id, rx, ki);
+            const key = `r:${r.id}`;
+            const emblemAt: Pt = LABEL_SIDE[r.id] === 'left' ? [0, BADGE_R + 2] : [-rx - 0.5, 7.5];
             return (
               <g
                 key={r.id}
                 transform={`translate(${x} ${y})`}
                 className={`io-badge${interactive ? ' io-clickable' : ''}${selected === r.id ? ' io-badge-selected' : ''}`}
                 onClick={onRegion ? () => onRegion(r.id) : undefined}
-                onKeyDown={onRegion ? (e) => onBadgeKey(r.id, e) : undefined}
-                onFocus={camera ? () => glideTo(x, y) : undefined}
-                tabIndex={interactive ? 0 : undefined}
+                onKeyDown={onRegion ? (e) => onNavKey(key, e, () => onRegion(r.id)) : undefined}
+                onFocus={interactive ? () => onNavFocus(key, x, y) : undefined}
+                tabIndex={interactive ? tabFor(key) : undefined}
                 role={interactive ? 'button' : undefined}
                 aria-label={interactive ? describe?.(r.id) ?? r.name : undefined}
                 data-region={r.id}
                 data-badge={r.id}
+                data-nav={interactive ? key : undefined}
               >
                 <circle r={hitR} className="io-hit" />
-                <rect x={-rx - 6} y={-BADGE_R - 6} width={2 * rx + 12} height={2 * BADGE_R + 12} rx={BADGE_R + 6} className="io-focus-ring" />
-                <g filter="url(#io-badge-shadow)">
-                  {ki && <rect x={-rx - 5} y={-BADGE_R - 5} width={2 * rx + 10} height={2 * BADGE_R + 10} rx={BADGE_R + 5} className="io-ki-ring" />}
-                  <rect x={-rx - 2.5} y={-BADGE_R - 2.5} width={2 * rx + 5} height={2 * BADGE_R + 5} rx={BADGE_R + 2.5} fill="#fff" />
-                  <rect x={-rx} y={-BADGE_R} width={2 * rx} height={2 * BADGE_R} rx={BADGE_R} fill={b.fog ? FOG.rim : f.deep} />
-                  <rect x={-rx + 3} y={-BADGE_R + 3} width={2 * rx - 6} height={2 * BADGE_R - 6} rx={BADGE_R - 3} fill={b.fog ? FOG.fill : f.color} />
+                {selected === r.id && <rect x={-rx - 4} y={-BADGE_R - 4} width={2 * rx + 8} height={2 * BADGE_R + 8} rx={BADGE_R + 4} className="io-sel-pulse" />}
+                <g className="io-badge-body">
+                  <g filter="url(#io-badge-shadow)">
+                    {ki && <rect x={-rx - 5} y={-BADGE_R - 5} width={2 * rx + 10} height={2 * BADGE_R + 10} rx={BADGE_R + 5} className="io-ki-ring" />}
+                    <rect x={-rx - 2.5} y={-BADGE_R - 0.5} width={2 * rx + 5} height={2 * BADGE_R + 5} rx={BADGE_R + 2.5} fill={b.fog ? '#2c333b' : f.deep} />
+                    <rect x={-rx - 2.5} y={-BADGE_R - 2.5} width={2 * rx + 5} height={2 * BADGE_R + 5} rx={BADGE_R + 2.5} fill="#fff" />
+                    <rect x={-rx} y={-BADGE_R} width={2 * rx} height={2 * BADGE_R} rx={BADGE_R} fill={b.fog ? FOG.rim : f.deep} />
+                    <rect x={-rx + 3} y={-BADGE_R + 3} width={2 * rx - 6} height={2 * BADGE_R - 6} rx={BADGE_R - 3} fill={b.fog ? FOG.fill : f.color} />
+                    <rect x={-rx + 3} y={-BADGE_R + 3} width={2 * rx - 6} height={2 * BADGE_R - 6} rx={BADGE_R - 3} fill="url(#io-gloss)" />
+                  </g>
+                  {ki && <path d={StarPath} transform={`translate(0 ${-BADGE_R - 6})`} className="io-ki-star" />}
+                  {BOARD.byId[r.id].stronghold && (
+                    <g transform={`translate(${rx - 1} ${-BADGE_R + 1})`} className="io-fort">
+                      <circle r={6.5} />
+                      <Stronghold />
+                    </g>
+                  )}
+                  <g transform={`translate(${emblemAt[0]} ${emblemAt[1]})`} className="io-badge-emblem">
+                    <circle r={6.6} fill="#fff" stroke={f.deep} strokeWidth={1.1} />
+                    <EmblemMark faction={b.owner} size={9} color={f.deep} />
+                  </g>
+                  <text key={b.text} className={`io-badge-num${b.fog ? ' io-badge-fog' : ''}`} dy="0.36em" fontSize={wide ? 12 : 15} style={{ fill: b.fog ? '#fff' : FACTION_INK[b.owner] }}>
+                    {b.text}
+                  </text>
+                  {b.extra && (
+                    <g transform={`translate(${rx + 3} ${BADGE_R - 3})`} className="io-badge-extra">
+                      <rect x={-1} y={-8} width={b.extra.length * 7 + 7} height={15} rx={7.5} />
+                      <text key={b.extra} x={2.5} y={3.6}>
+                        {b.extra}
+                      </text>
+                    </g>
+                  )}
+                  {threats.includes(r.id) && (
+                    <g transform={`translate(${-rx - 1} ${-BADGE_R + 3})`} className="io-threat">
+                      <path d="M0 -8 L8 6 L-8 6Z" />
+                      <text y="4.5">!</text>
+                    </g>
+                  )}
                 </g>
-                {ki && <path d={StarPath} transform={`translate(0 ${-BADGE_R - 6})`} className="io-ki-star" />}
-                {BOARD.byId[r.id].stronghold && (
-                  <g transform={`translate(${rx - 1} ${-BADGE_R + 1})`} className="io-fort">
-                    <circle r={6.5} />
-                    <Stronghold />
-                  </g>
-                )}
-                <text key={b.text} className={`io-badge-num${b.fog ? ' io-badge-fog' : ''}`} dy="0.36em" fontSize={wide ? 12 : 15} style={{ fill: b.fog ? '#fff' : FACTION_INK[b.owner] }}>
-                  {b.text}
-                </text>
-                {b.extra && (
-                  <g transform={`translate(${rx + 3} ${BADGE_R - 3})`} className="io-badge-extra">
-                    <rect x={-1} y={-8} width={b.extra.length * 7 + 7} height={15} rx={7.5} />
-                    <text x={2.5} y={3.6}>
-                      {b.extra}
-                    </text>
-                  </g>
-                )}
-                {threats.includes(r.id) && (
-                  <g transform={`translate(${-rx - 1} ${-BADGE_R + 3})`} className="io-threat">
-                    <path d="M0 -8 L8 6 L-8 6Z" />
-                    <text y="4.5">!</text>
-                  </g>
-                )}
+                <rect x={-rx - 6} y={-BADGE_R - 6} width={2 * rx + 12} height={2 * BADGE_R + 12} rx={BADGE_R + 6} className="io-sel-ring" />
+                <rect x={-rx - 7} y={-BADGE_R - 7} width={2 * rx + 14} height={2 * BADGE_R + 14} rx={BADGE_R + 7} className="io-focus-halo" />
+                <rect x={-rx - 7} y={-BADGE_R - 7} width={2 * rx + 14} height={2 * BADGE_R + 14} rx={BADGE_R + 7} className="io-focus-ring" />
                 {showLabels && (
                   <text className="io-region-name" x={label.x} y={label.y} style={{ textAnchor: label.anchor }}>
                     {r.name}
@@ -805,24 +1284,30 @@ function MapViewInner({
           })}
         </g>
 
-        {/* Travelling columns and order counts ride above the badges. */}
+        {/* Travelling columns and order counts ride above the badges, parked clear of every name. */}
         <g pointerEvents="none">
           {arrows.map((a) => {
             if (!a.label) return null;
-            const g = arrowGeometry(a);
-            if (a.travel)
+            if (a.travel) {
+              const pts = marks.tokens.get(a.id);
+              if (!pts) return null;
               return (
-                <Traveller key={a.id} d={g.d} dur={1500}>
+                <Traveller key={a.id} d={ptsPath(pts)} dur={1500}>
                   <circle r={11} fill={a.color} stroke="#fff" strokeWidth={2.5} className="io-token" />
                   <text y={4} className="io-token-text">
                     {a.label}
                   </text>
                 </Traveller>
               );
+            }
+            const p = marks.chips.get(a.id);
+            if (!p) return null;
             return (
-              <g key={a.id} transform={`translate(${g.mid[0]} ${g.mid[1]})`} className="io-order-chip">
-                <rect x={-13} y={-9} width={26} height={18} rx={9} fill={a.broken ? '#ff5a4e' : a.color} />
-                <text y={4.5}>{a.label}</text>
+              <g key={a.id} transform={`translate(${p[0].toFixed(1)} ${p[1].toFixed(1)})`}>
+                <g className="io-order-chip">
+                  <rect x={-13} y={-9} width={26} height={18} rx={9} fill={a.broken ? '#ff5a4e' : a.color} />
+                  <text y={4.5}>{a.label}</text>
+                </g>
               </g>
             );
           })}

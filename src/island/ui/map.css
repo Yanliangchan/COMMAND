@@ -1,5 +1,11 @@
-/* ISLAND OPS — the board: regions, badges, sea zones, ships, orders, effects.
-   Uses the design tokens defined in island.css. */
+/* ISLAND OPS — the board: regions, badges, sea zones, ships, orders.
+   Uses the design tokens defined in island.css.
+
+   Motion budget: SVG content can't be composited, so anything that loops
+   repaints the area under it every frame. Loops here are small (a pulse ring,
+   a focus dash) or stepped (the ship bob ticks a few times a second), and only
+   run while they mean something. Everything that moves stops under
+   prefers-reduced-motion (bottom of this file). */
 
 /* --- Map ------------------------------------------------------------------ */
 
@@ -34,6 +40,10 @@
   display: block;
 }
 
+.io-map:focus {
+  outline: none;
+}
+
 .io-mapbox-cam .io-map {
   touch-action: none;
   cursor: grab;
@@ -43,24 +53,172 @@
   cursor: grabbing;
 }
 
-.io-region {
-  stroke: rgba(255, 255, 255, 0.55);
-  stroke-width: 1.3;
-  stroke-linejoin: round;
-  transition: fill 0.5s ease;
-}
-
 .io-clickable {
   cursor: pointer;
+}
+
+/* --- The plinth: reef, surf, bridges, cliff -------------------------------- */
+
+.io-reef,
+.io-shallows,
+.io-surf,
+.io-foam {
+  fill: none;
+  stroke-linejoin: round;
+}
+
+.io-reef {
+  stroke: rgba(120, 222, 228, 0.13);
+  stroke-width: 54;
+}
+
+.io-shallows {
+  stroke: rgba(150, 235, 238, 0.16);
+  stroke-width: 34;
+}
+
+.io-surf {
+  stroke: rgba(225, 250, 255, 0.3);
+  stroke-width: 19;
+}
+
+.io-foam {
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 12.5;
+  stroke-dasharray: 2.5 5;
+  stroke-linecap: round;
+}
+
+.io-bridges line {
+  stroke-linecap: round;
+}
+
+.io-bridge-shadow {
+  stroke: rgba(4, 30, 46, 0.32);
+  stroke-width: 7;
+}
+
+.io-bridge-casing {
+  stroke: #4a3624;
+  stroke-width: 7;
+}
+
+.io-bridge-deck {
+  stroke: #f1dcae;
+  stroke-width: 4.4;
+}
+
+.io-bridge-line {
+  stroke: #b38f5c;
+  stroke-width: 0.9;
+  stroke-dasharray: 3 3;
+}
+
+.io-cliff-base {
+  fill: #33241a;
+}
+
+.io-cliff-low {
+  fill: #5c432d;
+}
+
+.io-cliff-high {
+  fill: #84633f;
+}
+
+.io-cliff-strata {
+  fill: none;
+  stroke: rgba(255, 228, 180, 0.22);
+  stroke-width: 1;
+}
+
+/* --- Land ------------------------------------------------------------------ */
+
+.io-region {
+  stroke: none;
+  transition: fill 0.5s ease;
 }
 
 .io-region.io-clickable:hover {
   filter: brightness(1.12);
 }
 
+.io-outline-shade,
+.io-outline {
+  fill: none;
+  stroke-linejoin: round;
+}
+
+.io-outline-shade {
+  stroke: rgba(10, 15, 25, 0.22);
+  stroke-width: 1.5;
+}
+
+.io-outline {
+  stroke: rgba(255, 255, 255, 0.58);
+  stroke-width: 1.25;
+}
+
+.io-contour {
+  fill: none;
+  stroke: rgba(30, 20, 8, 0.15);
+  stroke-width: 1;
+}
+
+.io-beach {
+  fill: none;
+  stroke: #f3deaa;
+  stroke-width: 6.5;
+  stroke-linejoin: round;
+}
+
+.io-coast {
+  fill: none;
+  stroke: #3d2c1d;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+}
+
+.io-sector-border {
+  stroke: rgba(15, 20, 30, 0.55);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+}
+
 /* Dimmed regions keep their hue under a navy veil, so factions stay apart. */
 .io-veil path {
   fill: rgba(8, 25, 43, 0.4);
+}
+
+/* A capture: the new colour floods out from the badge across the region. */
+.io-sweep {
+  animation: io-sweep 0.8s cubic-bezier(0.3, 0.6, 0.3, 1) both;
+}
+
+.io-sweep-edge {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+  animation: io-fade-out 0.8s ease-in both;
+}
+
+@keyframes io-sweep {
+  from {
+    transform: scale(0.04);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes io-fade-out {
+  70% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 .io-hl-line {
@@ -108,37 +266,8 @@
   stroke-dasharray: 6 4;
 }
 
-.io-surf path {
-  fill: none;
-  stroke: rgba(210, 245, 255, 0.3);
-  stroke-width: 16;
-  stroke-linejoin: round;
-}
-
-.io-coast {
-  fill: none;
-  stroke: #3d2c1d;
-  stroke-width: 2.2;
-  stroke-linejoin: round;
-}
-
-.io-crossing {
-  stroke: #f4e2b8;
-  stroke-width: 3.5;
-  stroke-dasharray: 2 6;
-  stroke-linecap: round;
-  opacity: 0.85;
-}
-
-.io-sector-border {
-  stroke: rgba(15, 20, 30, 0.55);
-  stroke-width: 2.6;
-  stroke-linecap: round;
-  pointer-events: none;
-}
-
 .io-landmarks {
-  opacity: 0.85;
+  opacity: 0.95;
 }
 
 .io-far .io-landmarks,
@@ -146,13 +275,70 @@
   display: none;
 }
 
-/* Sea zones */
+/* --- Sea decoration -------------------------------------------------------- */
+
+.io-compass-ring {
+  fill: rgba(255, 255, 255, 0.05);
+  stroke: rgba(255, 255, 255, 0.32);
+  stroke-width: 1.2;
+}
+
+.io-compass-inner {
+  fill: none;
+  stroke-dasharray: 1.5 3.5;
+}
+
+.io-compass-lit {
+  fill: rgba(255, 250, 240, 0.7);
+}
+
+.io-compass-dark {
+  fill: rgba(8, 40, 60, 0.55);
+}
+
+.io-compass-n {
+  font-family: var(--display);
+  font-size: 10px;
+  text-anchor: middle;
+  fill: rgba(255, 250, 240, 0.8);
+}
+
+/* --- Sea zones: compass pads with a name plaque ---------------------------- */
 
 .io-zone-pad {
-  fill: rgba(255, 255, 255, 0.05);
-  stroke: rgba(255, 255, 255, 0.22);
-  stroke-width: 1.5;
-  stroke-dasharray: 4 6;
+  fill: rgba(255, 255, 255, 0.06);
+  stroke: rgba(255, 255, 255, 0.3);
+  stroke-width: 1.4;
+  transition: fill 0.2s ease, stroke 0.2s ease;
+}
+
+.io-zone-inner {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.io-zone-tick {
+  fill: rgba(255, 255, 255, 0.45);
+}
+
+.io-zone-buoy circle {
+  fill: #fffaf0;
+  stroke: #0a3350;
+  stroke-width: 1.2;
+}
+
+.io-zone-buoy path {
+  stroke: #fffaf0;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.io-zone-plaque rect {
+  fill: rgba(8, 25, 43, 0.72);
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 1;
 }
 
 .io-zone-name {
@@ -160,70 +346,191 @@
   font-size: 10px;
   letter-spacing: 0.16em;
   text-anchor: middle;
-  fill: rgba(255, 255, 255, 0.82);
-  paint-order: stroke;
-  stroke: rgba(8, 40, 60, 0.6);
-  stroke-width: 2.5px;
+  fill: #fffaf0;
   pointer-events: none;
 }
 
 .io-zone-sail .io-zone-pad {
-  fill: rgba(143, 214, 255, 0.2);
+  fill: rgba(143, 214, 255, 0.22);
   stroke: var(--info);
   stroke-width: 3;
-  stroke-dasharray: none;
+}
+
+.io-zone-sail .io-zone-inner {
+  stroke: var(--info);
+  stroke-width: 1.6;
+  stroke-dasharray: 6 5;
+  animation: io-march 1.2s linear infinite;
+}
+
+.io-zone-sail .io-zone-plaque rect {
+  fill: #0e4a6e;
+  stroke: var(--info);
+}
+
+.io-zone-sail.io-clickable:hover .io-zone-pad {
+  fill: rgba(143, 214, 255, 0.36);
 }
 
 .io-zone-battle .io-zone-pad {
   fill: rgba(255, 90, 78, 0.25);
   stroke: var(--danger);
   stroke-width: 3;
-  stroke-dasharray: none;
 }
 
+.io-zone-battle .io-zone-plaque rect {
+  fill: #6e1610;
+  stroke: var(--danger);
+}
+
+.io-zone:focus,
 .io-zone:focus-visible {
   outline: none;
 }
 
-.io-zone:focus-visible .io-zone-pad {
-  stroke: var(--gold);
-  stroke-width: 4;
+.io-zone-focus {
+  fill: none;
+  stroke: none;
 }
 
-/* Ships */
-
-.io-ship {
-  transition: transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
-  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
+.io-zone:focus-visible .io-zone-focus {
+  stroke: #fff;
+  stroke-width: 3;
+  stroke-dasharray: 7 5;
+  filter: drop-shadow(0 0 0 #08192b) drop-shadow(0 0 2px #08192b);
+  animation: io-march 0.9s linear infinite;
 }
 
-.io-ship-on path {
-  stroke: var(--gold);
-  stroke-width: 3.5;
+@keyframes io-march {
+  to {
+    stroke-dashoffset: -24;
+  }
 }
 
-.io-ship:focus-visible {
+/* --- Ships ----------------------------------------------------------------- */
+
+.io-ship:focus {
   outline: none;
 }
 
-.io-ship:focus-visible path {
-  stroke: var(--gold);
-  stroke-width: 3.5;
+.io-ship-shadow {
+  fill: rgba(4, 24, 40, 0.35);
 }
 
-/* Orders */
+.io-ship-foam {
+  fill: rgba(255, 255, 255, 0.6);
+}
+
+.io-ship-wake {
+  fill: rgba(255, 255, 255, 0.75);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.io-ship-moving .io-ship-wake {
+  opacity: 1;
+}
+
+.io-ship-rig {
+  fill: none;
+  stroke: #eef3f7;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.io-ship-deck {
+  fill: #e9eff4;
+  stroke: rgba(10, 25, 40, 0.65);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+
+.io-ship-glass {
+  fill: #19364f;
+}
+
+/* Idle life on the cheap: a bob that ticks four times a second, not sixty. */
+.io-ship-bob {
+  animation: io-bob 3.2s steps(6, jump-none) infinite alternate;
+}
+
+.io-ship:nth-child(2n) .io-ship-bob {
+  animation-delay: -1.3s;
+}
+
+.io-ship:nth-child(3n) .io-ship-bob {
+  animation-delay: -2.1s;
+}
+
+.io-ship-moving .io-ship-bob {
+  animation: none;
+}
+
+@keyframes io-bob {
+  from {
+    transform: translateY(-0.8px);
+  }
+  to {
+    transform: translateY(1px);
+  }
+}
+
+.io-ship-mine.io-clickable:hover .io-ship-bob {
+  animation: none;
+  transform: translateY(-2.5px);
+  transition: transform 0.15s ease;
+}
+
+.io-ship-sel {
+  fill: rgba(255, 255, 255, 0.18);
+  stroke: #fff;
+  stroke-width: 2.4;
+}
+
+.io-ship-sel-pulse {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+  animation: io-pulse 1.4s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* --- Orders ---------------------------------------------------------------- */
 
 .io-order-casing {
   fill: none;
   stroke: rgba(10, 20, 30, 0.55);
   stroke-width: 9;
   stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1.02 1;
+  animation: io-draw 0.38s cubic-bezier(0.3, 0.6, 0.3, 1) backwards;
 }
 
 .io-order {
   fill: none;
   stroke-width: 5;
   stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: io-fade-in 0.25s 0.12s ease-out backwards;
+}
+
+.io-order-solid {
+  stroke-dasharray: 1.02 1;
+  animation: io-draw 0.38s cubic-bezier(0.3, 0.6, 0.3, 1) backwards;
+}
+
+@keyframes io-draw {
+  from {
+    stroke-dashoffset: 1.02;
+  }
+}
+
+@keyframes io-fade-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .io-order-landing {
@@ -247,6 +554,17 @@
   stroke: rgba(10, 20, 30, 0.55);
   stroke-width: 1.5;
   stroke-linejoin: round;
+  animation: io-head 0.3s 0.3s cubic-bezier(0.3, 1.6, 0.5, 1) backwards;
+}
+
+@keyframes io-head {
+  from {
+    transform: scale(0);
+  }
+}
+
+.io-order-chip {
+  animation: io-pop-in 0.3s 0.25s cubic-bezier(0.3, 1.6, 0.5, 1) backwards;
 }
 
 .io-order-chip rect {
@@ -276,7 +594,7 @@
   stroke-dasharray: 10 7;
 }
 
-/* Badges */
+/* --- Badges ---------------------------------------------------------------- */
 
 .io-badge:focus {
   outline: none;
@@ -286,22 +604,20 @@
   fill: transparent;
 }
 
-.io-focus-ring {
-  fill: none;
-  stroke: var(--gold);
-  stroke-width: 3.5;
-  opacity: 0;
+.io-badge-body {
+  transition: transform 0.16s ease;
 }
 
-.io-badge:focus-visible .io-focus-ring,
-.io-badge-selected .io-focus-ring {
-  opacity: 1;
+.io-badge.io-clickable:hover .io-badge-body {
+  transform: translateY(-2.5px);
 }
 
-.io-badge-selected .io-focus-ring {
-  stroke: #fff;
+.io-badge.io-clickable:active .io-badge-body {
+  transform: translateY(1px);
+  transition-duration: 0.06s;
 }
 
+/* Numbers pop when they change (the text is keyed on its value). */
 .io-badge-num {
   font-family: var(--display);
   text-anchor: middle;
@@ -309,6 +625,14 @@
   paint-order: stroke;
   stroke: rgba(0, 0, 0, 0.22);
   stroke-width: 1.6px;
+  animation: io-tick 0.42s cubic-bezier(0.3, 1.7, 0.5, 1) backwards;
+}
+
+@keyframes io-tick {
+  from {
+    transform: scale(0.45) translateY(6px);
+    opacity: 0.2;
+  }
 }
 
 .io-badge-fog {
@@ -348,6 +672,14 @@
   font-family: var(--display);
   font-size: 9.5px;
   fill: #fff;
+  animation: io-pop-in 0.3s cubic-bezier(0.3, 1.6, 0.5, 1) backwards;
+}
+
+@keyframes io-pop-in {
+  from {
+    transform: scale(0.3);
+    opacity: 0;
+  }
 }
 
 .io-threat {
@@ -380,6 +712,76 @@
   pointer-events: none;
 }
 
+/* Selected source: a solid white ring and a slow outward pulse. */
+.io-sel-ring {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 3.5;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.io-badge-selected .io-sel-ring {
+  opacity: 1;
+}
+
+.io-sel-pulse {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.5;
+  pointer-events: none;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: io-pulse 1.4s ease-out infinite;
+}
+
+@keyframes io-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+/* Keyboard focus (RV-07): a marching white dash on a dark halo — never gold,
+   so it can't be mistaken for a Key Installation's ring. */
+.io-focus-halo,
+.io-focus-ring {
+  fill: none;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.io-focus-halo {
+  stroke: #08192b;
+  stroke-width: 7;
+}
+
+.io-focus-ring {
+  stroke: #fff;
+  stroke-width: 3;
+  stroke-dasharray: 6 4;
+}
+
+.io-badge:focus-visible .io-focus-halo,
+.io-badge:focus-visible .io-focus-ring,
+.io-ship:focus-visible .io-focus-halo,
+.io-ship:focus-visible .io-focus-ring {
+  opacity: 1;
+}
+
+.io-badge:focus-visible .io-focus-ring,
+.io-ship:focus-visible .io-focus-ring {
+  animation: io-march 0.9s linear infinite;
+}
+
+.io-badge:focus-visible .io-sel-ring {
+  opacity: 0;
+}
+
 .io-air-marker {
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
   animation: io-pop 0.25s ease-out;
@@ -408,7 +810,6 @@
   box-shadow: var(--shadow-panel);
 }
 
-
 .io-shake-a .io-map {
   animation: io-shake-a 0.35s ease-in-out;
 }
@@ -429,3 +830,40 @@
   75% { transform: translate(2px, -1px); }
 }
 
+/* --- Reduced motion: nothing loops, nothing sweeps ------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .io-mapbox::before,
+  .io-ship-bob,
+  .io-sel-pulse,
+  .io-ship-sel-pulse,
+  .io-zone-sail .io-zone-inner,
+  .io-zone:focus-visible .io-zone-focus,
+  .io-badge:focus-visible .io-focus-ring,
+  .io-ship:focus-visible .io-focus-ring,
+  .io-order-casing,
+  .io-order,
+  .io-order-solid,
+  .io-order-head,
+  .io-order-chip,
+  .io-badge-num,
+  .io-badge-extra text,
+  .io-sweep,
+  .io-sweep-edge,
+  .io-air-marker,
+  .io-shake-a .io-map,
+  .io-shake-b .io-map {
+    animation: none;
+  }
+
+  .io-sel-pulse,
+  .io-ship-sel-pulse {
+    display: none;
+  }
+
+  .io-region,
+  .io-badge-body,
+  .io-ship-wake {
+    transition: none;
+  }
+}

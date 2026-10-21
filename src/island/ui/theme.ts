@@ -26,7 +26,7 @@ export const BADGE_NUDGE: Record<string, [number, number]> = {
   tampines: [-6, -8],
   kallang: [2, -4],
   'tanjong-pagar': [-6, 4],
-  'bukit-merah': [4, -2],
+  'bukit-merah': [-2, -4],
   'lim-chu-kang': [-8, 0],
   sengkang: [0, -6],
 };
@@ -48,3 +48,24 @@ export const LANDMARK_AT: Record<string, [number, number] | null> = {
 
 export const RED = '#ff5a4e';
 export const GOLD = '#ffc83d';
+
+/**
+ * Sea lanes between neighbouring sea zones, as waypoints in open water (each
+ * checked to stay ≥ 15 units off every coast). Ship moves and sail arrows
+ * follow these, so a ship never cuts across the land at any zoom.
+ */
+export const SEA_LANES: Record<string, [number, number][]> = {
+  'NORTH-WEST': [[590, 82], [505, 56], [410, 52], [310, 84], [215, 128], [150, 180], [105, 225]],
+  'WEST-SOUTH': [[105, 225], [55, 265], [38, 330], [62, 402], [140, 448], [168, 515], [300, 530], [440, 540], [600, 530], [690, 470]],
+  'SOUTH-EAST': [[690, 470], [800, 448], [905, 400]],
+  'NORTH-EAST': [[590, 82], [690, 90], [788, 82], [840, 118], [842, 178], [885, 206], [945, 220], [970, 275], [950, 345], [905, 400]],
+};
+
+/** Hill tops for the faint contour rings drawn over the land. */
+export const HILLS: { at: [number, number]; r: number; rings: number }[] = [
+  { at: [392, 296], r: 15, rings: 4 },
+  { at: [470, 238], r: 12, rings: 3 },
+  { at: [300, 218], r: 11, rings: 3 },
+  { at: [220, 330], r: 10, rings: 2 },
+  { at: [610, 230], r: 9, rings: 2 },
+];

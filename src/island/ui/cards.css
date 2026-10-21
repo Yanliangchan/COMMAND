@@ -1,65 +1,166 @@
 /* ISLAND OPS — playback cards and the round report.
-   Uses the design tokens defined in island.css. */
+   Uses the design tokens defined in island.css.
 
-/* Playback cards and the round report */
+   Step-card timing: a fight builds up (bars grow, numbers count) and the
+   verdict lands at --io-rev — the moment usePlayback reveals the result on the
+   map (REVEAL_MS, 850 ms at 1×). --io-speed (set by usePlayback) divides every
+   duration. Under reduced motion island.css collapses all of it to the end state. */
 
-.io-step-card {
-  padding: 12px 14px;
-  animation: io-drop 0.25s ease-out;
+:root {
+  --io-speed: 1;
+}
+
+/* Counting numbers: an integer custom property animated from 0 to --to. */
+@property --io-n {
+  syntax: '<integer>';
+  inherits: false;
+  initial-value: 0;
+}
+
+.io-card.io-step-card {
+  --io-rev: calc(0.85s / var(--io-speed, 1));
+  --io-build: calc(0.62s / var(--io-speed, 1));
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+}
+
+.io-sc-inner {
+  animation: io-sc-in calc(0.28s / var(--io-speed, 1)) cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+
+@keyframes io-sc-in {
+  from {
+    transform: translateY(-10px) scale(0.96);
+    opacity: 0;
+  }
 }
 
 .io-step-mine {
   border-color: var(--gold);
 }
 
-.io-card-title {
-  font-family: var(--display);
-  font-size: 15.5px;
-  margin-bottom: 8px;
-  text-align: center;
+.io-sc-mine {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--gold);
+  color: var(--gold-ink);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+/* --- Header strip: tinted by whoever holds the ground; a capture repaints it */
+
+.io-sc-head {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  gap: 10px;
+  padding: 9px 52px 9px 12px;
+  background: linear-gradient(100deg, color-mix(in srgb, var(--h) 78%, #08192b) 0%, color-mix(in srgb, var(--h) 40%, #0c2238) 70%, #0c2238 100%);
+  border-bottom: 2px solid color-mix(in srgb, var(--h) 60%, #fff 10%);
+  overflow: hidden;
+}
+
+.io-sc-repaint {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, color-mix(in srgb, var(--h2) 82%, #08192b) 0%, color-mix(in srgb, var(--h2) 44%, #0c2238) 70%, #0c2238 100%);
+  transform-origin: left center;
+  animation: io-sc-repaint calc(0.45s / var(--io-speed, 1)) cubic-bezier(0.6, 0, 0.2, 1) var(--io-rev) both;
+}
+
+@keyframes io-sc-repaint {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+.io-sc-icon {
+  position: relative;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.16);
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  color: #fff;
+}
+
+.io-sc-text {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.io-sc-text small {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.io-sc-text b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 17px;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.io-sc-body {
+  padding: 8px 12px 11px;
 }
 
 .io-card-plain {
-  margin: 0;
-  font-size: 14.5px;
-  line-height: 1.35;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* --- Side rows ------------------------------------------------------------ */
+
+.io-sc-sides {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .io-bside {
+  position: relative;
   display: grid;
-  grid-template-columns: 30px 1fr auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-rows: auto 5px;
   align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
+  column-gap: 10px;
+  row-gap: 6px;
+  padding: 7px 9px 7px 8px;
   border-radius: var(--r-ctl);
   background: rgba(255, 255, 255, 0.05);
-  margin-top: 5px;
   border-left: 5px solid var(--c);
-  opacity: 0.78;
-}
-
-.io-bside-win {
-  opacity: 1;
-  background: color-mix(in srgb, var(--c) 26%, transparent);
-  box-shadow: 0 0 0 2px var(--c);
 }
 
 .io-bside-who {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
 .io-bside-who b {
   font-family: var(--display);
   font-weight: 400;
-  font-size: 14px;
+  font-size: 14.5px;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
 }
 
@@ -69,39 +170,43 @@
   font-size: 11px;
 }
 
-.io-bside-who b em {
-  font-style: normal;
-  font-family: var(--body);
-  font-weight: 900;
-  font-size: 10px;
-  background: var(--gold);
-  color: var(--gold-ink);
-  border-radius: 5px;
-  padding: 1px 5px;
-}
-
-.io-bside-who small {
+.io-bside-units {
   font-size: 12px;
+  line-height: 1.3;
   color: #dbe7f2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
-.io-bside-bonus {
-  color: var(--info) !important;
+/* Bonuses as chips that wrap — never cut off with an ellipsis. */
+.io-bside-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.io-chip {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: #08192b;
+  background: var(--info);
+  white-space: nowrap;
 }
 
 .io-bside-str {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  text-align: right;
 }
 
-.io-bside-str b {
+.io-bside-str > b {
   font-family: var(--display);
   font-weight: 400;
-  font-size: 26px;
+  font-size: 28px;
   line-height: 1;
 }
 
@@ -111,24 +216,181 @@
   white-space: nowrap;
 }
 
-.io-card-verdict {
-  margin-top: 8px;
-  text-align: center;
-  font-family: var(--display);
-  font-size: 14px;
-  color: var(--info);
-  animation: io-fade-in 0.3s ease-out 0.75s both;
+/* The strength bar: grows to this side's share of the strongest. */
+.io-bside-bar {
+  grid-column: 1 / -1;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
 }
 
-@keyframes io-fade-in {
+.io-bside-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--c);
+  transform-origin: left center;
+  transform: scaleX(var(--w));
+  animation: io-bar var(--io-build) cubic-bezier(0.2, 0.7, 0.3, 1) calc(0.12s / var(--io-speed, 1)) both;
+}
+
+@keyframes io-bar {
   from {
+    transform: scaleX(0);
+  }
+}
+
+/* Counting up. The real number stays in the DOM (for screen readers and
+   tests) under a counter that runs from 0 to it. */
+.io-count {
+  position: relative;
+  display: inline-block;
+}
+
+.io-count span {
+  visibility: hidden;
+}
+
+.io-count::after {
+  content: counter(io-n);
+  counter-reset: io-n var(--io-n);
+  --io-n: var(--to);
+  position: absolute;
+  right: 0;
+  top: 0;
+  animation: io-count var(--io-build) cubic-bezier(0.3, 0.6, 0.4, 1) calc(0.12s / var(--io-speed, 1)) both;
+}
+
+@keyframes io-count {
+  from {
+    --io-n: 0;
+  }
+  to {
+    --io-n: var(--to);
+  }
+}
+
+/* The verdict lands: the winner is stamped, the rest dim. */
+.io-bside-win {
+  animation: io-row-win calc(0.35s / var(--io-speed, 1)) ease-out var(--io-rev) both;
+}
+
+@keyframes io-row-win {
+  from {
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: none;
+  }
+  to {
+    background: color-mix(in srgb, var(--c) 26%, transparent);
+    box-shadow: 0 0 0 2px var(--c);
+  }
+}
+
+.io-bside-lose {
+  animation: io-row-lose calc(0.35s / var(--io-speed, 1)) ease-out var(--io-rev) both;
+}
+
+@keyframes io-row-lose {
+  to {
+    opacity: 0.55;
+  }
+}
+
+.io-win-stamp {
+  position: absolute;
+  right: 54px;
+  top: 6px;
+  font-style: normal;
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  background: var(--gold);
+  color: var(--gold-ink);
+  border-radius: 6px;
+  padding: 2px 7px;
+  box-shadow: 0 2px 0 var(--gold-deep);
+  transform: rotate(-6deg);
+  animation: io-stamp calc(0.32s / var(--io-speed, 1)) cubic-bezier(0.3, 1.6, 0.5, 1) var(--io-rev) both;
+}
+
+@keyframes io-stamp {
+  from {
+    transform: rotate(-16deg) scale(2.4);
     opacity: 0;
   }
 }
 
-.io-captured {
-  color: var(--gold);
+/* --- Verdict ------------------------------------------------------------- */
+
+.io-card-verdict {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 9px;
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: #dbe7f2;
+  animation: io-verdict calc(0.3s / var(--io-speed, 1)) ease-out var(--io-rev) both;
 }
+
+@keyframes io-verdict {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.io-verdict-tag {
+  flex-shrink: 0;
+  font-family: var(--display);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.io-captured .io-verdict-tag {
+  background: var(--c);
+  box-shadow: 0 0 0 2px #fff;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.io-verdict-text {
+  min-width: 0;
+}
+
+/* --- Naval: the fleet as little hulls ------------------------------------ */
+
+.io-fleet {
+  display: flex;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.io-fleet i {
+  width: 16px;
+  height: 7px;
+  background: var(--c);
+  border: 1.5px solid #fff;
+  border-radius: 1px 1px 6px 6px;
+}
+
+.io-fleet .io-fleet-sunk {
+  animation: io-fleet-sink calc(0.5s / var(--io-speed, 1)) ease-in var(--io-rev) both;
+}
+
+@keyframes io-fleet-sink {
+  to {
+    opacity: 0.25;
+    transform: translateY(3px) rotate(-18deg);
+  }
+}
+
+/* --- Scoring ------------------------------------------------------------- */
 
 .io-score-row {
   display: flex;
@@ -138,12 +400,222 @@
 }
 
 .io-score {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--display);
-  font-size: 16px;
-  padding: 6px 12px;
-  border-radius: 10px;
+  font-size: 15px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 12px;
   border: 2px solid #fff;
+  background: var(--c);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3);
+  animation: io-score-pop calc(0.4s / var(--io-speed, 1)) cubic-bezier(0.3, 1.6, 0.5, 1) calc((0.3s + var(--i) * 0.18s) / var(--io-speed, 1)) both;
 }
+
+.io-score-vp {
+  display: inline-flex;
+  align-items: baseline;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--gold-ink);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 14px;
+}
+
+.io-score-vp .io-count {
+  font-weight: 400;
+}
+
+@keyframes io-score-pop {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+}
+
+/* --- Eliminated: the emblem is struck out -------------------------------- */
+
+.io-wiped {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.io-wiped-emblem {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--c);
+  border: 3px solid #fff;
+  animation: io-wiped calc(0.6s / var(--io-speed, 1)) ease-in calc(0.35s / var(--io-speed, 1)) both;
+}
+
+@keyframes io-wiped {
+  to {
+    filter: grayscale(1) brightness(0.6);
+    transform: scale(0.88);
+  }
+}
+
+.io-wiped-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.io-wiped-text b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 17px;
+}
+
+.io-wiped-text small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.io-wiped-stamp {
+  position: absolute;
+  left: 2px;
+  top: 10px;
+  font-family: var(--display);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: #fff;
+  background: var(--danger);
+  border: 2px solid #fff;
+  border-radius: 6px;
+  padding: 0 6px;
+  transform: rotate(-14deg);
+  animation: io-stamp calc(0.32s / var(--io-speed, 1)) cubic-bezier(0.3, 1.6, 0.5, 1) calc(0.45s / var(--io-speed, 1)) both;
+}
+
+/* --- Short screens (landscape phones): one line per side ------------------
+   Units and bonus chips drop out; each side shows its name, role, bar and
+   total; the verdict stays. The card never takes more than ~45% of the height. */
+
+@media (max-height: 560px) {
+  .io-step-card {
+    max-height: 45vh;
+  }
+  .io-sc-head {
+    padding: 4px 10px 4px 8px;
+    gap: 8px;
+  }
+  .io-sc-icon {
+    width: 22px;
+    height: 22px;
+    border-width: 1.5px;
+  }
+  .io-sc-icon svg {
+    width: 13px;
+    height: 13px;
+  }
+  .io-sc-text {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+    white-space: nowrap;
+  }
+  .io-sc-text small {
+    font-size: 10px;
+  }
+  .io-sc-text b {
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .io-sc-body {
+    padding: 5px 8px 6px;
+  }
+  .io-sc-sides {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 4px 6px;
+  }
+  .io-bside {
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-rows: auto 3px;
+    column-gap: 7px;
+    row-gap: 3px;
+    padding: 3px 7px 4px 5px;
+    border-left-width: 4px;
+    border-radius: var(--r-row);
+  }
+  .io-bside .io-emblem-dot {
+    width: 20px;
+    height: 20px;
+    border-width: 1.5px;
+  }
+  .io-bside .io-emblem-dot svg {
+    width: 12px;
+    height: 12px;
+  }
+  .io-bside-units,
+  .io-bside-chips,
+  .io-fleet {
+    display: none;
+  }
+  .io-bside-who b {
+    font-size: 13px;
+  }
+  .io-bside-str {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 5px;
+  }
+  .io-bside-str > b {
+    font-size: 18px;
+  }
+  .io-bside-str small {
+    font-size: 10.5px;
+  }
+  .io-bside-bar {
+    height: 3px;
+  }
+  .io-win-stamp {
+    right: 4px;
+    top: -6px;
+    z-index: 1;
+    font-size: 9.5px;
+    padding: 1px 5px;
+  }
+  .io-card-verdict {
+    margin-top: 5px;
+    font-size: 12px;
+    gap: 6px;
+  }
+  .io-verdict-tag {
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+  .io-score {
+    font-size: 13px;
+    padding: 3px 8px 3px 5px;
+  }
+  .io-wiped-emblem {
+    width: 34px;
+    height: 34px;
+  }
+  .io-sc-mine {
+    top: 5px;
+    font-size: 9px;
+  }
+}
+
+/* Reduced motion: island.css already collapses every animation to its end
+   state; the counters show their final value straight away. */
+@media (prefers-reduced-motion: reduce) {
+  .io-count::after {
+    animation: none;
+  }
+}
+
+/* --- Round report (cream paper) ----------------------------------------- */
 
 .io-recap {
   background: var(--paper);
@@ -225,4 +697,3 @@
 .io-tone-loss {
   font-weight: 900;
 }
-
