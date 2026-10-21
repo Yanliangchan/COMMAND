@@ -173,13 +173,20 @@ function labelSpot(id: string, rx: number, ki: boolean) {
       : { x: 0, y: BADGE_R + (ki ? 16 : 12), anchor: 'middle' as const };
 }
 
-/** Average advance of the label font (Nunito 900, 10 units), measured in the browser. */
-const LABEL_CHAR = 5.55;
+/** Where a region's landmark miniature stands, or null if it has none. */
+function landmarkAt(id: string): Pt | null {
+  const off = id in LANDMARK_AT ? LANDMARK_AT[id] : [36, -14];
+  if (!BOARD.byId[id].landmark || !off) return null;
+  return [at(id)[0] + off[0], at(id)[1] + off[1]];
+}
 
-function labelBox(id: string, rx: number, ki: boolean): Box {
+/** Average advance of the label font (Nunito 900, 10 units), measured in the browser. */
+const LABEL_CHAR = 5.6;
+
+function labelBox(id: string, rx: number, ki: boolean, measured?: number): Box {
   const [x, y] = at(id);
   const l = labelSpot(id, rx, ki);
-  const w = BOARD.byId[id].name.length * LABEL_CHAR + 4;
+  const w = (measured ?? BOARD.byId[id].name.length * LABEL_CHAR) + 4;
   const left = l.anchor === 'middle' ? x + l.x - w / 2 : x + l.x - w;
   return { x: left, y: y + l.y - 9, w, h: 12.5 };
 }
@@ -294,15 +301,25 @@ const overlap = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) -
  * Where order-count chips and travelling tokens settle: on their own route,
  * clear of every badge and region name, and fanned apart from each other.
  */
-function placeRouteMarks(arrows: OrderArrow[], routes: Map<string, Route>, badges: Record<string, Badge>, labels: boolean, keep: Map<string, Pt[]>) {
+function placeRouteMarks(
+  arrows: OrderArrow[],
+  routes: Map<string, Route>,
+  badges: Record<string, Badge>,
+  labels: boolean,
+  labelW: Record<string, number>,
+  keep: Map<string, Pt[]>,
+) {
   const obst: Box[] = [];
   for (const r of BOARD.regions) {
     const b = badges[r.id];
     if (!b) continue;
-    const rx = badgeRx(b) + 3, ki = !!INSTALLATIONS[r.id];
+    const ki = !!INSTALLATIONS[r.id];
+    const rx = badgeRx(b) + (ki ? 5 : 3);
     const [x, y] = at(r.id);
-    obst.push({ x: x - rx, y: y - BADGE_R - (ki ? 9 : 3), w: 2 * rx, h: 2 * BADGE_R + (ki ? 12 : 6) });
-    if (labels) obst.push(labelBox(r.id, badgeRx(b), ki));
+    obst.push({ x: x - rx, y: y - BADGE_R - (ki ? 11 : 3), w: 2 * rx, h: 2 * BADGE_R + (ki ? 16 : 8) });
+    if (labels) obst.push(labelBox(r.id, badgeRx(b), ki, labelW[r.id]));
+    const lm = landmarkAt(r.id);
+    if (lm) obst.push({ x: lm[0] - 11, y: lm[1] - 10, w: 22, h: 19 });
   }
   const placed: Box[] = [];
   const cost = (bx: Box) => obst.reduce((n, o) => n + overlap(bx, o), 0) + placed.reduce((n, o) => n + 2.5 * overlap(bx, o), 0);
@@ -322,7 +339,7 @@ function placeRouteMarks(arrows: OrderArrow[], routes: Map<string, Route>, badge
     const pts = routes.get(a.id)!.pts;
     const n = pts.length - 1;
     let best = { i: n, p: pts[n] }, bestCost = Infinity;
-    for (let i = n; i >= Math.floor(n * 0.35); i--) {
+    for (let i = n; i >= Math.floor(n * 0.25); i--) {
       for (const off of SIDE_STEPS) {
         const p = sideStep(pts, i, off);
         const c = cost({ x: p[0] - 12, y: p[1] - 12, w: 24, h: 24 }) + (n - i) * 2 + Math.abs(off) * 0.8;
@@ -367,20 +384,26 @@ function regionAt(clientX: number, clientY: number): string | null {
   return el?.closest('[data-region]')?.getAttribute('data-region') ?? null;
 }
 
-/** The neighbour lying most nearly in a direction, for arrow-key navigation. */
+/**
+ * The neighbour that lies in a direction, for arrow-key navigation: the
+ * nearest one inside a 90° cone if there is one (so every region can be
+ * reached), otherwise the best-aligned within a wider cone.
+ */
 function neighbourToward(id: string, dx: number, dy: number): string | null {
   const [x, y] = at(id);
+  let near: string | null = null, nearLen = Infinity;
   let best: string | null = null, bestScore = -Infinity;
   for (const n of BOARD.byId[id].neighbours) {
     const [nx, ny] = at(n);
     const vx = nx - x, vy = ny - y;
     const len = Math.hypot(vx, vy) || 1;
     const cos = (vx * dx + vy * dy) / len;
+    if (cos >= 0.707 && len < nearLen) (nearLen = len), (near = n);
     if (cos < 0.3) continue;
     const score = cos - len / 600;
     if (score > bestScore) (bestScore = score), (best = n);
   }
-  return best;
+  return near ?? best;
 }
 
 interface NavItem {
@@ -392,7 +415,7 @@ interface NavItem {
 }
 
 /** The nearest item in a direction among `items`, or null. */
-function nearestToward(from: NavItem, items: NavItem[], dx: number, dy: number, reach: number): NavItem | null {
+function nearestToward(from: NavItem, items: NavItem[], dx: number, dy: number, reach: number, minCos = 0.3): NavItem | null {
   let best: NavItem | null = null, bestScore = -Infinity;
   for (const it of items) {
     if (it.key === from.key) continue;
@@ -400,7 +423,7 @@ function nearestToward(from: NavItem, items: NavItem[], dx: number, dy: number, 
     const len = Math.hypot(vx, vy) || 1;
     if (len > reach) continue;
     const cos = (vx * dx + vy * dy) / len;
-    if (cos < 0.3) continue;
+    if (cos < minCos) continue;
     const score = cos - len / 400;
     if (score > bestScore) (bestScore = score), (best = it);
   }
@@ -894,6 +917,19 @@ function MapViewInner({
     window.setTimeout(() => setSweeps((s) => s.filter((x) => !keys.includes(x.key))), 1100);
   }, [badges]);
 
+  // --- numbers tick only when they change (not when the board first appears) ---
+  const shownText = useRef<Record<string, string>>({});
+  useEffect(() => {
+    const t: Record<string, string> = {};
+    for (const id in badges) t[id] = badges[id].text;
+    shownText.current = t;
+  }, [badges]);
+  const ticked = useRef<Record<string, string>>({});
+  const ticks = (id: string, text: string) => {
+    if (!cover && id in shownText.current && shownText.current[id] !== text) ticked.current[id] = text;
+    return ticked.current[id] === text;
+  };
+
   // --- keyboard: the map is one tab stop; arrows rove between regions, your ships and sail targets ---
   const navItems = useMemo<NavItem[]>(() => {
     const out: NavItem[] = [];
@@ -921,6 +957,16 @@ function MapViewInner({
       activate();
       return;
     }
+    if ((e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // S hops between your ships (and back to the land after the last one).
+      const fleet = navItems.filter((i) => i.kind === 's');
+      if (!fleet.length) return;
+      e.preventDefault();
+      const at = fleet.findIndex((i) => i.key === key);
+      const next = at < 0 ? fleet[0] : fleet[at + 1];
+      focusNav(next ? next.key : navItems.find((i) => i.kind === 'r' && i.id === (selected ?? home?.[0]))?.key ?? navItems[0].key);
+      return;
+    }
     const dir: Record<string, [number, number]> = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
     const d = dir[e.key];
     if (!d) return;
@@ -932,8 +978,12 @@ function MapViewInner({
       const n = neighbourToward(item.id, d[0], d[1]);
       if (n) next = `r:${n}`;
     }
+    if (!next && item.kind !== 'r') {
+      // On the water: along the sea to the next ship or sail target squarely that way...
+      next = nearestToward(item, navItems.filter((i) => i.kind !== 'r'), d[0], d[1], 720, 0.707)?.key ?? null;
+    }
     if (!next) {
-      // Off the coast: out to a ship or a sail target; from the water, to whatever lies that way.
+      // ...otherwise (and off a coast) to whatever lies that way.
       const pool = item.kind === 'r' ? navItems.filter((i) => i.kind !== 'r') : navItems;
       next = nearestToward(item, pool, d[0], d[1], item.kind === 'r' ? 330 : 440)?.key ?? null;
     }
@@ -951,13 +1001,34 @@ function MapViewInner({
   const interactive = !!onRegion;
   const dimmed = dimOthers ? BOARD.regions.filter((r) => !highlights[r.id]).map((r) => r.id) : [];
 
+  // Region names, measured once the font is in, so marks can be parked clear of them.
+  const [labelW, setLabelW] = useState<Record<string, number>>({});
+  useLayoutEffect(() => {
+    if (!showLabels) return;
+    let live = true;
+    const measure = () => {
+      const out: Record<string, number> = {};
+      svgRef.current?.querySelectorAll<SVGTextElement>('[data-badge] .io-region-name').forEach((t) => {
+        const id = t.closest('[data-badge]')!.getAttribute('data-badge')!;
+        const w = t.getBBox().width;
+        if (w) out[id] = w;
+      });
+      if (live && Object.keys(out).length) setLabelW(out);
+    };
+    measure();
+    document.fonts?.ready.then(measure).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [showLabels]);
+
   const routes = useMemo(() => new Map(arrows.map((a) => [a.id, arrowRoute(a)])), [arrows]);
   const tokenRuns = useRef(new Map<string, Pt[]>());
   const marks = useMemo(() => {
-    const m = placeRouteMarks(arrows, routes, badges, showLabels, tokenRuns.current);
+    const m = placeRouteMarks(arrows, routes, badges, showLabels, labelW, tokenRuns.current);
     tokenRuns.current = m.tokens;
     return m;
-  }, [arrows, routes, badges, showLabels]);
+  }, [arrows, routes, badges, showLabels, labelW]);
 
   const renderRegion = (id: string) => {
     const b = badges[id];
@@ -1006,7 +1077,7 @@ function MapViewInner({
         role={interactive ? 'application' : 'img'}
         aria-label={
           interactive
-            ? 'Map of the island. Tab to the map, then the arrow keys move between neighbouring regions and out to your ships; Enter acts.'
+            ? 'Map of the island. Arrow keys move between neighbouring regions, and off the coast to your ships; S jumps to your ships; Enter acts.'
             : 'Map of the island'
         }
       >
@@ -1074,10 +1145,12 @@ function MapViewInner({
                 <g className="io-zone-buoy" transform={`translate(${-rx + 14} 18)`}>
                   <path d="M0 -7 V-2" />
                   <circle r={3.2} />
+                  <circle cy={-7.5} r={1.6} className="io-zone-lamp" />
                 </g>
                 <g className="io-zone-buoy" transform={`translate(${rx - 14} 18)`}>
                   <path d="M0 -7 V-2" />
                   <circle r={3.2} />
+                  <circle cy={-7.5} r={1.6} className="io-zone-lamp" />
                 </g>
                 <g transform="translate(0 -32)" className="io-zone-plaque">
                   <rect x={-pw / 2} y={-9} width={pw} height={18} rx={9} />
@@ -1129,10 +1202,10 @@ function MapViewInner({
         {/* Landmarks beside their badges. */}
         <g pointerEvents="none" className="io-landmarks">
           {BOARD.regions.map((r) => {
-            const off = r.id in LANDMARK_AT ? LANDMARK_AT[r.id] : [36, -14];
-            if (!r.landmark || !off) return null;
+            const lm = landmarkAt(r.id);
+            if (!lm || !r.landmark) return null;
             return (
-              <g key={r.id} transform={`translate(${at(r.id)[0] + off[0]} ${at(r.id)[1] + off[1]}) scale(0.85)`}>
+              <g key={r.id} transform={`translate(${lm[0]} ${lm[1]}) scale(0.85)`}>
                 <LandmarkGlyph kind={r.landmark} />
               </g>
             );
@@ -1253,7 +1326,7 @@ function MapViewInner({
                     <circle r={6.6} fill="#fff" stroke={f.deep} strokeWidth={1.1} />
                     <EmblemMark faction={b.owner} size={9} color={f.deep} />
                   </g>
-                  <text key={b.text} className={`io-badge-num${b.fog ? ' io-badge-fog' : ''}`} dy="0.36em" fontSize={wide ? 12 : 15} style={{ fill: b.fog ? '#fff' : FACTION_INK[b.owner] }}>
+                  <text key={b.text} className={`io-badge-num${b.fog ? ' io-badge-fog' : ''}${ticks(r.id, b.text) ? ' io-num-tick' : ''}`} dy="0.36em" fontSize={wide ? 12 : 15} style={{ fill: b.fog ? '#fff' : FACTION_INK[b.owner] }}>
                     {b.text}
                   </text>
                   {b.extra && (

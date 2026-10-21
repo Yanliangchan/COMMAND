@@ -532,13 +532,31 @@
   min-height: 52px;
 }
 
-.io-btn-main:not([data-blocked]) {
+/* "Ready" breathes once every troop is placed. The halo is a fixed shadow on its
+   own layer and only its opacity animates — animating box-shadow itself repaints
+   every frame (measured ~40% main thread at 4x CPU throttle). */
+.io-btn-main {
+  position: relative;
+}
+
+.io-btn-main::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 6px rgba(255, 200, 61, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  will-change: opacity;
+}
+
+.io-btn-main:not([data-blocked])::after {
   animation: io-ready-glow 2s ease-in-out infinite;
 }
 
 @keyframes io-ready-glow {
   50% {
-    box-shadow: 0 4px 0 var(--gold-deep), 0 0 0 6px rgba(255, 200, 61, 0.28), 0 8px 18px rgba(0, 0, 0, 0.35);
+    opacity: 1;
   }
 }
 

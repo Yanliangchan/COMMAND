@@ -33,9 +33,9 @@ function bonusTotal(sd: Side) {
 
 /** A number that counts up to its value as the card builds (cards.css); the real text stays in the DOM. */
 function Count({ n, hidden }: { n: number; hidden?: boolean }) {
-  if (hidden) return <b className="io-count-static">?</b>;
+  if (hidden) return <b className="io-tally-static">?</b>;
   return (
-    <b className="io-count" style={{ ['--to' as string]: n }}>
+    <b className="io-tally" style={{ ['--to' as string]: n }}>
       <span>{n}</span>
     </b>
   );

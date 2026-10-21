@@ -33,6 +33,14 @@
   }
 }
 
+/* In a match the sea holds still: the drift is a full-screen layer, and with the
+   board and its effects overlay above it, moving it re-blends the whole screen
+   every frame (measured: playback 37 -> 55 fps at 1x without it) and keeps an
+   idle match compositing at 60 fps. The title screen keeps the drift. */
+.io-game .io-mapbox::before {
+  animation: none;
+}
+
 .io-map {
   position: relative;
   width: 100%;
@@ -335,6 +343,12 @@
   stroke-linecap: round;
 }
 
+.io-zone-buoy .io-zone-lamp {
+  stroke: rgba(255, 200, 61, 0.35);
+  stroke-width: 2.5;
+  fill: #ffe9a3;
+}
+
 .io-zone-plaque rect {
   fill: rgba(8, 25, 43, 0.72);
   stroke: rgba(255, 255, 255, 0.35);
@@ -363,7 +377,13 @@
   animation: io-march 1.2s linear infinite;
 }
 
-.io-zone-sail .io-zone-plaque rect {
+.io-zone-sail .io-zone-buoy .io-zone-lamp {
+  stroke: rgba(255, 200, 61, 0.35);
+  stroke-width: 2.5;
+  fill: #ffe9a3;
+}
+
+.io-zone-plaque rect {
   fill: #0e4a6e;
   stroke: var(--info);
 }
@@ -378,7 +398,13 @@
   stroke-width: 3;
 }
 
-.io-zone-battle .io-zone-plaque rect {
+.io-zone-battle .io-zone-buoy .io-zone-lamp {
+  stroke: rgba(255, 200, 61, 0.35);
+  stroke-width: 2.5;
+  fill: #ffe9a3;
+}
+
+.io-zone-plaque rect {
   fill: #6e1610;
   stroke: var(--danger);
 }
@@ -398,7 +424,7 @@
   stroke-width: 3;
   stroke-dasharray: 7 5;
   filter: drop-shadow(0 0 0 #08192b) drop-shadow(0 0 2px #08192b);
-  animation: io-march 0.9s linear infinite;
+  animation: io-march 0.9s linear 3;
 }
 
 @keyframes io-march {
@@ -449,36 +475,17 @@
   fill: #19364f;
 }
 
-/* Idle life on the cheap: a bob that ticks four times a second, not sixty. */
+/* Ships don't bob, and the buoy lamps don't blink: a running animation on
+   anything inside the SVG ticks the main thread every frame (measured: ~4%
+   at 4x throttle, even stepped), and even a timer toggling a class sets the
+   SVG re-laying out under the title's drifting camera. The board's idle life
+   lives in the composited wave layer (.io-mapbox::before). */
 .io-ship-bob {
-  animation: io-bob 3.2s steps(6, jump-none) infinite alternate;
-}
-
-.io-ship:nth-child(2n) .io-ship-bob {
-  animation-delay: -1.3s;
-}
-
-.io-ship:nth-child(3n) .io-ship-bob {
-  animation-delay: -2.1s;
-}
-
-.io-ship-moving .io-ship-bob {
-  animation: none;
-}
-
-@keyframes io-bob {
-  from {
-    transform: translateY(-0.8px);
-  }
-  to {
-    transform: translateY(1px);
-  }
+  transition: transform 0.15s ease;
 }
 
 .io-ship-mine.io-clickable:hover .io-ship-bob {
-  animation: none;
   transform: translateY(-2.5px);
-  transition: transform 0.15s ease;
 }
 
 .io-ship-sel {
@@ -617,7 +624,10 @@
   transition-duration: 0.06s;
 }
 
-/* Numbers pop when they change (the text is keyed on its value). */
+/* Numbers pop when they change (the text is keyed on its value; MapView adds
+   .io-num-tick only on a change, never on first paint — a one-shot animation
+   on SVG text at mount sets Chrome re-laying out the SVG every frame under
+   the title's drifting camera). */
 .io-badge-num {
   font-family: var(--display);
   text-anchor: middle;
@@ -625,6 +635,9 @@
   paint-order: stroke;
   stroke: rgba(0, 0, 0, 0.22);
   stroke-width: 1.6px;
+}
+
+.io-num-tick {
   animation: io-tick 0.42s cubic-bezier(0.3, 1.7, 0.5, 1) backwards;
 }
 
@@ -773,9 +786,11 @@
   opacity: 1;
 }
 
+/* The dash marches as focus lands, then holds still (an endless loop would
+   tick the main thread for as long as focus rests on the map). */
 .io-badge:focus-visible .io-focus-ring,
 .io-ship:focus-visible .io-focus-ring {
-  animation: io-march 0.9s linear infinite;
+  animation: io-march 0.9s linear 3;
 }
 
 .io-badge:focus-visible .io-sel-ring {
@@ -834,7 +849,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .io-mapbox::before,
-  .io-ship-bob,
   .io-sel-pulse,
   .io-ship-sel-pulse,
   .io-zone-sail .io-zone-inner,
@@ -846,7 +860,7 @@
   .io-order-solid,
   .io-order-head,
   .io-order-chip,
-  .io-badge-num,
+  .io-num-tick,
   .io-badge-extra text,
   .io-sweep,
   .io-sweep-edge,

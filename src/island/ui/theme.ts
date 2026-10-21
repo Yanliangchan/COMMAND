@@ -36,12 +36,12 @@ export const LABEL_SIDE: Record<string, 'above' | 'left'> = { 'paya-lebar': 'lef
 
 /** Landmark offsets from the badge (default: up and to the right); null = too crowded to draw. */
 export const LANDMARK_AT: Record<string, [number, number] | null> = {
-  woodlands: [-36, -12],
+  woodlands: [-40, -12],
   'marina-bay': [-42, -10],
   tekong: [36, -16],
   sembawang: [36, -12],
   'jurong-island': [38, -14],
-  'tanjong-pagar': [36, -4],
+  'tanjong-pagar': null,
   'paya-lebar': null,
   kallang: null,
 };

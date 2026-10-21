@@ -243,16 +243,16 @@
 
 /* Counting up. The real number stays in the DOM (for screen readers and
    tests) under a counter that runs from 0 to it. */
-.io-count {
+.io-tally {
   position: relative;
   display: inline-block;
 }
 
-.io-count span {
+.io-tally span {
   visibility: hidden;
 }
 
-.io-count::after {
+.io-tally::after {
   content: counter(io-n);
   counter-reset: io-n var(--io-n);
   --io-n: var(--to);
@@ -272,18 +272,26 @@
 }
 
 /* The verdict lands: the winner is stamped, the rest dim. */
-.io-bside-win {
-  animation: io-row-win calc(0.35s / var(--io-speed, 1)) ease-out var(--io-rev) both;
+/* The winner's glow is a layer that fades in (opacity only). */
+.io-bside {
+  isolation: isolate;
 }
 
-@keyframes io-row-win {
+.io-bside-win::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--c) 26%, transparent);
+  box-shadow: 0 0 0 2px var(--c);
+  pointer-events: none;
+  animation: io-sc-glow calc(0.35s / var(--io-speed, 1)) ease-out var(--io-rev) both;
+}
+
+@keyframes io-sc-glow {
   from {
-    background: rgba(255, 255, 255, 0.05);
-    box-shadow: none;
-  }
-  to {
-    background: color-mix(in srgb, var(--c) 26%, transparent);
-    box-shadow: 0 0 0 2px var(--c);
+    opacity: 0;
   }
 }
 
@@ -414,8 +422,7 @@
 }
 
 .io-score-vp {
-  display: inline-flex;
-  align-items: baseline;
+  display: inline-block;
   background: rgba(255, 255, 255, 0.9);
   color: var(--gold-ink);
   border-radius: 999px;
@@ -423,7 +430,7 @@
   font-size: 14px;
 }
 
-.io-score-vp .io-count {
+.io-score-vp .io-tally {
   font-weight: 400;
 }
 
@@ -607,10 +614,21 @@
   }
 }
 
+/* Narrow phones: the companies' names give way, so the band stays short. */
+@media (max-width: 520px) {
+  .io-bside-units {
+    display: none;
+  }
+  .io-bside {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+}
+
 /* Reduced motion: island.css already collapses every animation to its end
    state; the counters show their final value straight away. */
 @media (prefers-reduced-motion: reduce) {
-  .io-count::after {
+  .io-tally::after {
     animation: none;
   }
 }

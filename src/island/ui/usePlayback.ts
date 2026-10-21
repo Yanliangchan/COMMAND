@@ -18,7 +18,7 @@ import { BOARD, INSTALLATIONS, INSTALLATION_INFO, ZoneId } from '../map';
 import { sharedZones } from '../engine';
 import { FACTIONS, FactionId, GameState, ReportStep, RoundReport } from '../types';
 import type { Badge, Focus, Fx, OrderArrow } from './MapView';
-import { PlayFx, prefersReducedMotion, setTravelSpeed } from './Effects';
+import { PlayFx, allowTrails, prefersReducedMotion, setTravelSpeed } from './Effects';
 
 export interface Playback {
   report: RoundReport;
@@ -161,7 +161,8 @@ export function usePlayback(opts: {
       clearTimeout(stepTimer.current);
       stepTimer.current = window.setTimeout(fn, ms);
     };
-    if (next >= steps.length) tick(finish, 350 / speed);
+    // The last step (usually the score) gets its full time too, then the round ends.
+    if (next >= steps.length) tick(finish, wait);
     else tick(() => play(steps[next], next), wait);
     return () => clearTimeout(stepTimer.current);
 
@@ -201,7 +202,7 @@ export function usePlayback(opts: {
         case 'MOVES': {
           const moves = visibleMoves(step, me, spectator);
           arrows = moves.map((m, k) => ({
-            id: `mv-${k}`,
+            id: `mv-${i}-${k}`,
             from: m.from,
             to: m.to,
             color: FACTIONS[m.owner].color,
@@ -210,7 +211,8 @@ export function usePlayback(opts: {
             travel: true,
           }));
           if (moves.length) {
-            burst('march', { type: 'march', routes: arrows.map((a) => ({ from: a.from, to: a.to, via: a.via, color: a.color })) }, 2000);
+            // The tokens themselves (MapView → Traveller) kick up dust and land with a thump — at most 8 of them.
+            allowTrails(8);
             cue('move', 0);
             cue('thump', 1480);
           }
