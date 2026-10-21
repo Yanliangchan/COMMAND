@@ -171,7 +171,7 @@ Before/after screenshots were captured at 1366×768, 1920×1080, 1280×720,
 | `npm run check` — mapcheck, wirecheck (620,972 assertions), combatcheck, islandcheck | 235 checks, 0 failures |
 | islandcheck sim | 1,000 games: 7.5 rounds, 6.5 battles/round, 86% of attacks capture, 100% end on VP, shares 0.87–1.16× |
 | islandcheck fuzz | 160 games / 1,117 rounds with random, passive and hostile seats: no exceptions, invariants hold |
-| `npm run e2e` (Playwright, Chromium) | 42 checks, all pass (journeys + audit and retest regressions) |
+| `npm run e2e` (Playwright, Chromium) | 43 checks, all pass (journeys + audit and retest regressions) |
 | Production server smoke | `/` 200; hashed asset 200; traversal 403; stale asset 404; `/healthz` 200 |
 | Offline fonts | title renders in 0.6 s with every external host blocked; fonts load |
 | `npm audit --omit=dev` | 0 vulnerabilities |
