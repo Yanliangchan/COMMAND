@@ -1,0 +1,106 @@
+/* ISLAND OPS — victory / defeat.
+   Uses the design tokens defined in island.css. */
+
+/* Victory / defeat */
+
+.io-victory {
+  background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--c) 45%, #0c2238), #0c2238 70%);
+  border: 3px solid var(--c);
+  border-radius: 26px;
+  padding: 26px 28px 24px;
+  margin-top: 60px;
+  width: min(500px, 100%);
+  text-align: center;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55);
+  animation: io-drop 0.4s ease-out;
+}
+
+.io-defeat {
+  background: radial-gradient(circle at 50% 0%, #2a3644, #0c2238 70%);
+  border-color: #5b6977;
+}
+
+.io-victory-emblem {
+  width: 104px;
+  height: 104px;
+  margin: -78px auto 6px;
+  border-radius: 50%;
+  background: var(--c);
+  border: 5px solid #fff;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 0 var(--d), 0 16px 30px rgba(0, 0, 0, 0.5);
+}
+
+.io-defeat .io-victory-emblem {
+  filter: grayscale(0.85) brightness(0.8);
+}
+
+.io-victory h1 {
+  font-size: 50px;
+  margin: 8px 0 0;
+  text-transform: uppercase;
+}
+
+.io-defeat h1 {
+  color: #d3dce5;
+}
+
+.io-victory-who {
+  font-size: 18px;
+  margin: 4px 0;
+}
+
+.io-victory-reason {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 4px 0 0;
+}
+
+.io-victory-table {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 14px 0;
+}
+
+.io-victory-table li {
+  display: grid;
+  grid-template-columns: 18px 22px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.06);
+  border-left: 4px solid var(--c);
+  border-radius: 10px;
+  padding: 7px 12px;
+  text-align: left;
+}
+
+.io-victory-table li.io-mine {
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.io-rank {
+  font-family: var(--display);
+  color: var(--muted);
+}
+
+.io-victory-stats {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 12px 0 20px;
+  color: var(--muted);
+}
+
+.io-victory-stats b {
+  font-family: var(--display);
+  font-weight: 400;
+  color: #fff;
+  font-size: 21px;
+  display: block;
+}
+

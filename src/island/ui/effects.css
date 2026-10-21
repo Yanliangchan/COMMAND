@@ -1,0 +1,98 @@
+/* ISLAND OPS — the board's effects layer (Effects.tsx): playback focus, clash
+   mark, blasts, capture ripples, loss alerts, strike jets.
+   Uses the design tokens defined in island.css. */
+
+/* Playback focus and effects */
+
+.io-focus circle {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 4;
+  stroke-dasharray: 6 5;
+  animation: io-focus 1.2s ease-in-out infinite;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
+}
+
+@keyframes io-focus {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.io-clash-mark path {
+  stroke: #fff;
+  stroke-width: 5;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.7));
+}
+
+.io-ripple {
+  fill: none;
+  stroke-width: 5;
+  animation: io-ripple 1.2s ease-out forwards;
+}
+
+.io-ripple-2 {
+  animation-delay: 0.25s;
+  opacity: 0;
+}
+
+@keyframes io-ripple {
+  0% {
+    r: 24;
+    opacity: 1;
+  }
+  100% {
+    r: 70;
+    opacity: 0;
+  }
+}
+
+.io-blast {
+  fill: #fff6c8;
+  animation: io-blast 0.9s ease-out forwards;
+}
+
+.io-blast-ring {
+  fill: none;
+  stroke: #ff7a2f;
+  stroke-width: 4;
+  animation: io-ripple 0.9s ease-out forwards;
+}
+
+@keyframes io-blast {
+  0% {
+    r: 4;
+    opacity: 1;
+  }
+  40% {
+    r: 26;
+    fill: #ff9a3c;
+    opacity: 0.9;
+  }
+  100% {
+    r: 34;
+    opacity: 0;
+  }
+}
+
+.io-alert-ring {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 5;
+  animation: io-alert 1s ease-in-out infinite;
+}
+
+@keyframes io-alert {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.io-jet path {
+  fill: #fff;
+  stroke: #1d2a36;
+  stroke-width: 1;
+  filter: drop-shadow(0 6px 3px rgba(0, 0, 0, 0.45));
+}
+

@@ -8,6 +8,7 @@ import { SoundButton } from './Hud';
 import { Badge, MapView } from './MapView';
 import type { SavedMatch } from './save';
 import { FACTION_INK } from './theme';
+import './title.css';
 
 export interface Setup {
   faction: FactionId;

@@ -1,0 +1,431 @@
+/* ISLAND OPS — the board: regions, badges, sea zones, ships, orders, effects.
+   Uses the design tokens defined in island.css. */
+
+/* --- Map ------------------------------------------------------------------ */
+
+.io-mapbox {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 45%, var(--sea-1), var(--sea-2) 60%, var(--sea-3));
+}
+
+/* Drifting waves: an oversized composited layer, so the sea moves without repainting the board. */
+.io-mapbox::before {
+  content: '';
+  position: absolute;
+  inset: -40px -80px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='22'%3E%3Cpath d='M0 11 Q10 5 20 11 T40 11' fill='none' stroke='rgba(255,255,255,0.11)' stroke-width='1.4'/%3E%3C/svg%3E");
+  animation: io-waves 14s linear infinite;
+  will-change: transform;
+  pointer-events: none;
+}
+
+@keyframes io-waves {
+  to {
+    transform: translateX(40px);
+  }
+}
+
+.io-map {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.io-mapbox-cam .io-map {
+  touch-action: none;
+  cursor: grab;
+}
+
+.io-mapbox-cam .io-map:active {
+  cursor: grabbing;
+}
+
+.io-region {
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+  transition: fill 0.5s ease;
+}
+
+.io-clickable {
+  cursor: pointer;
+}
+
+.io-region.io-clickable:hover {
+  filter: brightness(1.12);
+}
+
+/* Dimmed regions keep their hue under a navy veil, so factions stay apart. */
+.io-veil path {
+  fill: rgba(8, 25, 43, 0.4);
+}
+
+.io-hl-line {
+  fill: none;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.io-hl-line.io-hl-place {
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 2.5;
+}
+
+.io-hl-line.io-hl-source {
+  stroke: #fff;
+  stroke-width: 6;
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.8));
+}
+
+.io-hl-line.io-hl-target {
+  stroke: #ffe14d;
+  stroke-width: 4.5;
+}
+
+.io-hl-line.io-hl-landing {
+  stroke: var(--info);
+  stroke-width: 4.5;
+  stroke-dasharray: 8 5;
+}
+
+.io-hl-line.io-hl-recon {
+  stroke: #e4b3ff;
+  stroke-width: 4;
+  stroke-dasharray: 3 5;
+}
+
+.io-hl-line.io-hl-strike {
+  stroke: #ff8c7a;
+  stroke-width: 4.5;
+}
+
+.io-hl-line.io-hl-friendly {
+  stroke: #fff;
+  stroke-width: 3.5;
+  stroke-dasharray: 6 4;
+}
+
+.io-surf path {
+  fill: none;
+  stroke: rgba(210, 245, 255, 0.3);
+  stroke-width: 16;
+  stroke-linejoin: round;
+}
+
+.io-coast {
+  fill: none;
+  stroke: #3d2c1d;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+}
+
+.io-crossing {
+  stroke: #f4e2b8;
+  stroke-width: 3.5;
+  stroke-dasharray: 2 6;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+
+.io-sector-border {
+  stroke: rgba(15, 20, 30, 0.55);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.io-landmarks {
+  opacity: 0.85;
+}
+
+.io-far .io-landmarks,
+.io-far .io-region-name {
+  display: none;
+}
+
+/* Sea zones */
+
+.io-zone-pad {
+  fill: rgba(255, 255, 255, 0.05);
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 6;
+}
+
+.io-zone-name {
+  font-family: var(--display);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-anchor: middle;
+  fill: rgba(255, 255, 255, 0.82);
+  paint-order: stroke;
+  stroke: rgba(8, 40, 60, 0.6);
+  stroke-width: 2.5px;
+  pointer-events: none;
+}
+
+.io-zone-sail .io-zone-pad {
+  fill: rgba(143, 214, 255, 0.2);
+  stroke: var(--info);
+  stroke-width: 3;
+  stroke-dasharray: none;
+}
+
+.io-zone-battle .io-zone-pad {
+  fill: rgba(255, 90, 78, 0.25);
+  stroke: var(--danger);
+  stroke-width: 3;
+  stroke-dasharray: none;
+}
+
+.io-zone:focus-visible {
+  outline: none;
+}
+
+.io-zone:focus-visible .io-zone-pad {
+  stroke: var(--gold);
+  stroke-width: 4;
+}
+
+/* Ships */
+
+.io-ship {
+  transition: transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
+}
+
+.io-ship-on path {
+  stroke: var(--gold);
+  stroke-width: 3.5;
+}
+
+.io-ship:focus-visible {
+  outline: none;
+}
+
+.io-ship:focus-visible path {
+  stroke: var(--gold);
+  stroke-width: 3.5;
+}
+
+/* Orders */
+
+.io-order-casing {
+  fill: none;
+  stroke: rgba(10, 20, 30, 0.55);
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+.io-order {
+  fill: none;
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.io-order-landing {
+  stroke-dasharray: 9 6;
+}
+
+.io-order-sail {
+  stroke-width: 4;
+  stroke-dasharray: 2 7;
+}
+
+.io-order-broken {
+  stroke-dasharray: 4 6;
+}
+
+.io-order-faint {
+  opacity: 0.55;
+}
+
+.io-order-head {
+  stroke: rgba(10, 20, 30, 0.55);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.io-order-chip rect {
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.io-order-chip text,
+.io-token-text {
+  font-family: var(--display);
+  font-size: 11px;
+  text-anchor: middle;
+  fill: #fff;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.45);
+  stroke-width: 2.4px;
+}
+
+.io-token {
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.55));
+}
+
+.io-drag-line {
+  stroke: var(--gold);
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-dasharray: 10 7;
+}
+
+/* Badges */
+
+.io-badge:focus {
+  outline: none;
+}
+
+.io-hit {
+  fill: transparent;
+}
+
+.io-focus-ring {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 3.5;
+  opacity: 0;
+}
+
+.io-badge:focus-visible .io-focus-ring,
+.io-badge-selected .io-focus-ring {
+  opacity: 1;
+}
+
+.io-badge-selected .io-focus-ring {
+  stroke: #fff;
+}
+
+.io-badge-num {
+  font-family: var(--display);
+  text-anchor: middle;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.22);
+  stroke-width: 1.6px;
+}
+
+.io-badge-fog {
+  stroke: rgba(0, 0, 0, 0.35);
+}
+
+.io-ki-ring {
+  fill: var(--gold);
+  stroke: #7a5200;
+  stroke-width: 1.2;
+}
+
+.io-ki-star {
+  fill: var(--gold);
+  stroke: #5a3d00;
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+
+.io-fort circle {
+  fill: #1d2a36;
+  stroke: #fff;
+  stroke-width: 1.4;
+}
+
+.io-fort path {
+  fill: #fff;
+}
+
+.io-badge-extra rect {
+  fill: #1f9d4c;
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+
+.io-badge-extra text {
+  font-family: var(--display);
+  font-size: 9.5px;
+  fill: #fff;
+}
+
+.io-threat {
+  pointer-events: none;
+}
+
+.io-threat path {
+  fill: var(--danger);
+  stroke: #fff;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+.io-threat text {
+  font-family: var(--display);
+  font-size: 10px;
+  text-anchor: middle;
+  fill: #fff;
+}
+
+.io-region-name {
+  font-family: var(--body);
+  font-weight: 900;
+  font-size: 10px;
+  text-anchor: middle;
+  fill: #fff;
+  paint-order: stroke;
+  stroke: rgba(10, 20, 30, 0.85);
+  stroke-width: 2.8px;
+  pointer-events: none;
+}
+
+.io-air-marker {
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
+  animation: io-pop 0.25s ease-out;
+}
+
+@keyframes io-pop {
+  0% {
+    transform: scale(1.6);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.io-zoom {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 3;
+}
+
+.io-zoom .io-icon-btn {
+  background: var(--panel);
+  border: 2px solid var(--line);
+  box-shadow: var(--shadow-panel);
+}
+
+
+.io-shake-a .io-map {
+  animation: io-shake-a 0.35s ease-in-out;
+}
+
+.io-shake-b .io-map {
+  animation: io-shake-b 0.35s ease-in-out;
+}
+
+@keyframes io-shake-a {
+  25% { transform: translate(-4px, 2px); }
+  50% { transform: translate(4px, -2px); }
+  75% { transform: translate(-2px, 1px); }
+}
+
+@keyframes io-shake-b {
+  25% { transform: translate(4px, -2px); }
+  50% { transform: translate(-4px, 2px); }
+  75% { transform: translate(2px, -1px); }
+}
+

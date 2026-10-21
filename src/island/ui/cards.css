@@ -1,0 +1,228 @@
+/* ISLAND OPS — playback cards and the round report.
+   Uses the design tokens defined in island.css. */
+
+/* Playback cards and the round report */
+
+.io-step-card {
+  padding: 12px 14px;
+  animation: io-drop 0.25s ease-out;
+}
+
+.io-step-mine {
+  border-color: var(--gold);
+}
+
+.io-card-title {
+  font-family: var(--display);
+  font-size: 15.5px;
+  margin-bottom: 8px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.io-card-plain {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.35;
+}
+
+.io-bside {
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--r-ctl);
+  background: rgba(255, 255, 255, 0.05);
+  margin-top: 5px;
+  border-left: 5px solid var(--c);
+  opacity: 0.78;
+}
+
+.io-bside-win {
+  opacity: 1;
+  background: color-mix(in srgb, var(--c) 26%, transparent);
+  box-shadow: 0 0 0 2px var(--c);
+}
+
+.io-bside-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.io-bside-who b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.io-bside-who b small {
+  font-family: var(--body);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.io-bside-who b em {
+  font-style: normal;
+  font-family: var(--body);
+  font-weight: 900;
+  font-size: 10px;
+  background: var(--gold);
+  color: var(--gold-ink);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.io-bside-who small {
+  font-size: 12px;
+  color: #dbe7f2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.io-bside-bonus {
+  color: var(--info) !important;
+}
+
+.io-bside-str {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.io-bside-str b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.io-bside-str small {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.io-card-verdict {
+  margin-top: 8px;
+  text-align: center;
+  font-family: var(--display);
+  font-size: 14px;
+  color: var(--info);
+  animation: io-fade-in 0.3s ease-out 0.75s both;
+}
+
+@keyframes io-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.io-captured {
+  color: var(--gold);
+}
+
+.io-score-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.io-score {
+  font-family: var(--display);
+  font-size: 16px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 2px solid #fff;
+}
+
+.io-recap {
+  background: var(--paper);
+  color: var(--paper-ink);
+  border-color: transparent;
+  padding: 10px 14px 12px;
+  animation: io-drop 0.3s ease-out;
+}
+
+.io-recap-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--display);
+  font-size: 15px;
+  color: var(--paper-accent);
+}
+
+.io-recap-head b {
+  font-weight: 400;
+}
+
+.io-recap .io-icon-btn {
+  background: rgba(0, 0, 0, 0.07);
+  color: var(--paper-ink);
+  min-width: 36px;
+  height: 36px;
+}
+
+.io-recap ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13.5px;
+}
+
+.io-recap li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  line-height: 1.35;
+}
+
+.io-recap li i {
+  font-style: normal;
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 12px;
+}
+
+.io-tone-win i {
+  color: #1f8a43;
+}
+
+.io-tone-loss i {
+  color: #c4291d;
+}
+
+.io-tone-hold i {
+  color: #2f6fb0;
+}
+
+.io-tone-fail i {
+  color: #b5650a;
+}
+
+.io-tone-vp i {
+  color: #b08000;
+}
+
+.io-tone-info i {
+  color: #6b7b8a;
+}
+
+.io-tone-loss {
+  font-weight: 900;
+}
+

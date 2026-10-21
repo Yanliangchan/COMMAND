@@ -14,7 +14,10 @@ import { BOARD, INSTALLATIONS, REGION_IDS, SEA_ZONES, ZoneId, zonesOf } from '..
 import { IllegalAction, alive, budget, controller, defenceBonus, player, recon, regionsOf, resolveRound, sharedZones, submitOrders, viewFor } from '../engine';
 import { BotLevel, planBot } from '../bot';
 import { CAS_BONUS, FACTIONS, FactionId, GameState, NAVAL_GUNFIRE_BONUS, Order, PlayerView, RoundReport, Ship } from '../types';
-import { Amount, Dock, Picker, PickerState, PlaybackBar, ReportCard, ReportLine, SidePanel, SideTab, StepCard, Tool, TopBar, Victory, orderText } from './Hud';
+import { Amount, Dock, Picker, PickerState, PlaybackBar, SidePanel, SideTab, Tool, TopBar, orderText } from './Hud';
+import { ReportCard, ReportLine, StepCard } from './Cards';
+import { Victory } from './EndScreen';
+import './hud.css';
 import { Help } from './Help';
 import { Badge, Highlight, Insets, MapView, Marker, OrderArrow } from './MapView';
 import { defence, isMovement, plan, plural, regionName } from './plan';
